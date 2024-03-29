@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png">
+    <link rel="manifest" href="./site.webmanifest">
+    <link rel="mask-icon" href="./safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="apple-mobile-web-app-title" content="Cockpit">
+    <meta name="application-name" content="Cockpit">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Cockpit</title>
+    <meta name="description" content="An intuitive and customizable cross-platform ground control station for remote vehicles of all types.">
+  <script type="module" crossorigin src="./index.5904388b.js"></script>
+  <link rel="stylesheet" href="./style.b1eef697.css">
+<link rel="manifest" href="./manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="./registerSW.js"></script></head>
+
+<body>
+    <div id="browser-overlay">
+        <div id="browser-overlay-message">
+            <p>Please use Google Chrome or Microsoft Edge for the best experience on our website.</p>
+            <button id="proceed-browser-overlay">Proceed Anyway</button>
+        </div>
+    </div>
+    <div id="app"></div>
+    
+    
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const overlay = document.getElementById('browser-overlay')
+            const content = document.getElementById('app')
+            const proceedButton = document.getElementById('proceed-browser-overlay');
+
+            const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor)
+            const isEdge = /Edg/.test(navigator.userAgent)
+
+            if (!isChrome && !isEdge) {
+                overlay.style.display = 'flex'
+                content.style.display = 'none'
+            }
+
+            proceedButton.addEventListener('click', function() {
+                overlay.style.display = 'none';
+                content.style.display = 'block';
+            });
+        })
+    </script>
+
+    <style>
+        #browser-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+        }
+
+        #browser-overlay-message {
+            color: #fff;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        #browser-overlay-message button {
+            background-color: #525252;
+            border: none;
+            color: white;
+            padding: 5px 8px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            transition-duration: 0.4s;
+            cursor: pointer;
+        }
+    </style>
+</body>
+</html>
