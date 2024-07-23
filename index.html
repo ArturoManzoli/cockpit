@@ -14,26 +14,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Cockpit</title>
     <meta name="description" content="An intuitive and customizable cross-platform ground control station for remote vehicles of all types.">
-  <script type="module" crossorigin src="./index.e70afa68.js"></script>
-  <link rel="stylesheet" href="./style.3a22446a.css">
+  <script type="module" crossorigin src="./index-C4AB-M5N.js"></script>
+  <link rel="stylesheet" crossorigin href="./style-DCwZ77SZ.css">
 <link rel="manifest" href="./manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="./registerSW.js"></script></head>
 
 <body>
-    <div id="browser-overlay">
-        <div id="browser-overlay-message">
+    <div id="non-app-main">
+        <div id="browser-overlay">
             <p>Please use Google Chrome or Microsoft Edge for the best experience on our website.</p>
             <button id="proceed-browser-overlay">Proceed Anyway</button>
         </div>
+        <div id="underlying-fallback">
+            <p>It looks like something went wrong while loading Cockpit. Resetting the settings can solve the problem.</p>
+            <button id="clear-settings-btn">Reset Cockpit settings</button>
+        </div>
     </div>
     <div id="app"></div>
-    
-    
 
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             const overlay = document.getElementById('browser-overlay')
             const content = document.getElementById('app')
             const proceedButton = document.getElementById('proceed-browser-overlay');
+            const underlyingFallback = document.getElementById('underlying-fallback');
+            const clearSettingsButton = document.getElementById('clear-settings-btn');
 
             const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor)
             const isEdge = /Edg/.test(navigator.userAgent)
@@ -41,46 +45,86 @@
             if (!isChrome && !isEdge) {
                 overlay.style.display = 'flex'
                 content.style.display = 'none'
+            } else {
+                underlyingFallback.style.display = 'flex';
             }
 
             proceedButton.addEventListener('click', function() {
                 overlay.style.display = 'none';
                 content.style.display = 'block';
+                underlyingFallback.style.display = 'flex';
+            });
+
+            clearSettingsButton.addEventListener('click', async function() {
+                if (!confirm("Are you sure you want to reset Cockpit settings?")) {
+                    return;
+                }
+
+                localStorage.clear();
+                // We are also going to clear the cache to ensure a fresh access to all files as well
+                if (caches) {
+                    const keys = await caches.keys();
+                    await Promise.allSettled(keys.map((key) => caches.delete(key)));
+                }
+                location.reload();
             });
         })
     </script>
 
     <style>
-        #browser-overlay {
-            display: none;
-            position: fixed;
+        #non-app-main {
+            color: #fff;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.8);
             justify-content: center;
             align-items: center;
-        }
-
-        #browser-overlay-message {
-            color: #fff;
+            flex-direction: column;
             font-size: 20px;
             text-align: center;
         }
 
-        #browser-overlay-message button {
-            background-color: #525252;
+        #browser-overlay {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            border: #fff solid 1px;
+            border-radius: 5px;
+            margin: 1.5rem;
+            padding: 1.5rem;
+        }
+
+        #underlying-fallback {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            border: #fff solid 1px;
+            border-radius: 5px;
+            margin: 1.5rem;
+            padding: 1.5rem;
+        }
+        #non-app-main button {
+            background-color: #0486aa;
             border: none;
             color: white;
-            padding: 5px 8px;
+            padding: 15px 32px;
             text-align: center;
             text-decoration: none;
             display: inline-block;
             font-size: 16px;
-            margin: 4px 2px;
-            transition-duration: 0.4s;
+            margin-top: 1.5rem;
             cursor: pointer;
+            border-radius: 5px;
+        }
+
+        #clear-settings-btn {
+            background-color: #a12626 !important;
         }
     </style>
 </body>
