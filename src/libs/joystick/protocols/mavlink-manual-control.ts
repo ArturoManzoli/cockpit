@@ -2,9 +2,9 @@
 /* eslint-disable vue/max-len */
 /* eslint-disable max-len */
 /* eslint-disable jsdoc/require-jsdoc */
-import Swal from 'sweetalert2'
 import { capitalize } from 'vue'
 
+import { useInteractionDialog } from '@/composables/interactionDialog'
 import { sendManualControl } from '@/libs/communication/mavlink'
 import { modifierKeyActions, otherAvailableActions } from '@/libs/joystick/protocols/other'
 import { round, scale } from '@/libs/utils'
@@ -27,91 +27,91 @@ export enum MAVLinkAxisFunction {
  * Possible functions in the MAVLink `MANUAL_CONTROL` message protocol
  */
 export enum MAVLinkButtonFunction {
-    disabled = 'Disabled', // 0
-    shift = 'Shift', // 1
-    arm_toggle = 'Arm toggle', // 2
-    arm = 'Arm', // 3
-    disarm = 'Disarm', // 4
-    mode_manual = 'Mode manual', // 5
-    mode_stabilize = 'Mode stabilize', // 6
-    mode_depth_hold = 'Mode depth hold', // 7
-    mode_poshold = 'Mode poshold', // 8
-    mode_auto = 'Mode auto', // 9
-    mode_circle = 'Mode circle', // 10
-    mode_guided = 'Mode guided', // 11
-    mode_acro = 'Mode acro', // 12
-    mode_surftrak = 'Mode surftrak', // 13
-    mount_center = 'Mount center', // 21
-    mount_tilt_up = 'Mount tilt up', // 22
-    mount_tilt_down = 'Mount tilt down', // 23
-    camera_trigger = 'Camera trigger', // 24
-    camera_source_toggle = 'Camera source toggle', // 25
-    mount_pan_right = 'Mount pan right', // 26
-    mount_pan_left = 'Mount pan left', // 27
-    lights1_cycle = 'Lights1 cycle', // 31
-    lights1_brighter = 'Lights1 brighter', // 32
-    lights1_dimmer = 'Lights1 dimmer', // 33
-    lights2_cycle = 'Lights2 cycle', // 34
-    lights2_brighter = 'Lights2 brighter', // 35
-    lights2_dimmer = 'Lights2 dimmer', // 36
-    gain_toggle = 'Gain toggle', // 41
-    gain_inc = 'Gain inc', // 42
-    gain_dec = 'Gain dec', // 43
-    trim_roll_inc = 'Trim roll inc', // 44
-    trim_roll_dec = 'Trim roll dec', // 45
-    trim_pitch_inc = 'Trim pitch inc', // 46
-    trim_pitch_dec = 'Trim pitch dec', // 47
-    input_hold_set = 'Input hold set', // 48
-    roll_pitch_toggle = 'Roll pitch toggle', // 49
-    relay1_on = 'Relay 1 on', // 51
-    relay1_off = 'Relay 1 off', // 52
-    relay1_toggle = 'Relay 1 toggle', // 53
-    relay2_on = 'Relay 2 on', // 54
-    relay2_off = 'Relay 2 off', // 55
-    relay2_toggle = 'Relay 2 toggle', // 56
-    relay3_on = 'Relay 3 on', // 57
-    relay3_off = 'Relay 3 off', // 58
-    relay3_toggle = 'Relay 3 toggle', // 59
-    servo1_inc = 'Servo 1 inc', // 61
-    servo1_dec = 'Servo 1 dec', // 62
-    servo1_min = 'Servo 1 min', // 63
-    servo1_max = 'Servo 1 max', // 64
-    servo1_center = 'Servo 1 center', // 65
-    servo2_inc = 'Servo 2 inc', // 66
-    servo2_dec = 'Servo 2 dec', // 67
-    servo2_min = 'Servo 2 min', // 68
-    servo2_max = 'Servo 2 max', // 69
-    servo2_center = 'Servo 2 center', // 70
-    servo3_inc = 'Servo 3 inc', // 71
-    servo3_dec = 'Servo 3 dec', // 72
-    servo3_min = 'Servo 3 min', // 73
-    servo3_max = 'Servo 3 max', // 74
-    servo3_center = 'Servo 3 center', // 75
-    servo1_min_momentary = 'Servo 1 min momentary', // 76
-    servo1_max_momentary = 'Servo 1 max momentary', // 77
-    servo1_min_toggle = 'Servo 1 min toggle', // 78
-    servo1_max_toggle = 'Servo 1 max toggle', // 79
-    servo2_min_momentary = 'Servo 2 min momentary', // 80
-    servo2_max_momentary = 'Servo 2 max momentary', // 81
-    servo2_min_toggle = 'Servo 2 min toggle', // 82
-    servo2_max_toggle = 'Servo 2 max toggle', // 83
-    servo3_min_momentary = 'Servo 3 min momentary', // 84
-    servo3_max_momentary = 'Servo 3 max momentary', // 85
-    servo3_min_toggle = 'Servo 3 min toggle', // 86
-    servo3_max_toggle = 'Servo 3 max toggle', // 87
-    custom1 = 'Custom 1', // 91
-    custom2 = 'Custom 2', // 92
-    custom3 = 'Custom 3', // 93
-    custom4 = 'Custom 4', // 94
-    custom5 = 'Custom 5', // 95
-    custom6 = 'Custom 6', // 96
-    relay4_on = 'Relay 4 on', // 101
-    relay4_off = 'Relay 4 off', // 102
-    relay4_toggle = 'Relay 4 toggle', // 103
-    relay1_momentary = 'Relay 1 momentary', // 104
-    relay2_momentary = 'Relay 2 momentary', // 105
-    relay3_momentary = 'Relay 3 momentary', // 106
-    relay4_momentary = 'Relay 4 momentary', // 107
+  disabled = 'Disabled', // 0
+  shift = 'Shift', // 1
+  arm_toggle = 'Arm toggle', // 2
+  arm = 'Arm', // 3
+  disarm = 'Disarm', // 4
+  mode_manual = 'Mode manual', // 5
+  mode_stabilize = 'Mode stabilize', // 6
+  mode_depth_hold = 'Mode depth hold', // 7
+  mode_poshold = 'Mode poshold', // 8
+  mode_auto = 'Mode auto', // 9
+  mode_circle = 'Mode circle', // 10
+  mode_guided = 'Mode guided', // 11
+  mode_acro = 'Mode acro', // 12
+  mode_surftrak = 'Mode surftrak', // 13
+  mount_center = 'Mount center', // 21
+  mount_tilt_up = 'Mount tilt up', // 22
+  mount_tilt_down = 'Mount tilt down', // 23
+  camera_trigger = 'Camera trigger', // 24
+  camera_source_toggle = 'Camera source toggle', // 25
+  mount_pan_right = 'Mount pan right', // 26
+  mount_pan_left = 'Mount pan left', // 27
+  lights1_cycle = 'Lights1 cycle', // 31
+  lights1_brighter = 'Lights1 brighter', // 32
+  lights1_dimmer = 'Lights1 dimmer', // 33
+  lights2_cycle = 'Lights2 cycle', // 34
+  lights2_brighter = 'Lights2 brighter', // 35
+  lights2_dimmer = 'Lights2 dimmer', // 36
+  gain_toggle = 'Gain toggle', // 41
+  gain_inc = 'Gain inc', // 42
+  gain_dec = 'Gain dec', // 43
+  trim_roll_inc = 'Trim roll inc', // 44
+  trim_roll_dec = 'Trim roll dec', // 45
+  trim_pitch_inc = 'Trim pitch inc', // 46
+  trim_pitch_dec = 'Trim pitch dec', // 47
+  input_hold_set = 'Input hold set', // 48
+  roll_pitch_toggle = 'Roll pitch toggle', // 49
+  relay1_on = 'Relay 1 on', // 51
+  relay1_off = 'Relay 1 off', // 52
+  relay1_toggle = 'Relay 1 toggle', // 53
+  relay2_on = 'Relay 2 on', // 54
+  relay2_off = 'Relay 2 off', // 55
+  relay2_toggle = 'Relay 2 toggle', // 56
+  relay3_on = 'Relay 3 on', // 57
+  relay3_off = 'Relay 3 off', // 58
+  relay3_toggle = 'Relay 3 toggle', // 59
+  servo1_inc = 'Servo 1 inc', // 61
+  servo1_dec = 'Servo 1 dec', // 62
+  servo1_min = 'Servo 1 min', // 63
+  servo1_max = 'Servo 1 max', // 64
+  servo1_center = 'Servo 1 center', // 65
+  servo2_inc = 'Servo 2 inc', // 66
+  servo2_dec = 'Servo 2 dec', // 67
+  servo2_min = 'Servo 2 min', // 68
+  servo2_max = 'Servo 2 max', // 69
+  servo2_center = 'Servo 2 center', // 70
+  servo3_inc = 'Servo 3 inc', // 71
+  servo3_dec = 'Servo 3 dec', // 72
+  servo3_min = 'Servo 3 min', // 73
+  servo3_max = 'Servo 3 max', // 74
+  servo3_center = 'Servo 3 center', // 75
+  servo1_min_momentary = 'Servo 1 min momentary', // 76
+  servo1_max_momentary = 'Servo 1 max momentary', // 77
+  servo1_min_toggle = 'Servo 1 min toggle', // 78
+  servo1_max_toggle = 'Servo 1 max toggle', // 79
+  servo2_min_momentary = 'Servo 2 min momentary', // 80
+  servo2_max_momentary = 'Servo 2 max momentary', // 81
+  servo2_min_toggle = 'Servo 2 min toggle', // 82
+  servo2_max_toggle = 'Servo 2 max toggle', // 83
+  servo3_min_momentary = 'Servo 3 min momentary', // 84
+  servo3_max_momentary = 'Servo 3 max momentary', // 85
+  servo3_min_toggle = 'Servo 3 min toggle', // 86
+  servo3_max_toggle = 'Servo 3 max toggle', // 87
+  custom1 = 'Custom 1', // 91
+  custom2 = 'Custom 2', // 92
+  custom3 = 'Custom 3', // 93
+  custom4 = 'Custom 4', // 94
+  custom5 = 'Custom 5', // 95
+  custom6 = 'Custom 6', // 96
+  relay4_on = 'Relay 4 on', // 101
+  relay4_off = 'Relay 4 off', // 102
+  relay4_toggle = 'Relay 4 toggle', // 103
+  relay1_momentary = 'Relay 1 momentary', // 104
+  relay2_momentary = 'Relay 2 momentary', // 105
+  relay3_momentary = 'Relay 3 momentary', // 106
+  relay4_momentary = 'Relay 4 momentary', // 107
 }
 
 export enum MAVLinkManualControlButton {
@@ -181,6 +181,8 @@ export enum MAVLinkManualControlButton {
   S31 = 'BTN31_SFUNCTION',
 }
 
+const { showDialog } = useInteractionDialog()
+
 const manualControlButtonFromParameterName = (name: string): MAVLinkManualControlButton | undefined => {
   const button = Object.entries(MAVLinkManualControlButton).find((entry) => entry[1] === name)?.[0]
   return button === undefined ? button : button as MAVLinkManualControlButton
@@ -196,7 +198,7 @@ export class MAVLinkManualControlAxisAction implements ProtocolAction {
    * @param {MAVLinkAxisFunction} id Axis identification
    * @param {string} name Axis human-readable name
    */
-  constructor(public id: MAVLinkAxisFunction, public name: string) {}
+  constructor(public id: MAVLinkAxisFunction, public name: string) { }
 }
 
 /**
@@ -209,7 +211,7 @@ export class MAVLinkManualControlButtonAction implements ProtocolAction {
    * @param {MAVLinkButtonFunction} id Button identification
    * @param {string} name Button human-readable name
    */
-  constructor(public id: MAVLinkButtonFunction, public name: string) {}
+  constructor(public id: MAVLinkButtonFunction, public name: string) { }
 }
 
 // Available axis actions
@@ -592,10 +594,11 @@ export class MavlinkManualControlManager {
     finallyRemainedUnmappedRegularMavlinkActions.forEach((actionId) => {
       const buttonAction = Object.entries(this.currentActionsMapping.buttonsCorrespondencies.regular).find((v) => v[1].action.id === actionId)
       if (buttonAction === undefined) return
-      Swal.fire({
-        text: `There are no spots left in the vehicle for the MAVLink Manual Control function ${actionId}.
+      showDialog({
+        maxWidth: 600,
+        message: `There are no spots left in the vehicle for the MAVLink Manual Control function ${actionId}.
         Consider mapping this function to a shift button.`,
-        icon: 'error',
+        variant: 'error',
         timer: 6000,
       })
       this.currentActionsMapping.buttonsCorrespondencies.regular[Number(buttonAction[0]) as JoystickButton].action = otherAvailableActions.no_function
@@ -604,10 +607,11 @@ export class MavlinkManualControlManager {
     finallyRemainedUnmappedShiftMavlinkActions.forEach((actionId) => {
       const buttonAction = Object.entries(this.currentActionsMapping.buttonsCorrespondencies.shift).find((v) => v[1].action.id === actionId)
       if (buttonAction === undefined) return
-      Swal.fire({
-        text: `There are no spots left in the vehicle for the MAVLink Manual Control function ${actionId}.
+      showDialog({
+        maxWidth: 600,
+        message: `There are no spots left in the vehicle for the MAVLink Manual Control function ${actionId}.
         Consider mapping this function to a shift button.`,
-        icon: 'error',
+        variant: 'error',
         timer: 6000,
       })
       this.currentActionsMapping.buttonsCorrespondencies.shift[Number(buttonAction[0]) as JoystickButton].action = otherAvailableActions.no_function
