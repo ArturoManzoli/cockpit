@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { v4 as uuid4 } from 'uuid'
-import { computed, onBeforeUnmount, ref, toRefs, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
 import { JoystickModel } from '@/libs/joystick/manager'
 import { scale } from '@/libs/utils'
@@ -206,7 +206,6 @@ watch(
 
 const joystickModel = toRefs(props).model
 const buttonsActionsCorrespondency = toRefs(props).buttonsActionsCorrespondency
-watch(buttonsActionsCorrespondency, () => updateLabelsState())
 
 const updateLabelsState = (): void => {
   Object.values(JoystickButton).forEach((button) => {
