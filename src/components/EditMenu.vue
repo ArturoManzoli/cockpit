@@ -91,6 +91,13 @@
             </div>
 
             <v-divider />
+            <v-list-item class="hover:bg-white/[0.04]">
+              <label class="flex w-full h-full cursor-pointer justify-between">
+                <v-list-item-title>Import</v-list-item-title>
+                <input type="file" accept="application/json" hidden @change="(e: Event) => store.importProfile(e)" />
+                <v-icon size="20">mdi-upload</v-icon>
+              </label>
+            </v-list-item>
             <v-list-item @click="store.exportProfile(store.currentProfile)">
               <div class="flex w-full justify-between">
                 <v-list-item-title>Export</v-list-item-title>
@@ -124,6 +131,12 @@
               <div class="flex w-full justify-between mt-[6px]">
                 <v-list-item-title>Add new profile</v-list-item-title>
                 <v-icon size="22">mdi-plus</v-icon>
+              </div>
+            </v-list-item>
+            <v-list-item @click="store.snapToGrid = !store.snapToGrid">
+              <div class="flex w-full justify-between mt-[6px]">
+                <v-list-item-title>{{ store.snapToGrid ? 'Disable grid' : 'Enable grid' }}</v-list-item-title>
+                <v-icon size="22">{{ store.snapToGrid ? 'mdi-grid' : 'mdi-grid-off' }}</v-icon>
               </div>
             </v-list-item>
             <v-list-item @click="resetSavedProfiles">
@@ -566,15 +579,6 @@
       </v-card>
     </GlassModal>
   </teleport>
-  <teleport to="body">
-    <v-dialog v-model="editMenuDialogRevealed" width="20rem">
-      <v-card class="pa-2">
-        <v-card-text>
-          <v-switch v-model="store.snapToGrid" label="Snap to grid" class="m-2 text-slate-800" />
-        </v-card-text>
-      </v-card>
-    </v-dialog>
-  </teleport>
 </template>
 
 <script setup lang="ts">
@@ -746,9 +750,6 @@ const widgetAddMenuGroupOptions = {
 
 const editMode = toRefs(props).editMode
 
-const editMenuDialogRevealed = ref(false)
-useConfirmDialog(editMenuDialogRevealed)
-
 const viewBeingRenamed = ref(store.currentView)
 const newViewName = ref('')
 const viewRenameDialogRevealed = ref(false)
@@ -818,6 +819,7 @@ const resetSavedProfiles = (): void => {
         text: 'reset profiles',
         action: () => {
           store.resetSavedProfiles()
+          closeDialog()
         },
       },
     ],
