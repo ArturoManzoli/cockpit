@@ -31,18 +31,6 @@
                     : 'lg:gap-y-3 xl:gap-y-4 gap-y-5 py-5'
                 "
               >
-                <div
-                  v-if="interfaceStore.mainMenuStyleTrigger === 'center-left'"
-                  id="menu-trigger"
-                  class="absolute right-0 top-[50%] -translate-y-[50%] flex items-center justify-center w-[30px] px-0 py-2 cursor-pointer overflow-hidden rounded-r-lg rounded-br-lg -ml-[1px]"
-                  @click="toggleMainMenu"
-                >
-                  <v-icon
-                    class="text-white opacity-70"
-                    :class="simplifiedMainMenu ? 'text-[30px] -mr-[14px]' : 'text-[40px] -mr-[8px]'"
-                    >mdi-menu-left</v-icon
-                  >
-                </div>
                 <GlassButton
                   v-if="route.name === 'widgets-view'"
                   :label="simplifiedMainMenu ? '' : 'Edit Interface'"
@@ -89,7 +77,7 @@
                   :icon-class="
                     interfaceStore.isOnSmallScreen
                       ? 'scale-[95%] -mr-[2px] -mb-[1px]'
-                      : 'scale-[95%] lg:-mr-[2px] -mr-[3px]'
+                      : 'scale-[95%] ml-[2px] lg:-mr-[2px]'
                   "
                   :icon-size="simplifiedMainMenu ? 25 : undefined"
                   :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
@@ -111,13 +99,13 @@
                   :icon-class="
                     interfaceStore.isOnSmallScreen
                       ? 'scale-[100%] -mb-[1px] md:ml-[2px]'
-                      : 'scale-[95%] -mb-[2px] lg:-mr-[1px] -mr-[2px] xl:-mb-[2px]'
+                      : 'scale-[97%]  lg:ml-[1px] -mr-[2px] xl:-mb-[4px]'
                   "
                   :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
                   :tooltip="simplifiedMainMenu ? 'Configuration' : undefined"
-                  :button-class="!simplifiedMainMenu ? '-mt-[5px]' : undefined"
                   :width="buttonSize"
                   :selected="showConfigurationMenu"
+                  class="mb-2"
                   @click="mainMenuStep = 2"
                 />
                 <GlassButton
@@ -128,7 +116,7 @@
                   :icon-class="
                     interfaceStore.isOnSmallScreen
                       ? '-mb-[1px] scale-90 -mr-[2px] md:ml-[1px] md:-mb-[2px]'
-                      : '2xl:-mb-[2px] xl:-mb-[2px] -mb-[1px] scale-90 -mr-[2px]'
+                      : '2xl:-mb-[2px] xl:-mb-[2px] -mb-[1px] scale-90 -mr-[3px]'
                   "
                   :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
                   :tooltip="simplifiedMainMenu ? (isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen') : undefined"
@@ -141,6 +129,23 @@
                       closeMainMenu()
                     }
                   "
+                />
+                <GlassButton
+                  :label="simplifiedMainMenu ? '' : 'About'"
+                  :label-class="[menuLabelSize, '-mb-1']"
+                  icon="mdi-information-outline"
+                  :icon-size="simplifiedMainMenu ? 25 : undefined"
+                  :icon-class="
+                    interfaceStore.isOnSmallScreen
+                      ? 'scale-[100%] -mb-[1px] md:ml-[2px]'
+                      : 'scale-[95%] -mb-[2px] lg:-mr-[1px] -mr-[2px] xl:-mb-[2px]'
+                  "
+                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
+                  :tooltip="simplifiedMainMenu ? 'About' : undefined"
+                  :button-class="!simplifiedMainMenu ? '-mt-[5px]' : undefined"
+                  :width="buttonSize"
+                  :selected="showConfigurationMenu"
+                  @click="openAboutDialog"
                 />
               </div>
             </v-window-item>
@@ -159,7 +164,7 @@
                   :selected="currentConfigMenuComponent === menuitem.component"
                   variant="uncontained"
                   :height="buttonSize * 0.45"
-                  :icon-size="buttonSize * 0.6"
+                  :icon-size="buttonSize * 0.5"
                   @click="toggleConfigComponent(menuitem.component)"
                   ><template #content
                     ><div v-if="currentConfigMenuComponent === menuitem.component" class="arrow-left"></div></template
@@ -198,42 +203,6 @@
         </GlassModal>
       </teleport>
 
-      <teleport to="body">
-        <v-dialog v-model="showMissionOptionsDialog" width="50%">
-          <v-card class="pa-2 bg-[#20202022] backdrop-blur-2xl text-white rounded-lg">
-            <v-card-title class="flex justify-between">
-              <div />
-              <div>Mission configuration</div>
-              <v-btn
-                icon
-                :width="38"
-                :height="34"
-                variant="text"
-                class="bg-transparent -mt-1 -mr-3"
-                @click="showMissionOptionsDialog = false"
-              >
-                <v-icon
-                  :size="interfaceStore.isOnSmallScreen ? 22 : 26"
-                  :class="interfaceStore.isOnSmallScreen ? '-mr-[10px] -mt-[10px]' : '-mr-[2px]'"
-                  >mdi-close</v-icon
-                >
-              </v-btn>
-            </v-card-title>
-            <v-card-text>
-              <div class="flex flex-col">
-                <p>Misison Name</p>
-                <v-text-field
-                  v-model="store.missionName"
-                  append-inner-icon="mdi-restore"
-                  class="mt-1"
-                  @click:append-inner="store.missionName = store.lastMissionName"
-                />
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-dialog>
-      </teleport>
-
       <div ref="routerSection" class="router-view">
         <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }">
           <div
@@ -251,33 +220,28 @@
             >
               <span class="text-3xl transition-all mdi mdi-menu text-slate-300 hover:text-slate-50" />
             </button>
-            <div
-              class="flex items-center justify-start h-full px-4 mr-1 transition-all cursor-pointer hover:bg-slate-200/30 min-w-[20%] select-none"
-              :class="widgetStore.editingMode ? 'pointer-events-none' : 'pointer-events-auto'"
-              @click="showMissionOptionsDialog = true"
-            >
-              <div class="flex items-center overflow-hidden text-lg font-medium text-white whitespace-nowrap">
-                <p v-if="store.missionName" class="overflow-x-hidden text-ellipsis">{{ store.missionName }}</p>
-                <p v-else class="overflow-x-hidden text-ellipsis">
-                  {{ randomMissionName }}
-                  <FontAwesomeIcon icon="fa-pen-to-square" size="1x" class="ml-2 text-slate-200/30" />
-                </p>
-              </div>
-            </div>
-            <div class="grow" />
-            <Alerter class="min-w-[30%] max-w-[30%]" />
-            <div class="grow" />
             <div class="flex-1">
               <MiniWidgetContainer
                 :container="widgetStore.currentMiniWidgetsProfile.containers[0]"
                 :allow-editing="widgetStore.editingMode"
-                align="end"
+                align="start"
               />
             </div>
-            <div
-              class="flex items-center justify-center m-2 text-sm font-bold text-center text-white select-none min-w-[80px]"
-            >
-              {{ format(timeNow, 'E LLL do HH:mm') }}
+            <div class="grow" />
+            <div class="flex-1">
+              <MiniWidgetContainer
+                :container="widgetStore.currentMiniWidgetsProfile.containers[1]"
+                :allow-editing="widgetStore.editingMode"
+                align="center"
+              />
+            </div>
+            <div class="grow" />
+            <div class="flex-1">
+              <MiniWidgetContainer
+                :container="widgetStore.currentMiniWidgetsProfile.containers[2]"
+                :allow-editing="widgetStore.editingMode"
+                align="end"
+              />
             </div>
           </div>
           <AltitudeSlider />
@@ -320,30 +284,28 @@
       </div>
     </v-main>
   </v-app>
+  <About v-if="showAboutDialog" />
 </template>
 
 <script setup lang="ts">
-import { onClickOutside, useDebounceFn, useFullscreen, useTimestamp, useWindowSize } from '@vueuse/core'
-import { format } from 'date-fns'
+import { onClickOutside, useDebounceFn, useFullscreen, useWindowSize } from '@vueuse/core'
 import { computed, DefineComponent, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import GlassModal from '@/components/GlassModal.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
-import { coolMissionNames } from '@/libs/funny-name/words'
 import {
   availableCockpitActions,
   registerActionCallback,
   unregisterActionCallback,
 } from '@/libs/joystick/protocols/cockpit-actions'
-import { useMissionStore } from '@/stores/mission'
 
+import About from './components/About.vue'
 import AltitudeSlider from './components/AltitudeSlider.vue'
 import EditMenu from './components/EditMenu.vue'
 import GlassButton from './components/GlassButton.vue'
 import MiniWidgetContainer from './components/MiniWidgetContainer.vue'
 import SlideToConfirm from './components/SlideToConfirm.vue'
-import Alerter from './components/widgets/Alerter.vue'
 import { datalogger } from './libs/sensors-logging'
 import { useAppInterfaceStore } from './stores/appInterface'
 import { useMainVehicleStore } from './stores/mainVehicle'
@@ -363,6 +325,7 @@ const widgetStore = useWidgetManagerStore()
 const vehicleStore = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
 
+const showAboutDialog = ref(false)
 const showConfigurationMenu = ref(false)
 type ConfigComponent = DefineComponent<Record<string, never>, Record<string, never>, unknown> | null
 const currentConfigMenuComponent = ref<ConfigComponent>(null)
@@ -587,6 +550,11 @@ const glassMenuStyles = computed(() => ({
   backdropFilter: `blur(${interfaceStore.UIGlassEffect.blur}px)`,
 }))
 
+const openAboutDialog = (): void => {
+  showAboutDialog.value = true
+  closeMainMenu()
+}
+
 const route = useRoute()
 const routerSection = ref()
 
@@ -602,14 +570,7 @@ onBeforeUnmount(() => unregisterActionCallback(fullScreenCallbackId))
 
 const fullScreenToggleIcon = computed(() => (isFullscreen.value ? 'mdi-fullscreen-exit' : 'mdi-overscan'))
 
-// Mission identification
-const store = useMissionStore()
-const showMissionOptionsDialog = ref(false)
-const randomMissionName = coolMissionNames.random()
 const currentSelectedViewName = computed(() => widgetStore.currentView.name)
-
-// Clock
-const timeNow = useTimestamp({ interval: 1000 })
 
 const { width: windowWidth } = useWindowSize()
 
@@ -648,8 +609,9 @@ const resetHideMouseTimeout = (): void => {
 
 document.addEventListener('mousemove', resetHideMouseTimeout)
 
-// Control bottom bar momentary hiding
+// Control top/bottom bar momentary hiding
 const showBottomBarNow = ref(widgetStore.currentView.showBottomBarOnBoot)
+const showTopBarNow = ref(true)
 watch([() => widgetStore.currentView, () => widgetStore.currentView.showBottomBarOnBoot], () => {
   showBottomBarNow.value = widgetStore.currentView.showBottomBarOnBoot
 })
@@ -658,7 +620,12 @@ const bottomBarToggleCallbackId = registerActionCallback(
   availableCockpitActions.toggle_bottom_bar,
   debouncedToggleBottomBar
 )
-onBeforeUnmount(() => unregisterActionCallback(bottomBarToggleCallbackId))
+const debouncedToggleTopBar = useDebounceFn(() => (showTopBarNow.value = !showTopBarNow.value), 25)
+const topBarToggleCallbackId = registerActionCallback(availableCockpitActions.toggle_top_bar, debouncedToggleTopBar)
+onBeforeUnmount(() => {
+  unregisterActionCallback(bottomBarToggleCallbackId)
+  unregisterActionCallback(topBarToggleCallbackId)
+})
 
 // Start datalogging
 datalogger.startLogging()
