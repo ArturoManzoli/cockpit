@@ -1,16 +1,31 @@
-import { type RemovableRef, useStorage, watchThrottled } from '@vueuse/core'
-import { type MaybeRef, onMounted, ref, unref } from 'vue'
+import { type RemovableRef, useStorage } from '@vueuse/core'
+import { type MaybeRef, onMounted, ref, toRaw, unref, watch } from 'vue'
 
 import {
   getKeyDataFromCockpitVehicleStorage,
   NoPathInBlueOsErrorName,
   setKeyDataOnCockpitVehicleStorage,
 } from '@/libs/blueos'
-import { isEqual } from '@/libs/utils'
+import { isEqual, reloadCockpit } from '@/libs/utils'
 import { useDevelopmentStore } from '@/stores/development'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
+import { useMissionStore } from '@/stores/mission'
+import { savedProfilesKey } from '@/stores/widgetManager'
 
 import { useInteractionDialog } from './interactionDialog'
+import { openSnackbar } from './snackbar'
+
+const getVehicleAddress = async (): Promise<string> => {
+  const vehicleStore = useMainVehicleStore()
+
+  // Wait until we have a global address
+  while (vehicleStore.globalAddress === undefined) {
+    console.debug('Waiting for vehicle global address on BlueOS sync routine.')
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+
+  return vehicleStore.globalAddress
+}
 
 /**
  * This composable will keep a setting in sync between the browser's local storage and BlueOS.
@@ -38,16 +53,38 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
   let initialSyncTimeout: ReturnType<typeof setTimeout> | undefined = undefined
   let blueOsUpdateTimeout: ReturnType<typeof setTimeout> | undefined = undefined
 
-  const getVehicleAddress = async (): Promise<string> => {
-    const vehicleStore = useMainVehicleStore()
+  const getUsername = async (): Promise<string> => {
+    const missionStore = useMissionStore()
 
-    while (vehicleStore.globalAddress === undefined) {
-      console.debug('Waiting for vehicle global address on BlueOS sync routine.')
+    // Wait until we have a username
+    while (!missionStore.username) {
+      console.debug('Waiting for username on BlueOS sync routine.')
       await new Promise((r) => setTimeout(r, 1000))
-      // Wait until we have a global address
     }
 
-    return vehicleStore.globalAddress
+    return missionStore.username
+  }
+
+  const getCurrentVehicleId = async (): Promise<string> => {
+    const vehicleStore = useMainVehicleStore()
+
+    // Wait until we have a vehicle ID
+    while (!vehicleStore.currentlyConnectedVehicleId) {
+      console.debug('Waiting for vehicle ID on BlueOS sync routine.')
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+
+    return vehicleStore.currentlyConnectedVehicleId
+  }
+
+  const getLastConnectedVehicleId = async (): Promise<string | undefined> => {
+    const vehicleStore = useMainVehicleStore()
+    return vehicleStore.lastConnectedVehicleId
+  }
+
+  const getLastConnectedUser = async (): Promise<string | undefined> => {
+    const missoinStore = useMissionStore()
+    return missoinStore.lastConnectedUser
   }
 
   const askIfUserWantsToUseBlueOsValue = async (): Promise<boolean> => {
@@ -82,6 +119,7 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
 
   const updateValueOnBlueOS = async (newValue: T): Promise<void> => {
     const vehicleAddress = await getVehicleAddress()
+    const username = await getUsername()
 
     console.debug(`Updating '${key}' on BlueOS.`)
 
@@ -90,10 +128,14 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
       clearTimeout(blueOsUpdateTimeout)
 
       try {
-        await setKeyDataOnCockpitVehicleStorage(vehicleAddress, key, newValue)
-        console.info(`Success updating '${key}' on BlueOS.`)
+        await setKeyDataOnCockpitVehicleStorage(vehicleAddress, `settings/${username}/${key}`, newValue)
+        const message = `Success updating '${key}' on BlueOS.`
+        openSnackbar({ message, duration: 3000, variant: 'success' })
+        console.info(message)
       } catch (fetchError) {
-        console.error(`Failed updating '${key}' on BlueOS. Will keep trying.`)
+        const message = `Failed updating '${key}' on BlueOS. Will keep trying.`
+        openSnackbar({ message, duration: 3000, variant: 'error' })
+        console.error(message)
         console.error(fetchError)
 
         // If we can't update the value on BlueOS, try again in 10 seconds
@@ -107,12 +149,16 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
 
   const tryToDoInitialSync = async (): Promise<void> => {
     const vehicleAddress = await getVehicleAddress()
+    const username = await getUsername()
+    const currentVehicleId = await getCurrentVehicleId()
+    const lastConnectedVehicleId = await getLastConnectedVehicleId()
+    const lastConnectedUser = await getLastConnectedUser()
 
     // Clear initial sync routine if there's one left, as we are going to start a new one
     clearTimeout(initialSyncTimeout)
 
     try {
-      const valueOnBlueOS = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, key)
+      const valueOnBlueOS = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, `settings/${username}/${key}`)
       console.debug(`Success getting value of '${key}' from BlueOS:`, valueOnBlueOS)
 
       // If the value on BlueOS is the same as the one we have locally, we don't need to bother the user
@@ -122,15 +168,41 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
         return
       }
 
-      // If Cockpit has a different value than BlueOS, ask the user if they want to use the value from BlueOS or
-      // if they want to update BlueOS with the value from Cockpit.
+      // By default, if there's a conflict, we use the value from BlueOS.
+      let useBlueOsValue = true
 
-      const useBlueOsValue = await askIfUserWantsToUseBlueOsValue()
+      // If the connected vehicle is the same as the last connected vehicle, and the user is also the same, and there
+      // are conflicts, it means the user has made changes while offline, so we ask the user if they want to keep the
+      // local value or the one from BlueOS.
+      // If the connected vehicle is different from the last connected vehicle, we just use the value from BlueOS, as we
+      // don't want to overwrite the value on the new vehicle with the one from the previous vehicle.
+      if (lastConnectedUser === username && lastConnectedVehicleId === currentVehicleId) {
+        console.debug(`Conflict with BlueOS for key '${key}'. Asking user what to do.`)
+        useBlueOsValue = await askIfUserWantsToUseBlueOsValue()
+      }
 
       if (useBlueOsValue) {
         currentValue.value = valueOnBlueOS as T
+        const message = `Fetched remote value of key ${key} from the vehicle.`
+        openSnackbar({ message, duration: 3000, variant: 'success' })
+
+        // TODO: This is a workaround to make the profiles work after an import.
+        // We need to find a better way to handle this, without reloading.
+        if (key === savedProfilesKey) {
+          await showDialog({
+            title: 'Widget profiles imported',
+            message: `The widget profiles have been imported from the vehicle. We need to reload the page to apply the
+            changes.`,
+            variant: 'warning',
+            actions: [{ text: 'OK', action: closeDialog }],
+            timer: 3000,
+          })
+          reloadCockpit()
+        }
       } else {
-        updateValueOnBlueOS(currentValue.value)
+        await updateValueOnBlueOS(currentValue.value)
+        const message = `Pushed local value of key ${key} to the vehicle.`
+        openSnackbar({ message, duration: 3000, variant: 'success' })
       }
 
       console.info(`Success syncing '${key}' with BlueOS.`)
@@ -139,17 +211,25 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
     } catch (initialSyncError) {
       // If the initial sync fails because there's no value for the key on BlueOS, we can just use the current value
       if ((initialSyncError as Error).name === NoPathInBlueOsErrorName) {
-        console.debug(`No value for '${key}' on BlueOS. Using current value.`)
-        updateValueOnBlueOS(currentValue.value)
-        finishedInitialFetch.value = true
-        return
+        console.debug(`No value for '${key}' on BlueOS. Using current value. Will push it to BlueOS.`)
+        try {
+          await updateValueOnBlueOS(currentValue.value)
+          finishedInitialFetch.value = true
+          return
+        } catch (fetchError) {
+          console.error(`Not able to push current value of '${key}' to BlueOS. ${fetchError}`)
+          console.error(`Failed syncing '${key}' with BlueOS. Will keep trying.`)
+
+          // If we can't update the value on BlueOS, try again in 10 seconds
+          initialSyncTimeout = setTimeout(tryToDoInitialSync, 10000)
+          return
+        }
       }
 
       // If the initial sync fails because we can't connect to BlueOS, try again in 10 seconds
       initialSyncTimeout = setTimeout(tryToDoInitialSync, 10000)
 
-      console.error(`Failed syncing '${key}' with BlueOS. Will keep trying.`)
-      console.error(`Not able to get current value of '${key}' on BlueOS. ${initialSyncError}`)
+      console.error(`Failed syncing '${key}' with BlueOS. Will keep trying. Error: ${initialSyncError}`)
     }
   }
 
@@ -165,19 +245,45 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
 
   // Update BlueOS value when local value changes.
   // Throttle to avoid spamming BlueOS with requests while the user is updating the value.
-  watchThrottled(
+  let valueBeforeDebouncedChange = structuredClone(toRaw(currentValue.value))
+  let valueUpdateMethodTimeout: ReturnType<typeof setTimeout> | undefined = undefined
+
+  const maybeUpdateValueOnBlueOs = async (newValue: T, oldValue: T): Promise<void> => {
+    console.debug(`Detected changes in the local value for key '${key}'. Updating BlueOS.`)
+
+    // Don't update the value on BlueOS if we haven't finished the initial fetch, so we don't overwrite the value there without user consent
+    if (!finishedInitialFetch.value) {
+      console.debug(`Value of '${key}' changed, but we haven't finished the initial fetch. Not updating BlueOS.`)
+      return
+    }
+
+    if (isEqual(newValue, oldValue)) {
+      console.debug(`Old value for key ${key} is equal to the new one. Aborting update on BlueOS.`)
+      return
+    }
+
+    valueBeforeDebouncedChange = structuredClone(toRaw(newValue))
+
+    const devStore = useDevelopmentStore()
+    if (!devStore.enableBlueOsSettingsSync) return
+
+    updateValueOnBlueOS(newValue)
+  }
+
+  watch(
     currentValue,
     async (newValue) => {
-      const devStore = useDevelopmentStore()
-      if (!devStore.enableBlueOsSettingsSync) return
-
-      // Don't update the value on BlueOS if we haven't finished the initial fetch, so we don't overwrite the value there without user consent
-      if (!finishedInitialFetch.value) return
-
-      updateValueOnBlueOS(newValue)
+      clearTimeout(valueUpdateMethodTimeout)
+      valueUpdateMethodTimeout = setTimeout(() => maybeUpdateValueOnBlueOs(newValue, valueBeforeDebouncedChange), 3000)
     },
-    { throttle: 3000, deep: true }
+    { deep: true }
   )
 
   return currentValue
+}
+
+export const getSettingsUsernamesFromBlueOS = async (): Promise<string[]> => {
+  const vehicleAddress = await getVehicleAddress()
+  const usernames = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, 'settings')
+  return Object.keys(usernames as string[])
 }
