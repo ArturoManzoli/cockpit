@@ -5,6 +5,7 @@
         <div
           id="menu-trigger"
           class="menu-trigger flex items-center justify-center w-[30px] px-0 py-2 cursor-pointer overflow-hidden rounded-r-lg rounded-br-lg -ml-[1px]"
+          :class="interfaceStore.isOnSmallScreen ? 'top-[30%]' : 'top-[50%]'"
           :style="interfaceStore.globalGlassMenuStyles"
           @click="toggleMainMenu"
         >
@@ -137,7 +138,7 @@
                   :icon-size="simplifiedMainMenu ? 25 : undefined"
                   :icon-class="
                     interfaceStore.isOnSmallScreen
-                      ? 'scale-[100%] -mb-[1px] md:ml-[2px]'
+                      ? 'scale-[90%] mt-[15px] -mr-[4px] md:ml-[1px] md:-mb-[2px]'
                       : 'scale-[95%] -mb-[2px] lg:-mr-[1px] -mr-[2px] xl:-mb-[2px]'
                   "
                   :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
@@ -197,6 +198,7 @@
         <GlassModal
           :is-visible="currentConfigMenuComponent !== null && mainMenuStep !== 1"
           position="menuitem"
+          :class="interfaceStore.isVideoLibraryVisible ? 'opacity-0' : 'opacity-100'"
           @close-modal="currentConfigMenuComponent = null"
         >
           <component :is="currentConfigMenuComponent"></component>
@@ -204,7 +206,7 @@
       </teleport>
 
       <div ref="routerSection" class="router-view">
-        <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }">
+        <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }" :style="connectionStatusFeedback">
           <div
             id="mainTopBar"
             class="bar top-bar"
@@ -284,7 +286,8 @@
       </div>
     </v-main>
   </v-app>
-  <About v-if="showAboutDialog" />
+  <About v-if="showAboutDialog" @update:show-about-dialog="showAboutDialog = $event" />
+  <VideoLibraryModal :open-modal="interfaceStore.isVideoLibraryVisible" />
 </template>
 
 <script setup lang="ts">
@@ -293,6 +296,7 @@ import { computed, DefineComponent, markRaw, onBeforeUnmount, onMounted, ref, wa
 import { useRoute } from 'vue-router'
 
 import GlassModal from '@/components/GlassModal.vue'
+import VideoLibraryModal from '@/components/VideoLibraryModal.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import {
   availableCockpitActions,
@@ -306,7 +310,7 @@ import EditMenu from './components/EditMenu.vue'
 import GlassButton from './components/GlassButton.vue'
 import MiniWidgetContainer from './components/MiniWidgetContainer.vue'
 import SlideToConfirm from './components/SlideToConfirm.vue'
-import { datalogger } from './libs/sensors-logging'
+import { useSnackbar } from './composables/snackbar'
 import { useAppInterfaceStore } from './stores/appInterface'
 import { useMainVehicleStore } from './stores/mainVehicle'
 import { useWidgetManagerStore } from './stores/widgetManager'
@@ -320,6 +324,7 @@ import ConfigurationUIView from './views/ConfigurationUIView.vue'
 import ConfigurationVideoView from './views/ConfigurationVideoView.vue'
 
 const { showDialog, closeDialog } = useInteractionDialog()
+const { showSnackbar } = useSnackbar()
 
 const widgetStore = useWidgetManagerStore()
 const vehicleStore = useMainVehicleStore()
@@ -513,6 +518,42 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleEscKey)
 })
 
+/* eslint-disable jsdoc/require-jsdoc  */
+const connectionStatusFeedback = ref<{ border: string; transition?: string }>({ border: '0px' })
+
+const resetConnectionStatusFeedback = (): void => {
+  setTimeout(() => {
+    connectionStatusFeedback.value = {
+      border: '0px solid transparent',
+      transition: 'border 4s ease-out',
+    }
+  }, 4000)
+}
+
+// Connection monitoring and visual feedback
+watch(
+  () => vehicleStore.isVehicleOnline,
+  (isOnline) => {
+    if (!isOnline) {
+      showSnackbar({
+        message: 'Vehicle connection lost: reestablishing',
+        variant: 'error',
+        duration: 3000,
+        closeButton: false,
+      })
+      connectionStatusFeedback.value = { border: '3px solid red' }
+
+      resetConnectionStatusFeedback()
+      return
+    }
+
+    showSnackbar({ message: 'Vehicle connected', variant: 'success', duration: 3000, closeButton: false })
+    connectionStatusFeedback.value = { border: '3px solid green' }
+
+    resetConnectionStatusFeedback()
+  }
+)
+
 const buttonSize = computed(() => {
   if (interfaceStore.is2xl) return 60
   if (interfaceStore.isXl) return 55
@@ -627,9 +668,6 @@ onBeforeUnmount(() => {
   unregisterActionCallback(topBarToggleCallbackId)
 })
 
-// Start datalogging
-datalogger.startLogging()
-
 // Dynamic styles
 const currentTopBarHeightPixels = computed(() => `${widgetStore.currentTopBarHeightPixels}px`)
 const currentBottomBarHeightPixels = computed(() => `${widgetStore.currentBottomBarHeightPixels}px`)
@@ -740,7 +778,6 @@ body.hide-cursor {
 .menu-trigger {
   position: fixed;
   left: 0;
-  top: 50%;
   transform: translateY(-50%);
   z-index: 1050;
 }

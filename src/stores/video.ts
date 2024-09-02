@@ -16,7 +16,7 @@ import { WebRTCManager } from '@/composables/webRTC'
 import { getIpsInformationFromVehicle } from '@/libs/blueos'
 import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
 import { datalogger } from '@/libs/sensors-logging'
-import { isEqual } from '@/libs/utils'
+import { isEqual, sleep } from '@/libs/utils'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useMissionStore } from '@/stores/mission'
 import { Alert, AlertLevel } from '@/types/alert'
@@ -29,6 +29,7 @@ import {
   type VideoProcessingDetails,
   getBlobExtensionContainer,
   VideoExtensionContainer,
+  VideoStreamCorrespondency,
 } from '@/types/video'
 
 import { useAlertStore } from './alert'
@@ -42,6 +43,7 @@ export const useVideoStore = defineStore('video', () => {
   const { globalAddress, rtcConfiguration, webRTCSignallingURI } = useMainVehicleStore()
   console.debug('[WebRTC] Using webrtc-adapter for', adapter.browserDetails)
 
+  const streamsCorrespondency = useBlueOsStorage<VideoStreamCorrespondency[]>('cockpit-streams-correspondency', [])
   const allowedIceIps = useBlueOsStorage<string[]>('cockpit-allowed-stream-ips', [])
   const enableAutoIceIpFetch = useBlueOsStorage('cockpit-enable-auto-ice-ip-fetch', true)
   const allowedIceProtocols = useBlueOsStorage<string[]>('cockpit-allowed-stream-protocols', [])
@@ -55,6 +57,35 @@ export const useVideoStore = defineStore('video', () => {
   const autoProcessVideos = useBlueOsStorage('cockpit-auto-process-videos', true)
 
   const namesAvailableStreams = computed(() => mainWebRTCManager.availableStreams.value.map((stream) => stream.name))
+
+  const namessAvailableAbstractedStreams = computed(() => {
+    return streamsCorrespondency.value.map((stream) => stream.name)
+  })
+
+  const externalStreamId = (internalName: string): string | undefined => {
+    const corr = streamsCorrespondency.value.find((stream) => stream.name === internalName)
+    return corr ? corr.externalId : undefined
+  }
+
+  const initializeStreamsCorrespondency = (): void => {
+    if (streamsCorrespondency.value.length >= namesAvailableStreams.value.length) return
+
+    // If there are more external streams available than the ones in the correspondency, add the extra ones
+    const newCorrespondency: VideoStreamCorrespondency[] = []
+    let i = 1
+    namesAvailableStreams.value.forEach((streamName) => {
+      newCorrespondency.push({
+        name: `Stream ${i}`,
+        externalId: streamName,
+      })
+      i++
+    })
+    streamsCorrespondency.value = newCorrespondency
+  }
+
+  watch(namesAvailableStreams, () => {
+    initializeStreamsCorrespondency()
+  })
 
   // If the allowed ICE IPs are updated, all the streams should be reconnected
   watch([allowedIceIps, allowedIceProtocols], () => {
@@ -161,6 +192,8 @@ export const useVideoStore = defineStore('video', () => {
     activeStreams.value[streamName]!.timeRecordingStart = undefined
 
     activeStreams.value[streamName]!.mediaRecorder!.stop()
+
+    datalogger.stopLogging()
     alertStore.pushAlert(new Alert(AlertLevel.Success, `Stopped recording stream ${streamName}.`))
   }
 
@@ -233,6 +266,7 @@ export const useVideoStore = defineStore('video', () => {
 
     if (!datalogger.logging()) {
       datalogger.startLogging()
+      sleep(100)
     }
 
     activeStreams.value[streamName]!.timeRecordingStart = new Date()
@@ -329,11 +363,6 @@ export const useVideoStore = defineStore('video', () => {
       const chunkName = `${recordingHash}_${chunksCount}`
 
       try {
-        // Intentional logic to lose every 5th chunk
-        if (chunksCount > 5 && chunksCount < 12) {
-          console.error(`Intentional chunk loss -> ${chunksCount}.`)
-          throw new Error(`Intentional chunk loss -> ${chunksCount}.`)
-        }
         await tempVideoChunksDB.setItem(chunkName, e.data)
         sequentialLostChunks = 0
       } catch {
@@ -767,6 +796,7 @@ export const useVideoStore = defineStore('video', () => {
       // about them from BlueOS. If that fails, send a warning an clear the check routine.
       if (allowedIceIps.value.isEmpty() && availableIceIps.value.length >= 1) {
         // Try to select the IP automatically if it's a wired connection (based on BlueOS data).
+        let currentlyOnWirelessConnection = false
         try {
           const ipsInfo = await getIpsInformationFromVehicle(globalAddress)
           const newAllowedIps: string[] = []
@@ -774,6 +804,9 @@ export const useVideoStore = defineStore('video', () => {
             const isIceIp = availableIceIps.value.includes(ipInfo.ipv4Address)
             const alreadyAllowedIp = [...allowedIceIps.value, ...newAllowedIps].includes(ipInfo.ipv4Address)
             const theteredInterfaceTypes = ['WIRED', 'USB']
+            if (globalAddress === ipInfo.ipv4Address && !theteredInterfaceTypes.includes(ipInfo.interfaceType)) {
+              currentlyOnWirelessConnection = true
+            }
             if (!theteredInterfaceTypes.includes(ipInfo.interfaceType) || alreadyAllowedIp || !isIceIp) return
             console.info(`Adding the wired address '${ipInfo.ipv4Address}' to the list of allowed ICE IPs.`)
             newAllowedIps.push(ipInfo.ipv4Address)
@@ -792,7 +825,7 @@ export const useVideoStore = defineStore('video', () => {
 
         // If the system was still not able to populate the allowed IPs list yet, warn the user.
         // Otherwise, clear the check routine.
-        if (allowedIceIps.value.isEmpty() && !noIpSelectedWarningIssued) {
+        if (allowedIceIps.value.isEmpty() && !noIpSelectedWarningIssued && !currentlyOnWirelessConnection) {
           console.info('No ICE IPs selected for the allowed list. Warning user.')
           issueNoIpSelectedWarning()
           noIpSelectedWarningIssued = true
@@ -857,6 +890,9 @@ export const useVideoStore = defineStore('video', () => {
     namesAvailableStreams,
     videoStoringDB,
     tempVideoChunksDB,
+    streamsCorrespondency,
+    namessAvailableAbstractedStreams,
+    externalStreamId,
     discardProcessedFilesFromVideoDB,
     discardUnprocessedFilesFromVideoDB,
     downloadFilesFromVideoDB,
