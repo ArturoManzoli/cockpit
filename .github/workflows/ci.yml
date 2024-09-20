@@ -73,6 +73,10 @@ jobs:
           suffix: linux
           extension: AppImage
 
+        - os: ubuntu-24-arm
+          suffix: linux-arm
+          extension: AppImage
+
         - os: windows-latest
           suffix: windows
           extension: exe
@@ -84,14 +88,30 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Install snapcraft for arm64
+        if: matrix.os == 'ubuntu-24-arm'
+        run: |
+          sudo apt update
+          sudo apt install -y --fix-missing snapd
+          sudo snap install snapcraft --classic
+
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
 
-      - name: Build electron
+      - name: Bun build
         run: |
           bun install --frozen-lockfile
           bun run build
+
+      - name: Bun deploy (arm)
+        if: matrix.os == 'ubuntu-24-arm'
+        run: |
+          SNAPCRAFT_BUILD_ENVIRONMENT="host" bun deploy:electron
+
+      - name: Bun deploy (others)
+        if: matrix.os != 'ubuntu-24-arm'
+        run: |
           bun deploy:electron
 
       - name: Build artifact name
@@ -124,7 +144,16 @@ jobs:
 
   deploy-flatpak:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          suffix: linux
+
+        - os: ubuntu-24-arm
+          suffix: linux-arm
 
     steps:
       - name: Checkout
@@ -158,12 +187,12 @@ jobs:
       - name: Build name
         if: "!startsWith(github.ref, 'refs/tags/') && success()"
         run: |
-          mv dist/Cockpit*.flatpak dist/Cockpit-linux-$(git describe --tags).flatpak
+          mv dist/Cockpit*.flatpak dist/Cockpit-${{ matrix.suffix }}-$(git describe --tags).flatpak
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
         with:
-          name: cockpit-flatpak
+          name: cockpit-${{ matrix.suffix }}-flatpak
           path: dist/Cockpit*.flatpak
           if-no-files-found: error
 

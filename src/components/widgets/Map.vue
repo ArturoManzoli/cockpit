@@ -3,7 +3,7 @@
     <div :id="mapId" ref="map" class="map">
       <v-btn
         v-if="showButtons"
-        v-tooltip="Boolean(home) ? undefined : 'Home position is currently undefined'"
+        v-tooltip="home ? 'Center map on home position.' : 'Home position is currently undefined.'"
         class="absolute left-0 m-3 bottom-button bg-slate-50"
         :class="!home ? 'active-events-on-disabled' : ''"
         :color="followerTarget == WhoToFollow.HOME ? 'red' : ''"
@@ -18,7 +18,7 @@
 
       <v-btn
         v-if="showButtons"
-        v-tooltip="Boolean(vehiclePosition) ? undefined : 'Vehicle position is currently undefined'"
+        v-tooltip="vehiclePosition ? 'Center map on vehicle position.' : 'Vehicle position is currently undefined.'"
         class="absolute m-3 bottom-button left-10 bg-slate-50"
         :class="!vehiclePosition ? 'active-events-on-disabled' : ''"
         :color="followerTarget == WhoToFollow.VEHICLE ? 'red' : ''"
@@ -85,8 +85,6 @@
 </template>
 
 <script setup lang="ts">
-import '@/libs/map/LeafletRotatedMarker.js'
-
 import { useElementHover, useRefHistory } from '@vueuse/core'
 import { formatDistanceToNow } from 'date-fns'
 import L, { type LatLngTuple, Map } from 'leaflet'
@@ -96,6 +94,7 @@ import blueboatMarkerImage from '@/assets/blueboat-marker.png'
 import brov2MarkerImage from '@/assets/brov2-marker.png'
 import genericVehicleMarkerImage from '@/assets/generic-vehicle-marker.png'
 import { useInteractionDialog } from '@/composables/interactionDialog'
+import { openSnackbar } from '@/composables/snackbar'
 import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { datalogger, DatalogVariable } from '@/libs/sensors-logging'
 import { canByPassCategory, EventCategory, slideToConfirm } from '@/libs/slide-to-confirm'
@@ -123,7 +122,7 @@ const missionStore = useMissionStore()
 const map: Ref<Map | undefined> = ref()
 const zoom = ref(15)
 const mapCenter = ref<WaypointCoordinates>([-27.5935, -48.55854])
-const home = ref(mapCenter.value)
+const home = ref()
 const mapId = computed(() => `map-${widget.value.hash}`)
 const showButtons = ref(false)
 
@@ -222,8 +221,12 @@ onMounted(async () => {
 
   window.addEventListener('keydown', onKeydown)
 
-  // Pan map to home on mounting
-  targetFollower.goToTarget(WhoToFollow.HOME)
+  // Pan map to vehicle on mounting if it's position is available, otherwise pan to home
+  if (vehiclePosition.value) {
+    targetFollower.goToTarget(WhoToFollow.VEHICLE)
+  } else {
+    targetFollower.goToTarget(WhoToFollow.HOME)
+  }
 })
 
 // Before unmounting:
@@ -317,31 +320,38 @@ watch(vehicleStore.coordinates, () => {
   if (!map.value || !vehiclePosition.value) return
 
   if (vehicleMarker.value === undefined) {
-    vehicleMarker.value = L.marker(vehiclePosition.value)
-
     let vehicleIconUrl = genericVehicleMarkerImage
+
     if (vehicleStore.vehicleType === MavType.MAV_TYPE_SURFACE_BOAT) {
       vehicleIconUrl = blueboatMarkerImage
     } else if (vehicleStore.vehicleType === MavType.MAV_TYPE_SUBMARINE) {
       vehicleIconUrl = brov2MarkerImage
     }
 
-    const vehicleMarkerIcon = new L.Icon({
-      iconUrl: vehicleIconUrl,
+    const vehicleMarkerIcon = L.divIcon({
+      className: 'vehicle-marker',
+      html: `<img src="${vehicleIconUrl}" style="width: 64px; height: 64px;">`,
       iconSize: [64, 64],
       iconAnchor: [32, 32],
     })
 
-    vehicleMarker.value.setIcon(vehicleMarkerIcon)
+    vehicleMarker.value = L.marker(vehiclePosition.value, { icon: vehicleMarkerIcon })
+
     const vehicleMarkerTooltip = L.tooltip({
       content: 'No data available',
       className: 'waypoint-tooltip',
-      offset: [64, -12],
+      offset: [40, 0],
     })
     vehicleMarker.value.bindTooltip(vehicleMarkerTooltip)
     map.value.addLayer(vehicleMarker.value)
   }
   vehicleMarker.value.setLatLng(vehiclePosition.value)
+})
+
+// If vehicle position was not available and now it is, start following it
+watch(vehiclePosition, (_, oldPosition) => {
+  if (followerTarget.value === WhoToFollow.VEHICLE || oldPosition !== undefined) return
+  targetFollower.follow(WhoToFollow.VEHICLE)
 })
 
 // Dinamically update data of the vehicle tooltip
@@ -356,8 +366,11 @@ watch([vehiclePosition, vehicleHeading, timeAgoSeenText, () => vehicleStore.isAr
     <p>Last seen: ${timeAgoSeenText.value}</p>
   `)
 
-  // @ts-ignore: LeafletRotatedMarker adds the `setRotationAngle` method and does not have a type definition
-  vehicleMarker.value.setRotationAngle(vehicleHeading.value)
+  // Update the rotation
+  const iconElement = vehicleMarker.value.getElement()?.querySelector('img')
+  if (iconElement) {
+    iconElement.style.transform = `rotate(${vehicleHeading.value}deg)`
+  }
 })
 
 // Create marker for the home position
@@ -449,8 +462,6 @@ const onMapClick = (event: L.LeafletMouseEvent): void => {
 }
 
 const onMenuOptionSelect = (option: string): void => {
-  console.debug(`Map context menu option selected: ${option}.`)
-
   switch (option) {
     case 'goto':
       if (clickedLocation.value) {
@@ -465,8 +476,15 @@ const onMenuOptionSelect = (option: string): void => {
         const longitude = clickedLocation.value[1]
 
         slideToConfirm(
-          () => {
-            vehicleStore.goTo(hold, acceptanceRadius, passRadius, yaw, latitude, longitude, altitude)
+          async () => {
+            try {
+              await vehicleStore.goTo(hold, acceptanceRadius, passRadius, yaw, latitude, longitude, altitude)
+            } catch (error) {
+              openSnackbar({
+                message: error as string,
+                variant: 'error',
+              })
+            }
           },
           {
             command: 'GoTo',
@@ -516,8 +534,8 @@ const downloadMissionFromVehicle = async (): Promise<void> => {
     const missionItemsInVehicle = await vehicleStore.fetchMission(loadingCallback)
     missionItemsInVehicle.forEach((w) => {
       missionStore.currentPlanningWaypoints.push(w)
-      showDialog({ variant: 'success', message: 'Mission download succeed!', timer: 2000 })
     })
+    openSnackbar({ variant: 'success', message: 'Mission download succeed!', duration: 3000 })
   } catch (error) {
     showDialog({ variant: 'error', title: 'Mission download failed', message: error as string, timer: 5000 })
   } finally {
@@ -526,8 +544,12 @@ const downloadMissionFromVehicle = async (): Promise<void> => {
 }
 
 // Allow executing missions
-const executeMissionOnVehicle = (): void => {
-  vehicleStore.startMission()
+const executeMissionOnVehicle = async (): Promise<void> => {
+  try {
+    await vehicleStore.startMission()
+  } catch (error) {
+    openSnackbar({ message: 'Failed to start mission.', variant: 'error' })
+  }
 }
 
 // Set dynamic styles for correct displacement of the bottom buttons when the widget is below the bottom bar
