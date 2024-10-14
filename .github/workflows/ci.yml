@@ -137,6 +137,14 @@ jobs:
           path: dist/Cockpit*.${{ matrix.extension }}
           if-no-files-found: error
 
+      - name: Upload diff artifact (mac-only)
+        if: matrix.os == 'macos-13'
+        uses: actions/upload-artifact@v3
+        with:
+          name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
+          path: dist/Cockpit*.zip
+          if-no-files-found: error
+
       - name: Upload latest metadata artifact
         uses: actions/upload-artifact@v3
         with:
@@ -150,6 +158,17 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
+          tag: ${{ github.ref }}
+          overwrite: true
+          prerelease: true
+          file_glob: true
+
+      - name: Upload diff release (mac-only)
+        uses: svenstaro/upload-release-action@v2
+        if: startsWith(github.ref, 'refs/tags/') && success() && matrix.os == 'macos-13'
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
           tag: ${{ github.ref }}
           overwrite: true
           prerelease: true
