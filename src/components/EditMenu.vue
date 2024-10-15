@@ -9,7 +9,7 @@
   </div>
   <div v-if="editMode" class="flex fixed top-0 left-0 h-[100vh] w-[22vw] bg-[#031C2B]" />
   <div
-    class="relative flex flex-col justify-start overflow-y-auto text-white edit-panel left-panel"
+    class="relative flex flex-col justify-start overflow-y-auto text-white edit-panel left-panel h-full"
     :class="{ active: editMode }"
   >
     <div class="flex justify-between items-center w-full bg-[#CBCBCB2A] relative">
@@ -18,7 +18,7 @@
         alt="current-vehicle"
         class="ml-2 my-1 p-1 mr-2 2xl:w-[60px] xl:w-[50px] w-[40px] aspect-square"
       />
-      <div class="flex justify-between items-center relative">
+      <div ref="dropdownMenuRef" class="flex justify-between items-center relative">
         <div class="flex text-start 2xl:w-[260px] xl:w-[220px] w-[170px]">
           <v-btn
             id="profile"
@@ -48,7 +48,7 @@
               () => {
                 store.loadProfile(profile)
                 toggleDial()
-                isPanelExpanded = false
+                isViewsPanelExpanded = false
               }
             "
           >
@@ -156,7 +156,7 @@
     >
       <v-icon
         size="sm"
-        :icon="isPanelExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+        :icon="isViewsPanelExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'"
         class="ml-1 mr-[6px] 2xl:text-[26px] xl:text-[24px] text-[20px]"
         @click="toggleViewsPanel"
       />
@@ -168,7 +168,7 @@
           size="sm"
           :class="view === store.currentView ? 'bg-[#3B78A8]' : 'bg-transparent'"
           class="wrapclass 2xl:w-[129px] xl:w-[108px] lg:w-[84px] 2xl:h-[85px] xl:h-[75px] lg:h-[65px] 2xl:text-[16px] xl:text-[14px] text-[11px] text-none overflow-x-hidden"
-          @click="store.selectView(view)"
+          @click="selectView(view)"
         >
           <span class="wrapclass 2xl:max-w-[119px] xl:max-w-[100px] lg:max-w-[80px]">{{ view.name }}</span>
         </v-btn>
@@ -185,8 +185,8 @@
     <div
       :key="forceUpdate"
       ref="content"
-      class="bg-[#041e2e99]"
-      :class="['content-expand-collapse', { expanding: isPanelExpanded, collapsing: !isPanelExpanded }]"
+      class="bg-[#041e2e99] h-full"
+      :class="['content-expand-collapse', { expanding: isViewsPanelExpanded, collapsing: !isViewsPanelExpanded }]"
     >
       <div class="h-full pt-1 bg-[#041e2e99]">
         <div class="flex justify-center w-full bg-[#CBCBCB09]">
@@ -227,11 +227,11 @@
       </div>
     </div>
     <v-divider />
-    <div id="view-widgets-list" class="overflow-y-auto max-h-[88vh]">
+    <div id="view-widgets-list" class="overflow-y-scroll h-full">
       <div class="flex justify-center w-full bg-[#CBCBCB09]">
         <div class="flex 2xl:max-w-[400px] xl:max-w-[330px] lg:max-w-[260px] justify-center 2xl:py-2 py-1 text-md">
           <p class="overflow-hidden 2xl:text-sm text-xs text-ellipsis whitespace-nowrap opacity-60">
-            Widgets on {{ store.currentView.name }}
+            Widgets in {{ store.currentView.name }}
           </p>
         </div>
       </div>
@@ -444,7 +444,7 @@
   <div class="flex items-center justify-between edit-panel bottom-panel" :class="{ active: editMode }">
     <div class="w-px h-full bg-[#FFFFFF18]" />
     <div
-      class="flex flex-col justify-between items-center 2xl:w-[30%] w-[25%] max-w-[240px] h-full text-white 2xl:pr-2 px-1 2xl:py-7 xl:py-4 lg:py-1"
+      class="flex flex-col justify-between items-center 2xl:w-[30%] w-[25%] max-w-[240px] h-full text-white 2xl:pr-2 px-1 2xl:py-5 xl:py-4 lg:py-1"
     >
       <div>
         <p class="2xl:text-md text-xs ml-1">Widget type:</p>
@@ -453,46 +453,45 @@
           theme="dark"
           variant="filled"
           density="compact"
-          :items="['Regular widgets', 'Mini widgets']"
-          class="bg-[#27384255] mt-1 2xl:scale-100 scale-[80%]"
+          :items="['Regular', 'Mini']"
+          class="bg-[#27384255] 2xl:scale-100 scale-[80%]"
           hide-details
           @change="widgetMode = $event"
         />
       </div>
-      <div class="flex flex-col items-center justify-start w-full mb-3 pl-2">
-        <div v-show="widgetMode === 'Regular widgets'" class="w-[90%] 2xl:text-[16px] text-xs text-center">
+      <div class="flex flex-col items-center justify-start w-full pl-2">
+        <div v-show="widgetMode === 'Regular'" class="w-[90%] 2xl:text-[16px] text-xs text-center mt-6">
           To be placed on the main view area
         </div>
         <div
           v-show="widgetMode === 'Regular widgets'"
           class="2xl:text-md text-sm mt-3 2xl:px-3 px-2 bg-[#3B78A8] rounded-lg"
         >
-          Click to add
+          Click or drag to add
         </div>
-        <div v-show="widgetMode === 'Mini widgets'" class="w-[90%] 2xl:text-[16px] text-xs text-center">
+        <div v-show="widgetMode === 'Mini'" class="w-[90%] 2xl:text-[16px] text-xs text-center mt-6">
           To be placed on the top and bottom bars
         </div>
-        <div
-          v-show="widgetMode === 'Mini widgets'"
-          class="2xl:text-md text-sm mt-3 2xl:px-3 px-2 bg-[#3B78A8] rounded-lg"
-        >
-          Drag in place to add
+        <div v-show="widgetMode === 'Mini'" class="2xl:text-md text-sm mt-3 2xl:px-3 px-2 rounded-lg">
+          (Drag card in place to add)
         </div>
       </div>
     </div>
     <div class="w-px h-full mr-3 bg-[#FFFFFF18]" />
     <div
-      v-show="widgetMode === 'Regular widgets'"
+      v-show="widgetMode === 'Regular'"
       ref="availableWidgetsContainer"
-      class="flex items-center justify-between w-full h-full gap-3 overflow-x-auto text-white -mb-1"
+      class="flex items-center justify-between w-full h-full gap-3 overflow-x-auto text-white -mb-1 pr-2 cursor-pointer"
     >
       <div
         v-for="widgetType in availableWidgetTypes"
         :key="widgetType"
         class="flex flex-col items-center justify-between rounded-md bg-[#273842] hover:brightness-125 h-[90%] aspect-square cursor-pointer elevation-4"
-        @click="store.addWidget(widgetType, store.currentView)"
+        draggable="true"
+        @dragstart="onRegularWidgetDragStart"
+        @dragend="onRegularWidgetDragEnd(widgetType)"
       >
-        <v-tooltip text="Click to add" location="top" theme="light">
+        <v-tooltip text="Click or drag to add" location="top" theme="light">
           <template #activator="{ props: tooltipProps }">
             <div />
             <img
@@ -502,7 +501,7 @@
               class="p-4 max-h-[75%] max-w-[95%]"
             />
             <div
-              class="flex items-center justify-center w-full p-1 transition-all cursor-grab bg-[#3B78A8] rounded-b-md text-white"
+              class="flex items-center justify-center w-full p-1 transition-all bg-[#3B78A8] rounded-b-md text-white"
             >
               <span class="whitespace-normal text-center">{{
                 widgetType.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (str) => str.toUpperCase()) ||
@@ -514,22 +513,25 @@
       </div>
     </div>
     <div
-      v-show="widgetMode === 'Mini widgets'"
+      v-show="widgetMode === 'Mini'"
       ref="availableMiniWidgetsContainer"
-      class="flex items-center w-full h-full gap-3 overflow-auto"
+      class="flex items-center w-full h-full gap-3 overflow-auto pr-2"
     >
       <div
         v-for="miniWidget in availableMiniWidgetTypes"
+        id="mini-widget-card"
+        :ref="(el) => (miniWidgetContainers[miniWidget.component] = el as HTMLElement)"
         :key="miniWidget.hash"
-        class="flex flex-col items-center justify-between rounded-md bg-[#273842] hover:brightness-125 h-[90%] aspect-square cursor-pointer elevation-4 overflow-clip"
+        class="flex flex-col items-center justify-between w-full rounded-md bg-[#273842] hover:brightness-125 h-[90%] aspect-square cursor-pointer elevation-4 overflow-clip pointer-events-none"
+        :draggable="false"
       >
         <div />
-        <div class="m-2 pointer-events-none select-none">
-          <MiniWidgetInstantiator :mini-widget="miniWidget" />
+        <div id="draggable-mini-widget" class="m-2 pointer-events-auto select-auto cursor-grab" :draggable="true">
+          <div class="flex justify-center pointer-events-none min-w-[160px]">
+            <MiniWidgetInstantiator :mini-widget="miniWidget" />
+          </div>
         </div>
-        <div
-          class="flex items-center justify-center w-full p-1 transition-all cursor-grab bg-[#3B78A8] rounded-b-md text-white"
-        >
+        <div class="flex items-center justify-center w-full p-1 transition-all bg-[#3B78A8] rounded-b-md text-white">
           <span class="whitespace-normal text-center">{{
             miniWidget.name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (str) => str.toUpperCase()) ||
             'Very Generic Indicator'
@@ -588,7 +590,7 @@
 </template>
 
 <script setup lang="ts">
-import { useConfirmDialog } from '@vueuse/core'
+import { onClickOutside, useConfirmDialog } from '@vueuse/core'
 import { v4 as uuid } from 'uuid'
 import { computed, onMounted, ref, toRefs, watch } from 'vue'
 import { nextTick } from 'vue'
@@ -624,6 +626,7 @@ const { showDialog, closeDialog } = useInteractionDialog()
 
 const interfaceStore = useAppInterfaceStore()
 const store = useWidgetManagerStore()
+
 const trashList = ref<Widget[]>([])
 watch(trashList, () => {
   nextTick(() => (trashList.value = []))
@@ -681,6 +684,14 @@ const widgetImages = {
   VirtualHorizon: VirtualHorizonImg,
 }
 
+const selectView = (view: View): void => {
+  if (view === store.currentView) {
+    toggleViewsPanel()
+    return
+  }
+  store.selectView(view)
+}
+
 const confirmDelete = async (): Promise<void> => {
   showDialog({
     maxWidth: '500px',
@@ -721,14 +732,14 @@ watch(
   { immediate: true }
 )
 
-const isPanelExpanded = ref(false)
+const isViewsPanelExpanded = ref(false)
 const toggleViewsPanel = (): void => {
-  isPanelExpanded.value = !isPanelExpanded.value
+  isViewsPanelExpanded.value = !isViewsPanelExpanded.value
 }
 
 const content = ref<HTMLElement | null>(null)
 
-watch(isPanelExpanded, (newValue) => {
+watch(isViewsPanelExpanded, (newValue) => {
   if (content.value) {
     if (newValue) {
       content.value.style.maxHeight = content.value.scrollHeight + 'px'
@@ -742,7 +753,7 @@ watch(isPanelExpanded, (newValue) => {
 })
 
 onMounted(() => {
-  if (content.value && !isPanelExpanded.value) {
+  if (content.value && !isViewsPanelExpanded.value) {
     content.value.style.maxHeight = '0px'
   }
 })
@@ -756,6 +767,7 @@ const widgetAddMenuGroupOptions = {
 
 const editMode = toRefs(props).editMode
 
+const dropdownMenuRef = ref(null)
 const viewBeingRenamed = ref(store.currentView)
 const newViewName = ref('')
 const viewRenameDialogRevealed = ref(false)
@@ -772,6 +784,10 @@ const profileConfigDialog = useConfirmDialog(profileConfigDialogRevealed)
 profileConfigDialog.onConfirm(() => {
   profileBeingConfigured.value.name = newProfileName.value
   newProfileName.value = ''
+})
+
+onClickOutside(dropdownMenuRef, () => {
+  isDialOpen.value = false
 })
 
 const addNewView = (): void => {
@@ -865,7 +881,41 @@ onMounted(() => {
   })
 })
 
-const widgetMode = ref('Regular widgets' || 'Mini widgets')
+const widgetMode = ref('Regular' || 'Mini')
+
+// Resize mini widgets so they fit the layout when the widget mode is set to mini widgets
+const miniWidgetContainers = ref<Record<string, HTMLElement>>({})
+watch(widgetMode, () => {
+  if (widgetMode.value !== 'Mini widgets') return
+  nextTick(() => {
+    Object.values(miniWidgetContainers.value).forEach((element) => {
+      if (element.scrollWidth > element.clientWidth) {
+        let scale = 1
+        while (element.scrollWidth > element.clientWidth) {
+          scale -= 0.01
+          const actualElement = element.children[1] as HTMLElement
+          actualElement.style.scale = `${scale}`
+        }
+      }
+    })
+  })
+})
+
+const onRegularWidgetDragStart = (event: DragEvent): void => {
+  const target = event.target as HTMLElement
+  if (target) {
+    target.style.opacity = '0.5'
+  }
+}
+
+const onRegularWidgetDragEnd = (widgetType: WidgetType): void => {
+  store.addWidget(widgetType, store.currentView)
+
+  const widgetCards = document.querySelectorAll('[draggable="true"]')
+  widgetCards.forEach((card) => {
+    ;(card as HTMLElement).style.opacity = '1'
+  })
+}
 
 const availableVehicleTypes = computed(() => Object.keys(MavType))
 

@@ -29,7 +29,11 @@ function createWindow(): void {
     mainWindow?.webContents.send('main-process-message', new Date().toLocaleString())
   })
 
-  mainWindow.loadFile(join(ROOT_PATH.dist, 'index.html'))
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+  } else {
+    mainWindow.loadFile(join(ROOT_PATH.dist, 'index.html'))
+  }
 }
 
 app.on('window-all-closed', () => {
@@ -57,3 +61,10 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 app.whenReady().then(createWindow)
+
+app.on('before-quit', () => {
+  // @ts-ignore: import.meta.env does not exist in the types
+  if (import.meta.env.DEV) {
+    app.exit()
+  }
+})

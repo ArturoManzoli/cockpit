@@ -21,7 +21,7 @@
           :is-expanded="!interfaceStore.isOnPhoneScreen"
           compact
         >
-          <template #title>General</template>
+          <template #title>General settings</template>
           <template #info>
             <div class="flex flex-col items-start px-5 font-medium">
               <li>
@@ -221,7 +221,7 @@
                   :items="tableItems"
                   class="elevation-1 bg-transparent rounded-lg mb-[20px]"
                   theme="dark"
-                  no-data-text="Press any joystick button"
+                  no-data-text=""
                   :style="interfaceStore.globalGlassMenuStyles"
                 >
                   <template #headers>
@@ -233,6 +233,7 @@
                       <th class="w-[120px] text-center"><p class="text-[16px] font-bold">Axis</p></th>
                       <th class="w-[110px] text-center"><p class="text-[16px] font-bold">Max</p></th>
                     </tr>
+                    <p v-if="tableItems.length === 0" class="fixed top-[67%] left-[40%]">Press a key or move an axis</p>
                   </template>
                   <template #item="{ item }">
                     <tr v-if="item.type === 'axis'">
@@ -342,7 +343,7 @@
                   v-if="currentJoystick && currentJoystick?.gamepadToCockpitMap?.buttons"
                   :headers="headers"
                   :items="tableItems"
-                  items-per-page="32"
+                  :items-per-page="64"
                   class="elevation-1 bg-transparent rounded-lg mt-[5px]"
                   theme="dark"
                   :style="interfaceStore.globalGlassMenuStyles"
@@ -424,7 +425,7 @@
   </BaseConfigurationView>
   <teleport to="body">
     <InteractionDialog
-      v-if="currentJoystick"
+      v-show="currentJoystick"
       :show-dialog="inputClickedDialog"
       max-width="auto"
       variant="text-only"
@@ -458,7 +459,8 @@
               mark-expanded
               darken-content
               hover-effect
-              :is-expanded="protocol === JoystickProtocol.MAVLinkManualControl"
+              :is-expanded="protocol === protocolToExpand"
+              @update:is-expanded="(isExpanded: boolean) => reactToPanelExpansion(isExpanded, protocol)"
             >
               <template #title>
                 {{ protocol }}
@@ -548,7 +550,7 @@
       </template>
       <template #actions>
         <div class="flex justify-end w-full">
-          <v-btn variant="text" class="m-1" @click="inputClickedDialog = false"> Close </v-btn>
+          <v-btn variant="text" class="m-1" @click="closeInputMappingDialog"> Close </v-btn>
         </div>
       </template>
     </InteractionDialog>
@@ -627,7 +629,7 @@ const inputClickedDialog = ref(false)
 const currentModifierKey: Ref<ProtocolAction> = ref(modifierKeyActions.regular)
 const availableModifierKeys: ProtocolAction[] = Object.values(modifierKeyActions)
 const showJoystickLayout = ref(true)
-const currentTabVIew = ref()
+const currentTabVIew = ref('table')
 
 const protocols = Object.values(JoystickProtocol).filter((value) => typeof value === 'string')
 
@@ -682,12 +684,12 @@ const tableItems = computed(() => {
   }
 
   const originalAxes = currentJoystick.value.gamepadToCockpitMap?.axes || []
-  const axesItems = originalAxes.slice(0, 4).map((axis) => ({ type: 'axis', id: axis }))
+  const axesItems = originalAxes.slice(0, 31).map((axis) => ({ type: 'axis', id: axis }))
 
   const originalButtons = currentJoystick.value.gamepadToCockpitMap?.buttons || []
   const buttonItems = originalButtons
     .map((button, index) => ({ type: 'button', id: button, index: index }))
-    .filter((button) => button.index >= 0 && button.index <= 15)
+    .filter((button) => button.index >= 0 && button.index <= 31)
 
   return [...axesItems, ...buttonItems]
 })
@@ -732,7 +734,7 @@ const unbindCurrentInput = (input: JoystickButtonInput): void => {
   updateButtonAction(input, actions)
 }
 
-const updateButtonAction = (input: JoystickInput, action: ProtocolAction): void => {
+const updateButtonAction = (input: JoystickButtonInput, action: ProtocolAction): void => {
   controllerStore.protocolMapping.buttonsCorrespondencies[currentModifierKey.value.id as CockpitModifierKeyOption][
     input.id
   ].action = action
@@ -817,4 +819,16 @@ const vehicleTypesAssignedToCurrentProfile = computed({
     })
   },
 })
+
+const protocolToExpand = ref<JoystickProtocol | undefined>(undefined)
+
+const reactToPanelExpansion = (isExpanded: boolean, protocol: JoystickProtocol): void => {
+  console.log(`${protocol} is expanded: ${isExpanded}`)
+  protocolToExpand.value = isExpanded ? protocol : undefined
+}
+
+const closeInputMappingDialog = (): void => {
+  inputClickedDialog.value = false
+  protocolToExpand.value = undefined
+}
 </script>

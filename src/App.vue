@@ -184,8 +184,8 @@
                   :icon-size="buttonSize * 0.5"
                   :style="
                     interfaceStore.highlightedComponent === menuitem.title && {
-                      animation: 'highlightBackground 0.5s alternate 20',
-                      borderRadius: '8px',
+                      animation: 'highlightBackground 0.5s alternate 50',
+                      borderRadius: '4px',
                     }
                   "
                   @click="toggleConfigComponent(menuitem.component)"
@@ -343,6 +343,7 @@ import { useAppInterfaceStore } from './stores/appInterface'
 import { useMainVehicleStore } from './stores/mainVehicle'
 import { useWidgetManagerStore } from './stores/widgetManager'
 import { ConfigComponent } from './types/general'
+import ConfigurationActionsView from './views/ConfigurationActionsView.vue'
 import ConfigurationAlertsView from './views/ConfigurationAlertsView.vue'
 import ConfigurationDevelopmentView from './views/ConfigurationDevelopmentView.vue'
 import ConfigurationGeneralView from './views/ConfigurationGeneralView.vue'
@@ -409,6 +410,11 @@ const configMenu = [
     icon: 'mdi-map-marker-path',
     title: 'Mission',
     component: markRaw(ConfigurationMissionView) as ConfigComponent,
+  },
+  {
+    icon: 'mdi-run-fast',
+    title: 'Actions',
+    component: markRaw(ConfigurationActionsView) as ConfigComponent,
   },
 ]
 

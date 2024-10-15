@@ -53,9 +53,9 @@
               <v-icon :size="interfaceStore.isOnSmallScreen ? 15 : 18" color="white" icon="mdi-information-outline" />
             </v-btn>
           </div>
-          <div v-if="hasWarningSlot" class="flex justify-end items-center w-[10%] relative">
+          <div v-if="hasWarningSlot" class="flex justify-end items-center w-[10%]">
             <v-btn
-              class="ml-auto w-[10px] rounded-full mr-2"
+              class="rounded-full relative overflow-hidden"
               size="small"
               color="transparent"
               elevation="0"
@@ -179,6 +179,8 @@ const warningContent = ref<HTMLElement | null>(null)
 const animateWarning = ref(true)
 const showElevationEffect = ref(isPanelExpanded.value || false)
 
+const emit = defineEmits(['update:isExpanded'])
+
 const togglePanel = (): void => {
   if (isPanelExpanded.value) {
     isPanelExpanded.value = false
@@ -189,6 +191,7 @@ const togglePanel = (): void => {
     showElevationEffect.value = true
     isPanelExpanded.value = true
   }
+  emit('update:isExpanded', isPanelExpanded.value)
 }
 
 const textSize = computed(() => {
@@ -310,6 +313,7 @@ const hasWarningSlot = computed(() => !!slots.warning?.())
   border-radius: 50%;
   transform: translate(-50%, -50%) scale(0);
   animation: rippleEffect 1.5s infinite;
+  pointer-events: none;
 }
 
 @keyframes rippleEffect {

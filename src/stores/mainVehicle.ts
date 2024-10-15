@@ -5,6 +5,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import { defaultGlobalAddress } from '@/assets/defaults'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
+import { useSnackbar } from '@/composables/snackbar'
 import { altitude_setpoint } from '@/libs/altitude-slider'
 import {
   getCpuTempCelsius,
@@ -17,11 +18,7 @@ import { ConnectionManager } from '@/libs/connection/connection-manager'
 import type { Package } from '@/libs/connection/m2r/messages/mavlink2rest'
 import { MavAutopilot, MAVLinkType, MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import type { Message } from '@/libs/connection/m2r/messages/mavlink2rest-message'
-import {
-  availableCockpitActions,
-  CockpitActionsManager,
-  registerActionCallback,
-} from '@/libs/joystick/protocols/cockpit-actions'
+import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
 import { MavlinkManualControlManager } from '@/libs/joystick/protocols/mavlink-manual-control'
 import type { ArduPilot } from '@/libs/vehicle/ardupilot/ardupilot'
 import { CustomMode } from '@/libs/vehicle/ardupilot/ardurover'
@@ -65,6 +62,8 @@ const defaultRtcConfiguration = {
   iceServers: [],
 } as RTCConfiguration
 
+const { showSnackbar } = useSnackbar()
+
 export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const controllerStore = useControllerStore()
   const widgetStore = useWidgetManagerStore()
@@ -98,6 +97,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const attitude: Attitude = reactive({} as Attitude)
   const coordinates: Coordinates = reactive({} as Coordinates)
   const powerSupply: PowerSupply = reactive({} as PowerSupply)
+  const instantaneousWatts = ref<number | undefined>(undefined)
   const velocity: Velocity = reactive({} as Velocity)
   const mainVehicle = ref<ArduPilot | undefined>(undefined)
   const isArmed = ref<boolean | undefined>(undefined)
@@ -299,6 +299,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
    */
   async function clearMissions(): Promise<void> {
     mainVehicle.value?.clearMissions()
+    showSnackbar({ message: 'Mission deleted from vehicle', variant: 'info' })
   }
 
   /**
@@ -391,6 +392,11 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     })
     mainVehicle.value.onPowerSupply.add((newPowerSupply: PowerSupply) => {
       Object.assign(powerSupply, newPowerSupply)
+
+      instantaneousWatts.value =
+        powerSupply.voltage !== undefined && powerSupply.current !== undefined
+          ? powerSupply.voltage * powerSupply.current
+          : undefined
     })
     mainVehicle.value.onStatusText.add((newStatusText: StatusText) => {
       Object.assign(statusText, newStatusText)
@@ -513,9 +519,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   })
 
   const mavlinkManualControlManager = new MavlinkManualControlManager()
-  const cockpitActionsManager = new CockpitActionsManager()
   controllerStore.registerControllerUpdateCallback(mavlinkManualControlManager.updateControllerData)
-  controllerStore.registerControllerUpdateCallback(cockpitActionsManager.updateControllerData)
 
   // Loop to send MAVLink Manual Control messages
   setInterval(() => {
@@ -530,13 +534,6 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     }
   }, 40)
   setInterval(() => sendGcsHeartbeat(), 1000)
-
-  // Loop to send Cockpit Action messages
-  setInterval(() => {
-    if (controllerStore.enableForwarding) {
-      cockpitActionsManager.sendCockpitActions()
-    }
-  }, 10)
 
   return {
     arm,
@@ -571,6 +568,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     coordinates,
     velocity,
     powerSupply,
+    instantaneousWatts,
     statusText,
     statusGPS,
     mode,
