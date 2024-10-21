@@ -1,5 +1,12 @@
 <template>
-  <div class="h-12 p-1 text-white transition-all w-[8.5rem] relative scroll-container">
+  <div
+    class="h-12 p-1 text-white transition-all relative scroll-container"
+    :class="{
+      'border-[1px] border-dashed border-[#FFFFFF55]': widgetStore.miniWidgetManagerVars(miniWidget.hash)
+        .configMenuOpen,
+    }"
+    :style="{ width: miniWidget.options.widgetWidth + 'px' }"
+  >
     <span class="h-full left-[0.5rem] bottom-[5%] absolute mdi text-[2.25rem]" :class="[miniWidget.options.iconName]" />
     <div class="absolute left-[3rem] h-full select-none font-semibold scroll-container w-[5.5rem]">
       <div class="w-full" :class="{ 'scroll-text': valueIsOverflowing }">
@@ -38,9 +45,19 @@
       </v-card-title>
 
       <div v-if="currentTab === 'custom'" class="flex flex-col items-center justify-around">
-        <div class="flex flex-col items-center justify-between w-full mt-3">
-          <span class="w-full mb-1 text-sm text-slate-100/50">Display name</span>
-          <input v-model="miniWidget.options.displayName" class="w-full px-2 py-1 rounded-md bg-[#FFFFFF12]" />
+        <div class="flex w-full gap-x-10">
+          <div class="flex flex-col items-center justify-between w-3/4 mt-3">
+            <span class="w-full mb-1 text-sm text-slate-100/50">Display name</span>
+            <input v-model="miniWidget.options.displayName" class="w-full px-2 py-1 rounded-md bg-[#FFFFFF12]" />
+          </div>
+          <div class="flex flex-col items-center justify-between w-1/4 mt-3">
+            <span class="w-full text-sm text-slate-100/50">Display Width</span>
+            <input
+              v-model="miniWidget.options.widgetWidth"
+              type="number"
+              class="w-full px-2 py-1 rounded-md bg-[#FFFFFF12]"
+            />
+          </div>
         </div>
         <div class="flex flex-col items-center justify-between w-full mt-3">
           <span class="w-full mb-1 text-sm text-slate-100/50">Variable</span>
@@ -58,6 +75,7 @@
             />
           </div>
         </div>
+
         <Transition>
           <div v-if="showVariableChooseModal" class="flex flex-col justify-center w-full mx-1 my-3 align-center">
             <input
@@ -85,6 +103,17 @@
           <div class="flex flex-col items-center justify-between w-full mx-5">
             <span class="w-full mb-1 text-sm text-slate-100/50">Multiplier</span>
             <input v-model="miniWidget.options.variableMultiplier" class="w-full px-2 py-1 rounded-md bg-[#FFFFFF12]" />
+          </div>
+          <div class="flex flex-col items-center justify-between w-full mx-5">
+            <span class="w-full mb-1 text-sm text-slate-100/50">Decimal Places</span>
+            <input
+              v-model="miniWidget.options.decimalPlaces"
+              type="number"
+              min="0"
+              max="5"
+              placeholder="Auto-formatting"
+              class="w-full px-2 py-1 rounded-md bg-[#FFFFFF12]"
+            />
           </div>
         </div>
         <div class="flex flex-col items-center justify-between w-full mt-3">
@@ -192,6 +221,8 @@ onBeforeMount(() => {
       iconName: 'mdi-help-box',
       variableUnit: '%',
       variableMultiplier: 1,
+      decimalPlaces: null,
+      widgetWidth: 136,
     })
   }
 
@@ -206,12 +237,20 @@ const widgetStore = useWidgetManagerStore()
 const currentState = ref<unknown>(0)
 
 const finalValue = computed(() => Number(miniWidget.value.options.variableMultiplier) * Number(currentState.value))
+
 const parsedState = computed(() => {
   if (currentState.value === undefined) {
     return '--'
   }
   const value = finalValue.value
 
+  // Check if decimalPlaces is set and valid
+  const decimalPlaces = miniWidget.value.options.decimalPlaces
+  if (decimalPlaces !== null && !isNaN(decimalPlaces)) {
+    return value.toFixed(decimalPlaces)
+  }
+
+  // Original formatting logic
   if (value < 0 && value > -10) return value.toFixed(1)
   if (value <= -10 && value > -100) return value.toFixed(1)
   if (value <= -100 && value > -1000) return value.toFixed(0)
@@ -281,6 +320,23 @@ const logCurrentState = (): void => {
 }
 
 watch(
+  () => miniWidget.value.options.decimalPlaces,
+  (newVal) => {
+    if (newVal === '' || newVal === null || newVal === undefined) {
+      miniWidget.value.options.decimalPlaces = null
+    } else {
+      const num = Number(newVal)
+      if (!isNaN(num) && num >= 0 && Number.isInteger(num)) {
+        miniWidget.value.options.decimalPlaces = num
+      } else {
+        // Reset to null if invalid
+        miniWidget.value.options.decimalPlaces = null
+      }
+    }
+  }
+)
+
+watch(
   finalValue,
   () => {
     if (widgetStore.miniWidgetManagerVars(miniWidget.value.hash).configMenuOpen === false) {
@@ -291,6 +347,7 @@ watch(
 )
 
 watch(store.genericVariables, () => updateVariableState())
+
 watch(
   () => store.availableGenericVariables,
   () => updateGenericVariablesNames(),
