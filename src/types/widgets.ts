@@ -97,6 +97,17 @@ export enum CustomWidgetElementContainers {
   Right9 = '9-right',
 }
 
+export type SelectorOption = {
+  /**
+   * The name of the option
+   */
+  name: string
+  /**
+   * The value of the option
+   */
+  value: string
+}
+
 /**
  * Options for the Cockpit Actions parameters
  */
@@ -360,24 +371,17 @@ export type CustomWidgetElementOptions = {
        */
       actionParameter: CockpitActionParameter
       /**
+       * Last selected value
+       */
+      lastSelected: SelectorOption
+      /**
        * Layout options
        */
       layout: {
         /**
          * Alignment of the element
          */
-        selectorOptions: [
-          {
-            /**
-             * The name of the option
-             */
-            name: string
-            /**
-             * The value of the option
-             */
-            value: string
-          }
-        ]
+        selectorOptions: SelectorOption[]
         /**
          * Alignment of the element
          */

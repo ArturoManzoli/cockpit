@@ -37,7 +37,7 @@ import {
   unlistenCockpitActionVariable,
 } from '@/libs/actions/data-lake'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
-import { CustomWidgetElementOptions, CustomWidgetElementType } from '@/types/widgets'
+import { CustomWidgetElementOptions, CustomWidgetElementType, SelectorOption } from '@/types/widgets'
 
 const widgetStore = useWidgetManagerStore()
 
@@ -49,8 +49,7 @@ const props = defineProps<{
 }>()
 
 const element = toRefs(props).element
-const lastSelectedOption = ref()
-const selectedOption = ref()
+const selectedOption = ref<SelectorOption | undefined>(props.element.options.lastSelected || undefined)
 
 const options = computed(() => {
   return (
@@ -60,27 +59,12 @@ const options = computed(() => {
   )
 })
 
-watch(
-  () => element.value.options,
-  (newValue) => {
-    if (newValue.layout?.selectorOptions) {
-      selectedOption.value = newValue.layout.selectorOptions.find((option) => option.value === selectedOption.value)
-    }
-  },
-  { deep: true, immediate: true }
-)
-
-watch(
-  () => widgetStore.editingMode,
-  (newValue) => {
-    if (newValue) {
-      lastSelectedOption.value = selectedOption.value
-      selectedOption.value = null
-      return
-    }
-    selectedOption.value = lastSelectedOption.value
-  }
-)
+watch(selectedOption, (newValue) => {
+  widgetStore.updateElementOptions(element.value.hash, {
+    ...element.value.options,
+    lastSelected: newValue,
+  })
+})
 
 const handleSelection = (value: string | number | boolean): void => {
   if (element.value.options.actionParameter?.id) {
@@ -93,6 +77,7 @@ onMounted(() => {
     widgetStore.updateElementOptions(element.value.hash, {
       cockpitAction: undefined,
       actionParameter: undefined,
+      lastSelected: { name: '', value: '' },
       layout: {
         selectorOptions: [{ name: '', value: '' }],
         align: 'start',
@@ -102,8 +87,11 @@ onMounted(() => {
   }
   if (element.value.options.actionParameter) {
     listenCockpitActionVariable(element.value.options.actionParameter.name, (value) => {
-      selectedOption.value = value
+      selectedOption.value = options.value.find((option) => option.value === value)
     })
+  }
+  if (element.value.options.lastSelected?.name !== '') {
+    selectedOption.value = element.value.options.lastSelected
   }
 })
 
