@@ -81,7 +81,11 @@
     absolute
     bottom
     color="white"
+    class="flex mt-12"
   />
+  <p v-if="fetchingMission" class="fixed top-[58px] left-[7px] flex text-md font-bold text-white z-30 drop-shadow-md">
+    Loading mission...
+  </p>
 </template>
 
 <script setup lang="ts">
