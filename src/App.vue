@@ -315,15 +315,19 @@
   <About v-if="showAboutDialog" @update:show-about-dialog="showAboutDialog = $event" />
   <Tutorial :show-tutorial="interfaceStore.isTutorialVisible" />
   <VideoLibraryModal :open-modal="interfaceStore.isVideoLibraryVisible" />
+  <VehicleDiscoveryDialog v-model="showDiscoveryDialog" show-auto-search-option />
+  <UpdateNotification v-if="isElectron()" />
 </template>
 
 <script setup lang="ts">
-import { onClickOutside, useDebounceFn, useFullscreen, useWindowSize } from '@vueuse/core'
+import { onClickOutside, useDebounceFn, useFullscreen, useStorage, useWindowSize } from '@vueuse/core'
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import GlassModal from '@/components/GlassModal.vue'
 import Tutorial from '@/components/Tutorial.vue'
+import UpdateNotification from '@/components/UpdateNotification.vue'
+import VehicleDiscoveryDialog from '@/components/VehicleDiscoveryDialog.vue'
 import VideoLibraryModal from '@/components/VideoLibraryModal.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import {
@@ -331,6 +335,7 @@ import {
   registerActionCallback,
   unregisterActionCallback,
 } from '@/libs/joystick/protocols/cockpit-actions'
+import { isElectron } from '@/libs/utils'
 
 import About from './components/About.vue'
 import AltitudeSlider from './components/AltitudeSlider.vue'
@@ -720,6 +725,19 @@ onBeforeUnmount(() => {
 // Dynamic styles
 const currentTopBarHeightPixels = computed(() => `${widgetStore.currentTopBarHeightPixels}px`)
 const currentBottomBarHeightPixels = computed(() => `${widgetStore.currentBottomBarHeightPixels}px`)
+
+const showDiscoveryDialog = ref(false)
+const preventAutoSearch = useStorage('cockpit-prevent-auto-vehicle-discovery-dialog', false)
+
+onMounted(() => {
+  if (!isElectron() || preventAutoSearch.value) return
+
+  // Wait 5 seconds to check if we're connected to a vehicle
+  setTimeout(() => {
+    if (vehicleStore.isVehicleOnline) return
+    showDiscoveryDialog.value = true
+  }, 5000)
+})
 </script>
 
 <style>

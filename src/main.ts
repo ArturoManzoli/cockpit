@@ -12,6 +12,9 @@ import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 import VueVirtualScroller from 'vue-virtual-scroller'
 
+import { app_version } from '@/libs/cosmos'
+import eventTracker from '@/libs/external-telemetry/event-tracking'
+
 import App from './App.vue'
 import vuetify from './plugins/vuetify'
 import { loadFonts } from './plugins/webfontloader'
@@ -23,6 +26,8 @@ loadFonts()
 
 const app = createApp(App)
 
+eventTracker.capture('App started')
+
 // Initialize Sentry for error tracking
 // Only track usage statistics if the user has not opted out and the app is not in development mode
 if (window.localStorage.getItem('cockpit-enable-usage-statistics-telemetry') && import.meta.env.DEV === false) {
@@ -30,6 +35,7 @@ if (window.localStorage.getItem('cockpit-enable-usage-statistics-telemetry') && 
   Sentry.init({
     app,
     dsn: 'https://d7329dcf760fa1cc9fa6c7a5f16f60a1@o4507696465707008.ingest.us.sentry.io/4507762984222720',
+    release: app_version.version,
     integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
     sampleRate: 1.0, // Capture all errors
     tracesSampleRate: 1.0, // Capture all traces

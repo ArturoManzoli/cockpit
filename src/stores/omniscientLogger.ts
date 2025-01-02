@@ -1,8 +1,11 @@
 import { WebRTCStats } from '@peermetrics/webrtc-stats'
 import { useDocumentVisibility } from '@vueuse/core'
+import { differenceInSeconds } from 'date-fns'
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 
+import { createDataLakeVariable, DataLakeVariable, setDataLakeVariableData } from '@/libs/actions/data-lake'
+import eventTracker from '@/libs/external-telemetry/event-tracking'
 import { WebRTCStatsEvent, WebRTCVideoStat } from '@/types/video'
 
 import { useVideoStore } from './video'
@@ -11,6 +14,20 @@ export const webrtcStats = new WebRTCStats({ getStatsInterval: 250 })
 
 export const useOmniscientLoggerStore = defineStore('omniscient-logger', () => {
   const videoStore = useVideoStore()
+
+  // Routine to log the memory usage of the application
+  const cockpitMemoryUsageVariable = new DataLakeVariable(
+    'cockpit-memory-usage',
+    'Cockpit Memory Usage',
+    'number',
+    'The memory usage of the Cockpit application in MB. This value is updated every 100ms.'
+  )
+  createDataLakeVariable(cockpitMemoryUsageVariable)
+
+  setInterval(() => {
+    const currentMemoryUsage = window.performance.memory.usedJSHeapSize / 1024 / 1024
+    setDataLakeVariableData(cockpitMemoryUsageVariable.id, currentMemoryUsage)
+  }, 100)
 
   // Routine to log the framerate of the video streams
   const streamsFrameRateHistory = ref<{ [key in string]: number[] }>({})
@@ -255,6 +272,12 @@ export const useOmniscientLoggerStore = defineStore('omniscient-logger', () => {
       console.error('Error while logging WebRTC statistics:', error)
     }
   })
+
+  // Routine to send a ping event to the event tracking system every 5 minutes
+  const initialTimestamp = new Date()
+  setInterval(() => {
+    eventTracker.capture('Ping', { runningTimeInSeconds: differenceInSeconds(new Date(), initialTimestamp) })
+  }, 1000 * 60 * 5)
 
   return {
     streamsFrameRateHistory,

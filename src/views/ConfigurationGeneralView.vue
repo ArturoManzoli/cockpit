@@ -16,7 +16,7 @@
           </template>
           <template #content>
             <div class="flex flex-col w-full items-start">
-              <div class="flex align-center w-full justify-between pl-3 pr-2 mt-1 mb-6">
+              <div class="flex align-center w-full justify-between pr-2 mt-1 mb-6">
                 <div>
                   <span class="mr-2">Current user:</span>
                   <span class="font-semibold text-2xl cursor-pointer" @click="missionStore.changeUsername">{{
@@ -32,14 +32,20 @@
                   @click="missionStore.changeUsername"
                 />
               </div>
-              <v-btn
-                size="x-small"
-                class="bg-[#FFFFFF22] -mt-3 mb-4 ml-4 shadow-2"
-                variant="flat"
-                @click="openTutorial"
-              >
-                Show tutorial
-              </v-btn>
+              <div class="flex flex-row">
+                <v-btn size="x-small" class="bg-[#FFFFFF22] -mt-3 mb-4 shadow-2" variant="flat" @click="openTutorial">
+                  Show tutorial
+                </v-btn>
+                <v-btn
+                  v-if="isElectron()"
+                  size="x-small"
+                  class="bg-[#FFFFFF22] -mt-3 mb-4 ml-2 shadow-2"
+                  variant="flat"
+                  @click="openCockpitFolder"
+                >
+                  Open Cockpit folder
+                </v-btn>
+              </div>
             </div>
           </template>
         </ExpansiblePanel>
@@ -49,6 +55,15 @@
           <template #subtitle>Current address: {{ mainVehicleStore.globalAddress }}</template>
           <template #info>Sets the network address for device communication. E.g: blueos.local</template>
           <template #content>
+            <v-btn
+              v-if="isElectron()"
+              size="x-small"
+              class="bg-[#FFFFFF22] mt-3 mb-2 shadow-2"
+              variant="flat"
+              @click="showDiscoveryDialog = true"
+            >
+              Search for vehicles
+            </v-btn>
             <v-form
               ref="globalAddressForm"
               v-model="globalAddressFormValid"
@@ -279,6 +294,7 @@
       </div>
     </template>
   </BaseConfigurationView>
+  <VehicleDiscoveryDialog v-model="showDiscoveryDialog" />
 </template>
 
 <script setup lang="ts">
@@ -286,9 +302,12 @@ import { onMounted, ref, watch } from 'vue'
 
 import { defaultGlobalAddress } from '@/assets/defaults'
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
+import VehicleDiscoveryDialog from '@/components/VehicleDiscoveryDialog.vue'
+import { useSnackbar } from '@/composables/snackbar'
 import * as Connection from '@/libs/connection/connection'
 import { ConnectionManager } from '@/libs/connection/connection-manager'
 import { isValidNetworkAddress, reloadCockpit } from '@/libs/utils'
+import { isElectron } from '@/libs/utils'
 import * as Protocol from '@/libs/vehicle/protocol/protocol'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
@@ -299,6 +318,7 @@ import BaseConfigurationView from './BaseConfigurationView.vue'
 const mainVehicleStore = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
 const missionStore = useMissionStore()
+const { showSnackbar } = useSnackbar()
 
 const globalAddressForm = ref()
 const globalAddressFormValid = ref(false)
@@ -508,6 +528,21 @@ watch(customRtcConfiguration, () => tryToPrettifyRtcConfig())
 onMounted(() => {
   tryToPrettifyRtcConfig()
 })
+
+const showDiscoveryDialog = ref(false)
+
+const openCockpitFolder = (): void => {
+  if (isElectron() && window.electronAPI) {
+    window.electronAPI?.openCockpitFolder()
+  } else {
+    showSnackbar({
+      message: 'This feature is only available in the desktop version of Cockpit.',
+      duration: 3000,
+      variant: 'error',
+      closeButton: true,
+    })
+  }
+}
 </script>
 <style scoped>
 .uri-input {

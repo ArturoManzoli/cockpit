@@ -78,7 +78,7 @@ jobs:
           latestMetadataName: latest-linux.yml
 
         - os: ubuntu-24-arm
-          suffix: linux-arm
+          suffix: linux
           arch: arm64
           extension: AppImage
           latestMetadataName: latest-linux-arm64.yml
@@ -131,22 +131,22 @@ jobs:
           bun run deploy:electron
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
-          path: dist/Cockpit*.${{ matrix.extension }}
+          path: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
           if-no-files-found: error
 
       - name: Upload diff artifact (mac-only)
         if: matrix.os == 'macos-13'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
           path: dist/Cockpit*.zip
           if-no-files-found: error
 
       - name: Upload latest metadata artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.latestMetadataName }}
           path: dist/latest*.yml
@@ -194,9 +194,13 @@ jobs:
         include:
         - os: ubuntu-latest
           suffix: linux
+          arch: x86_64
+          extension: flatpak
 
         - os: ubuntu-24-arm
-          suffix: linux-arm
+          suffix: linux
+          arch: arm64
+          extension: flatpak
 
     steps:
       - name: Checkout
@@ -216,27 +220,33 @@ jobs:
           sudo flatpak remote-add --system flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak remote-add --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
 
-      - name: Build electron
+      - name: Set version as environment variable (others)
+        run: echo "VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_ENV
+
+      - name: Build electron (arm)
+        if: matrix.os == 'ubuntu-24-arm'
         run: |
           bun install --frozen-lockfile
           bun run build
-          env DEBUG="@malept/flatpak-bundler" bun deploy:flatpak
+          env DEBUG="@malept/flatpak-bundler" bun run deploy:flatpak --arm64
 
-      - name: Build tag name
-        if: startsWith(github.ref, 'refs/tags/') && success()
+      - name: Build electron (x86_64)
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          mv dist/Cockpit*.flatpak dist/Cockpit-${{ matrix.suffix }}-$(git describe --tags --abbrev=0).flatpak
+          bun install --frozen-lockfile
+          bun run build
+          env DEBUG="@malept/flatpak-bundler" bun run deploy:flatpak --x64
 
-      - name: Build name
-        if: "!startsWith(github.ref, 'refs/tags/') && success()"
+      - name: Rename 'aarch64' to 'arm64'
+        if: matrix.os == 'ubuntu-24-arm'
         run: |
-          mv dist/Cockpit*.flatpak dist/Cockpit-${{ matrix.suffix }}-$(git describe --tags).flatpak
+          mv dist/Cockpit-${{ matrix.suffix }}-aarch64-${{ env.VERSION }}.${{ matrix.extension }} dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: cockpit-${{ matrix.suffix }}-flatpak
-          path: dist/Cockpit*.flatpak
+          name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
+          path: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
           if-no-files-found: error
 
       - name: Upload Release
@@ -244,7 +254,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && success()
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/Cockpit*.flatpak
+          file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
           tag: ${{ github.ref }}
           overwrite: true
           prerelease: true
@@ -327,3 +337,15 @@ jobs:
         run: |
           docker buildx imagetools \
             inspect ${{ steps.prepare.outputs.docker_image }}:${{ steps.prepare.outputs.version }}
+
+  deploy-cloud:
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && success()
+    steps:
+      - name: Build and Publish Extension in BlueOS CLoud
+        uses: bluerobotics/blueos-cloud-action@0.0.1
+        with:
+          BCLOUD_PAT: ${{secrets.BCLOUD_PAT}}
+          PLATFORMS: linux/arm/v7,linux/arm64,linux/amd64
+          EXTENSION: 29fb2bc7-2bc9-4d86-a57b-4fe1ee152d1e

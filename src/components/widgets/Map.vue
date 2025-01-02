@@ -81,7 +81,15 @@
     absolute
     bottom
     color="white"
+    :style="`top: ${topProgressBarDisplacement}`"
   />
+  <p
+    v-if="fetchingMission"
+    :style="{ top: topProgressBarDisplacement }"
+    class="absolute left-[7px] mt-4 flex text-md font-bold text-white z-30 drop-shadow-md"
+  >
+    Loading mission...
+  </p>
 </template>
 
 <script setup lang="ts">
@@ -153,9 +161,30 @@ const esri = L.tileLayer(
   { maxZoom: 19, attribution: '© Esri World Imagery' }
 )
 
+// Overlays
+const seamarks = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  maxZoom: 18,
+  attribution: '© OpenSeaMap contributors',
+})
+
+const marineProfile = L.tileLayer.wms('https://geoserver.openseamap.org/geoserver/gwc/service/wms', {
+  layers: 'gebco2021:gebco_2021',
+  format: 'image/png',
+  transparent: true,
+  version: '1.1.1',
+  attribution: '© GEBCO, OpenSeaMap',
+  tileSize: 256,
+  maxZoom: 19,
+})
+
 const baseMaps = {
   'OpenStreetMap': osm,
   'Esri World Imagery': esri,
+}
+
+const overlays = {
+  'Seamarks': seamarks,
+  'Marine Profile': marineProfile,
 }
 
 // Show buttons when the mouse is over the widget
@@ -163,7 +192,7 @@ const mapBase = ref<HTMLElement>()
 const isMouseOver = useElementHover(mapBase)
 
 const zoomControl = L.control.zoom({ position: 'bottomright' })
-const layerControl = L.control.layers(baseMaps)
+const layerControl = L.control.layers(baseMaps, overlays)
 
 watch(showButtons, () => {
   if (map.value === undefined) return
@@ -182,10 +211,10 @@ watch(isMouseOver, () => {
 
 onMounted(async () => {
   // Bind leaflet instance to map element
-  map.value = L.map(mapId.value, { layers: [osm, esri], attributionControl: false }).setView(
-    mapCenter.value as LatLngTuple,
-    zoom.value
-  ) as Map
+  map.value = L.map(mapId.value, {
+    layers: [osm, esri, seamarks, marineProfile],
+    attributionControl: false,
+  }).setView(mapCenter.value as LatLngTuple, zoom.value) as Map
 
   // Remove default zoom control
   map.value.removeControl(map.value.zoomControl)
@@ -417,7 +446,7 @@ watch(vehiclePositionHistory, (newPoints) => {
   if (map.value === undefined || newPoints === undefined) return
 
   if (vehicleHistoryPolyline.value === undefined) {
-    vehicleHistoryPolyline.value = L.polyline([], { color: '#358AC3' }).addTo(map.value)
+    vehicleHistoryPolyline.value = L.polyline([], { color: '#ffff00' }).addTo(map.value)
   }
 
   const latLongHistory = newPoints.filter((posHis) => posHis.snapshot !== undefined).map((posHis) => posHis.snapshot)
@@ -556,6 +585,10 @@ const executeMissionOnVehicle = async (): Promise<void> => {
 const widgetStore = useWidgetManagerStore()
 const bottomButtonsDisplacement = computed(() => {
   return `${Math.max(-widgetStore.widgetClearanceForVisibleArea(widget.value).bottom, 0)}px`
+})
+
+const topProgressBarDisplacement = computed(() => {
+  return `${Math.max(-widgetStore.widgetClearanceForVisibleArea(widget.value).top, 0)}px`
 })
 </script>
 

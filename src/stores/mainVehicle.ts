@@ -1,4 +1,5 @@
 import { useStorage, useTimestamp, watchThrottled } from '@vueuse/core'
+import { differenceInSeconds } from 'date-fns'
 import { defineStore } from 'pinia'
 import { v4 as uuid } from 'uuid'
 import { computed, reactive, ref, watch } from 'vue'
@@ -18,6 +19,7 @@ import { ConnectionManager } from '@/libs/connection/connection-manager'
 import type { Package } from '@/libs/connection/m2r/messages/mavlink2rest'
 import { MavAutopilot, MAVLinkType, MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import type { Message } from '@/libs/connection/m2r/messages/mavlink2rest-message'
+import eventTracker from '@/libs/external-telemetry/event-tracking'
 import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
 import { MavlinkManualControlManager } from '@/libs/joystick/protocols/mavlink-manual-control'
 import type { ArduPilot } from '@/libs/vehicle/ardupilot/ardupilot'
@@ -70,7 +72,18 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const ws_protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
 
   const cpuLoad = ref<number>()
-  const globalAddress = useStorage('cockpit-vehicle-address', defaultGlobalAddress)
+  const rawGlobalAddress = useStorage('cockpit-vehicle-address', defaultGlobalAddress)
+  const globalAddress = computed({
+    get() {
+      if (rawGlobalAddress.value.includes('://')) {
+        return rawGlobalAddress.value.split('://')[1]
+      }
+      return rawGlobalAddress.value
+    },
+    set(newValue) {
+      rawGlobalAddress.value = newValue
+    },
+  })
 
   const defaultMainConnectionURI = computed(() => `${ws_protocol}://${globalAddress.value}/mavlink2rest/ws/mavlink`)
   const defaultWebRTCSignallingURI = computed(() => `${ws_protocol}://${globalAddress.value}:6021/`)
@@ -110,6 +123,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const genericVariables: Record<string, unknown> = reactive({})
   const availableGenericVariables = ref<string[]>([])
   const usedGenericVariables = ref<string[]>([])
+  const vehicleArmingTime = ref<Date | undefined>(undefined)
 
   const mode = ref<string | undefined>(undefined)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -376,7 +390,19 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       Object.assign(attitude, newAttitude)
     })
     mainVehicle.value.onArm.add((armed: boolean) => {
+      const wasArmed = isArmed.value
       isArmed.value = armed
+
+      // If the vehicle was already in the desired state or it's the first time we are checking, do not capture an event
+      if (wasArmed === undefined || wasArmed === armed) return
+
+      if (armed) {
+        vehicleArmingTime.value = new Date()
+        eventTracker.capture('Vehicle armed')
+      } else {
+        const armDurationInSeconds = differenceInSeconds(new Date(), vehicleArmingTime.value ?? new Date())
+        eventTracker.capture('Vehicle disarmed', { armDurationInSeconds })
+      }
     })
     mainVehicle.value.onTakeoff.add((inAir: boolean) => {
       flying.value = inAir
@@ -439,9 +465,15 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     updateVehicleId()
 
     setInterval(async () => {
-      const blueosStatus = await getStatus(globalAddress.value)
-      // If blueos is not available, do not try to get data from it
-      if (!blueosStatus) return
+      try {
+        const blueosStatus = await getStatus(globalAddress.value)
+        if (!blueosStatus) {
+          throw new Error('BlueOS is not available.')
+        }
+      } catch (error) {
+        console.error(error)
+        return
+      }
 
       const blueosVariablesAddresses = {
         cpuTemp: 'blueos/cpu/tempC',
@@ -454,9 +486,12 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       })
 
       if (usedGenericVariables.value.includes(blueosVariablesAddresses.cpuTemp)) {
-        getCpuTempCelsius(globalAddress.value).then((temp) => {
+        try {
+          const temp = await getCpuTempCelsius(globalAddress.value)
           Object.assign(genericVariables, { ...genericVariables, ...{ [blueosVariablesAddresses.cpuTemp]: temp } })
-        })
+        } catch (error) {
+          console.error(error)
+        }
       }
     }, 1000)
 

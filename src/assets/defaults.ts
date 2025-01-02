@@ -37,10 +37,93 @@ export const defaultMiniWidgetManagerVars: MiniWidgetManagerVars = {
   highlighted: false,
 }
 
+export const defaultCustomWidgetContainers = [
+  {
+    name: '0-left',
+    elements: [],
+  },
+  {
+    name: '1-left',
+    elements: [],
+  },
+  {
+    name: '2-left',
+    elements: [],
+  },
+  {
+    name: '3-left',
+    elements: [],
+  },
+  {
+    name: '4-left',
+    elements: [],
+  },
+  {
+    name: '5-left',
+    elements: [],
+  },
+  {
+    name: '6-left',
+    elements: [],
+  },
+  {
+    name: '7-left',
+    elements: [],
+  },
+  {
+    name: '8-left',
+    elements: [],
+  },
+  {
+    name: '9-left',
+    elements: [],
+  },
+  {
+    name: '0-right',
+    elements: [],
+  },
+  {
+    name: '1-right',
+    elements: [],
+  },
+  {
+    name: '2-right',
+    elements: [],
+  },
+  {
+    name: '3-right',
+    elements: [],
+  },
+  {
+    name: '4-right',
+    elements: [],
+  },
+  {
+    name: '5-right',
+    elements: [],
+  },
+  {
+    name: '6-right',
+    elements: [],
+  },
+  {
+    name: '7-right',
+    elements: [],
+  },
+  {
+    name: '8-right',
+    elements: [],
+  },
+  {
+    name: '9-right',
+    elements: [],
+  },
+]
+
 const hostname = window.location.hostname
 export const defaultBlueOsAddress = 'http://blueos-avahi.local'
-export const defaultGlobalAddress = hostname == '' || hostname == undefined ? defaultBlueOsAddress : hostname
-export const defaultUIGlassColor = { opacity: 0.8, bgColor: '#4F4F4F1A', fontColor: '#FFFFFF', blur: 25 }
+export const defaultGlobalAddress = !hostname || hostname == 'localhost' ? defaultBlueOsAddress : hostname
+export const defaultUIGlassColor = { opacity: 0.9, bgColor: '#63636354', fontColor: '#FFFFFF', blur: 25 }
 export const widgetProfiles: Profile[] = [
   {
     name: 'ROV default',
@@ -541,12 +624,50 @@ export const widgetProfiles: Profile[] = [
         visible: true,
         widgets: [
           {
-            hash: '6439e791-3031-4928-aff2-8bd9af713798',
+            hash: '2f32cbb5-7031-42a1-b26e-8c110f5cfc0b',
+            name: 'VirtualHorizon',
+            component: WidgetType.VirtualHorizon,
+            position: {
+              x: 0.8470340414647122,
+              y: 0.030779937236477317,
+            },
+            size: {
+              width: 0.06129068105944188,
+              height: 0.11777527653033051,
+            },
+            options: {},
+          },
+          {
+            hash: 'c00ae733-0290-48be-93e3-cba986d9b19a',
+            name: 'Compass',
+            component: WidgetType.Compass,
+            position: {
+              x: 0.7791262675380712,
+              y: 0.030779937236477317,
+            },
+            size: {
+              width: 0.06129068105944188,
+              height: 0.11777527653033051,
+            },
+            options: {
+              headingStyle: 'North Up',
+            },
+          },
+          {
+            hash: 'd18e02c2-96ba-43fa-9135-7b4feedee580',
             name: 'Main Map',
             component: WidgetType.Map,
-            position: { x: 0, y: 0 },
-            size: { width: 1, height: 1 },
-            options: {},
+            position: {
+              x: 0,
+              y: 0,
+            },
+            size: {
+              width: 1,
+              height: 1,
+            },
+            options: {
+              showVehiclePath: true,
+            },
           },
         ],
         miniWidgetContainers: [
@@ -561,8 +682,42 @@ export const widgetProfiles: Profile[] = [
               },
             ],
           },
-          { name: 'Bottom-center container', widgets: [] },
-          { name: 'Bottom-right container', widgets: [] },
+          {
+            name: 'Bottom-center container',
+            widgets: [
+              {
+                component: MiniWidgetType.ArmerButton,
+                name: 'ArmerButton',
+                options: {},
+                hash: 'ecb8299e-8a98-4e95-a399-aa01ddf3d7b5',
+              },
+              {
+                component: MiniWidgetType.VeryGenericIndicator,
+                name: 'Speed (GPS)',
+                options: {
+                  displayName: 'Speed (GPS)',
+                  variableName: 'VFR_HUD/groundspeed',
+                  iconName: 'mdi-car-speed-limiter',
+                  variableUnit: 'm/s',
+                  variableMultiplier: 1,
+                  decimalPlaces: 1,
+                  widgetWidth: 160,
+                },
+                hash: 'dfa95e38-47e0-4656-b863-c22029b89862',
+              },
+            ],
+          },
+          {
+            name: 'Bottom-right container',
+            widgets: [
+              {
+                component: MiniWidgetType.ModeSelector,
+                name: 'ModeSelector',
+                options: {},
+                hash: 'da8ad20e-e38c-4250-ad28-57b777c04a98',
+              },
+            ],
+          },
         ],
       },
     ],

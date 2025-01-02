@@ -484,6 +484,7 @@ import { ref, watch } from 'vue'
 
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useSnackbar } from '@/composables/snackbar'
+import { isElectron } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useVideoStore } from '@/stores/video'
 import { DialogActions } from '@/types/general'
@@ -580,7 +581,30 @@ const fileActionButtons = computed(() => [
     disabled: showOnScreenProgress.value === true || isPreparingDownload.value === true,
     action: () => downloadVideoAndTelemetryFiles(),
   },
+  {
+    name: 'Open Folder',
+    icon: 'mdi-folder-outline',
+    size: 28,
+    tooltip: 'Open videos folder',
+    confirmAction: false,
+    show: isElectron(),
+    disabled: false,
+    action: () => openVideoFolder(),
+  },
 ])
+
+const openVideoFolder = (): void => {
+  if (isElectron() && window.electronAPI) {
+    window.electronAPI?.openVideoFolder()
+  } else {
+    showSnackbar({
+      message: 'This feature is only available in the desktop version of Cockpit.',
+      duration: 3000,
+      variant: 'error',
+      closeButton: true,
+    })
+  }
+}
 
 const closeModal = (): void => {
   isVisible.value = false
@@ -889,11 +913,12 @@ const fetchVideosAndLogData = async (): Promise<void> => {
   const logFileOperations: Promise<VideoLibraryLogFile>[] = []
 
   // Fetch processed videos and logs
-  await videoStore.videoStoringDB.iterate((value, key) => {
+  const keys = await videoStore.videoStorage.keys()
+  for (const key of keys) {
     if (videoStore.isVideoFilename(key)) {
       videoFilesOperations.push(
         (async () => {
-          const videoBlob = await videoStore.videoStoringDB.getItem<Blob>(key)
+          const videoBlob = await videoStore.videoStorage.getItem(key)
           let url = ''
           let isProcessed = true
           if (videoBlob instanceof Blob) {
@@ -910,7 +935,7 @@ const fetchVideosAndLogData = async (): Promise<void> => {
     if (key.endsWith('.ass')) {
       logFileOperations.push(
         (async () => {
-          const videoBlob = await videoStore.videoStoringDB.getItem<Blob>(key)
+          const videoBlob = await videoStore.videoStorage.getItem(key)
           let url = ''
           if (videoBlob instanceof Blob) {
             url = URL.createObjectURL(videoBlob)
@@ -923,7 +948,7 @@ const fetchVideosAndLogData = async (): Promise<void> => {
         })()
       )
     }
-  })
+  }
 
   // Fetch unprocessed videos
   const unprocessedVideos = await videoStore.unprocessedVideos

@@ -1,11 +1,11 @@
 <template>
   <teleport to="body">
-    <InteractionDialog :show-dialog="showDialog" max-width="740" variant="text-only">
+    <InteractionDialog v-model="showDialog" max-width="740" variant="text-only">
       <template #content>
         <div class="flex absolute top-0 right-0"><v-btn icon="mdi-close" variant="text" @click="closeDialog" /></div>
         <div class="flex flex-col justify-center align-center w-full h-full">
           <img :src="CockpitLogo" alt="Cockpit Logo" class="w-64 my-4" />
-          <div class="w-[90%] flex justify-between my-8 py-3">
+          <div class="w-[90%] flex justify-between my-6 py-3">
             <div class="w-[45%] flex flex-col text-start">
               <p class="mb-1">
                 Cockpit is an intuitive and customizable cross-platform ground control station for remote vehicles of
@@ -18,7 +18,14 @@
               </p>
             </div>
             <div class="w-[45%] flex flex-col justify-end text-end">
-              <p class="mb-1">Version 1.0.1</p>
+              <p class="mb-1">
+                Version
+                <a :href="app_version.link" target="_blank" class="text-primary hover:underline">
+                  {{ app_version.version }}
+                </a>
+                <br />
+                <span class="text-sm text-gray-500">Released: {{ app_version.date }}</span>
+              </p>
               <p class="my-3">Created by Blue Robotics</p>
               <p class="mt-1">Licensed under AGPL-3.0-only or LicenseRef-Cockpit-Custom</p>
             </div>
@@ -63,6 +70,7 @@ import { onUnmounted, ref, watch } from 'vue'
 
 import CockpitLogo from '@/assets/cockpit-logo.png'
 import InteractionDialog from '@/components/InteractionDialog.vue'
+import { app_version } from '@/libs/cosmos'
 
 const showDialog = ref(true)
 const emit = defineEmits(['update:showAboutDialog'])
