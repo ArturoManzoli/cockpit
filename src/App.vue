@@ -666,6 +666,16 @@ const openAboutDialog = (): void => {
 const route = useRoute()
 const routerSection = ref()
 
+watch(
+  () => route.path,
+  (newPath) => {
+    console.log('🚀 ~ newPath:', newPath)
+    if (newPath === '/') {
+      sessionStorage.setItem('missionPlanningRefreshed', 'false')
+    }
+  }
+)
+
 // Full screen toggling
 const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
 

@@ -303,7 +303,7 @@ import { saveAs } from 'file-saver'
 import L, { type LatLngTuple, LeafletMouseEvent, Map, Marker, Polygon } from 'leaflet'
 import { v4 as uuid } from 'uuid'
 import type { Ref } from 'vue'
-import { computed, nextTick, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 
 import ContextMenu from '@/components/mission-planning/ContextMenu.vue'
 import ScanDirectionDial from '@/components/mission-planning/ScanDirectionDial.vue'
@@ -400,6 +400,75 @@ const cursorCoordinates = ref<[number, number] | null>(null)
 const accessingSurveyContextMenu = ref(false)
 const isDraggingPolygon = ref(false)
 const isDraggingMarker = ref(false)
+
+const initLeafletMap = (): void => {
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap',
+  })
+  const esri = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19, attribution: '© Esri World Imagery' }
+  )
+  const baseMaps = {
+    'OpenStreetMap': osm,
+    'Esri World Imagery': esri,
+  }
+
+  planningMap.value = L.map('planningMap', { layers: [osm, esri] }).setView(mapCenter.value as LatLngTuple, zoom.value)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap',
+  }).addTo(planningMap.value)
+  planningMap.value.zoomControl.setPosition('bottomright')
+
+  planningMap.value.on('moveend', () => {
+    if (!planningMap.value) return
+    let { lat, lng } = planningMap.value.getCenter()
+    mapCenter.value = [lat, lng]
+  })
+
+  planningMap.value.on('zoomend', () => {
+    if (!planningMap.value) return
+    zoom.value = planningMap.value.getZoom()
+  })
+
+  planningMap.value.on('contextmenu', (e: LeafletMouseEvent) => {
+    if (isCreatingSurvey.value) return
+    selectedWaypoint.value = undefined
+    contextMenuType.value = selectedSurveyId.value === '' ? 'map' : contextMenuType.value
+    showContextMenu(e)
+  })
+
+  planningMap.value.on('drag', updateConfirmButtonPosition)
+
+  planningMap.value.on('click', (e: L.LeafletMouseEvent) => {
+    onMapClick(e)
+  })
+
+  const layerControl = L.control.layers(baseMaps)
+  planningMap.value.addControl(layerControl)
+}
+
+onMounted(async () => {
+  // TODO temporary fix for the issue where the map is only displayed correctly after a page refresh
+  if (
+    !sessionStorage.getItem('missionPlanningRefreshed') ||
+    sessionStorage.getItem('missionPlanningRefreshed') === 'false'
+  ) {
+    sessionStorage.setItem('missionPlanningRefreshed', 'true')
+    location.reload()
+    return
+  }
+
+  window.addEventListener('keydown', handleKeyDown)
+  await nextTick()
+  await nextTick()
+  initLeafletMap()
+  targetFollower.enableAutoUpdate()
+  missionStore.clearMission()
+  await goHome()
+})
 
 const enableUndoForCurrentSurvey = computed(() => {
   return (
@@ -1568,7 +1637,6 @@ const addWaypointMarker = (waypoint: Waypoint): void => {
 
   newMarker.on('click', (event: LeafletMouseEvent) => {
     L.DomEvent.stopPropagation(event)
-    L.DomEvent.preventDefault(event)
     selectedWaypoint.value = waypoint
     selectedSurveyId.value = ''
     hideContextMenu()
@@ -1644,10 +1712,6 @@ watch(selectedWaypoint, (newWaypoint, oldWaypoint) => {
   }
 })
 
-onMounted(() => {
-  window.addEventListener('keydown', handleKeyDown)
-})
-
 const onMapClick = (e: L.LeafletMouseEvent): void => {
   hideContextMenu()
 
@@ -1699,67 +1763,6 @@ const onMapClick = (e: L.LeafletMouseEvent): void => {
     }
   }
 }
-
-onMounted(async () => {
-  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap',
-  })
-  const esri = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom: 19, attribution: '© Esri World Imagery' }
-  )
-
-  const baseMaps = {
-    'OpenStreetMap': osm,
-    'Esri World Imagery': esri,
-  }
-
-  planningMap.value = L.map('planningMap', { layers: [osm, esri] }).setView(mapCenter.value as LatLngTuple, zoom.value)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(planningMap.value)
-  planningMap.value.zoomControl.setPosition('bottomright')
-
-  planningMap.value.on('moveend', () => {
-    if (planningMap.value === undefined) return
-    let { lat, lng } = planningMap.value.getCenter()
-    if (lat && lng) {
-      mapCenter.value = [lat, lng]
-    }
-  })
-  planningMap.value.on('zoomend', () => {
-    if (planningMap.value === undefined) return
-    zoom.value = planningMap.value?.getZoom() ?? mapCenter.value
-  })
-
-  await goHome()
-  await nextTick()
-
-  planningMap.value.on('contextmenu', (e: LeafletMouseEvent) => {
-    if (isCreatingSurvey.value) return
-    selectedWaypoint.value = undefined
-    contextMenuType.value = selectedSurveyId.value === '' ? 'map' : contextMenuType.value
-    showContextMenu(e)
-  })
-
-  planningMap.value.on('drag', updateConfirmButtonPosition)
-
-  planningMap.value.on('click', (e: L.LeafletMouseEvent) => {
-    onMapClick(e)
-  })
-
-  const layerControl = L.control.layers(baseMaps)
-  planningMap.value.addControl(layerControl)
-
-  targetFollower.enableAutoUpdate()
-})
-
-onUnmounted(() => {
-  targetFollower.disableAutoUpdate()
-  missionStore.clearMission()
-})
 
 const vehiclePosition = computed((): [number, number] | undefined =>
   vehicleStore.coordinates.latitude
