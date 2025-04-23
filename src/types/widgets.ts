@@ -851,6 +851,8 @@ export const isMiniWidgetConfigurable: Record<MiniWidgetType, boolean> = {
   [MiniWidgetType.ViewSelector]: false,
 }
 
+export const widgetHasOwnContextMenu = (widget: WidgetType): boolean => widget === WidgetType.Map
+
 export const validateWidget = (maybeWidget: Widget): maybeWidget is Widget => {
   if (maybeWidget.hash === undefined) throw new Error('Widget validation failed: property hash is missing.')
 
