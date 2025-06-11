@@ -86,6 +86,7 @@ class LocalForageStorage implements StorageDB {
   }
 
   setItem = async (key: string, value: Blob): Promise<void> => {
+    console.log('🚀 ~ value to setItem:', key, value)
     await this.localForage.setItem(key, value)
   }
 
@@ -120,8 +121,17 @@ const videoStoringIndexedDB: StorageDB = new LocalForageStorage(
   'Cockpit video recordings and their corresponding telemetry subtitles.'
 )
 
+const snapshotsIndexedDB: StorageDB = new LocalForageStorage(
+  'Cockpit - Snapshots',
+  'cockpit-snapshots-db',
+  1.0,
+  'Cockpit snapshots taken from video streams or workspace.'
+)
+
 const electronVideoStorage = new ElectronStorage(['videos'])
 const temporaryElectronVideoStorage = new ElectronStorage(['videos', 'temporary-video-chunks'])
+const electronSnapshotStorage = new ElectronStorage(['snapshots'])
 
 export const videoStorage = isElectron() ? electronVideoStorage : videoStoringIndexedDB
 export const tempVideoStorage = isElectron() ? temporaryElectronVideoStorage : tempVideoChunksIndexdedDB
+export const snapshotStorage = isElectron() ? electronSnapshotStorage : snapshotsIndexedDB

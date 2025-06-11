@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, screen } from 'electron'
 import logger from 'electron-log'
 import { join } from 'path'
 
@@ -93,4 +93,12 @@ app.on('before-quit', () => {
   if (import.meta.env.DEV) {
     app.exit()
   }
+})
+
+ipcMain.handle('capture-workspace', async (event, rect?: Electron.Rectangle) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) throw new Error('Could not find window')
+  // Capture the given sub-rectangle (or whole window if undefined)
+  const image = await win.capturePage(rect)
+  return image.toPNG()
 })

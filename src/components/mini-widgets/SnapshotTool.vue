@@ -81,8 +81,10 @@ import { storeToRefs } from 'pinia'
 import { computed, onBeforeMount, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 
 import { useInteractionDialog } from '@/composables/interactionDialog'
+import { openSnackbar } from '@/composables/snackbar'
 import { isEqual, sleep } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
+import { useSnapshotStore } from '@/stores/snapshot'
 import { useVideoStore } from '@/stores/video'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import type { MiniWidget } from '@/types/widgets'
@@ -91,6 +93,7 @@ const { showDialog } = useInteractionDialog()
 const interfaceStore = useAppInterfaceStore()
 const widgetStore = useWidgetManagerStore()
 const videoStore = useVideoStore()
+const snapshotStore = useSnapshotStore()
 
 const props = defineProps<{
   /**
@@ -108,6 +111,7 @@ const selectedExternalId = ref<string | undefined>()
 const snapshotTypeIcon = ref<'mdi-video' | 'mdi-monitor' | 'mdi-timer-outline'>('mdi-video')
 const snapshotType = ref<'video' | 'workspace' | 'timed'>('video')
 const isSnapshotMenuOpen = ref<boolean>(false)
+const timedSnapshotInterval = ref<number>(5)
 const timedSnapshotTarget = ref<'Selected streams' | 'Cockpit work area'>('Selected streams')
 const nameSelectedStreams = ref<string[]>([])
 const nameSelectedStream = computed<string | undefined>({
@@ -149,9 +153,33 @@ const flashEffect = async (): Promise<void> => {
   document.body.removeChild(flashOverlay)
 }
 
-const handleTakeSnapshot = (): void => {
+const handleTakeSnapshot = async (): Promise<void> => {
   isSnapshotMenuOpen.value = false
-  flashEffect()
+
+  try {
+    assertStreamIsSelectedAndAvailable(nameSelectedStream.value)
+    await snapshotStore.takeSnapshot(snapshotType.value, nameSelectedStream.value)
+    flashEffect()
+    if (snapshotType.value === 'timed') {
+      openSnackbar({
+        message: `Timed snapshot started. This will capture the selected interfaces every ${timedSnapshotInterval.value} seconds until you press the camera button again.`,
+        variant: 'info',
+        duration: 4000,
+      })
+      setInterval(async () => {
+        await snapshotStore.takeSnapshot('timed', nameSelectedStream.value)
+      }, timedSnapshotInterval.value * 1000)
+      return
+    }
+    openSnackbar({
+      message: 'Snapshot recorded successfully.',
+      variant: 'success',
+      duration: 2000,
+    })
+  } catch (error) {
+    showDialog({ message: `Error taking snapshot: ${error}`, variant: 'error' })
+    return
+  }
 }
 
 const handleSelectSnapshotType = (type: 'video' | 'workspace' | 'timed'): void => {
