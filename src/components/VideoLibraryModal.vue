@@ -83,6 +83,63 @@
           </div>
           <v-divider vertical class="h-[92%] mt-4 opacity-[0.1]"></v-divider>
           <!-- Right Content -->
+          <template v-if="currentTab === 'snapshots'">
+            <div v-if="availablePictures.length > 0" class="flex flex-col py-6 px-4 flex-1 h-full">
+              <div
+                class="grid gap-4 overflow-y-auto w-full h-full px-2"
+                style="grid-template-columns: repeat(auto-fill, minmax(150px, 1fr))"
+              >
+                <div
+                  v-for="picture in availablePictures"
+                  :key="picture.filename"
+                  class="relative"
+                  @click="onPictureClick(picture.filename)"
+                >
+                  <div
+                    :class="[
+                      'border-4 border-white rounded-md cursor-pointer transition duration-75 ease-in',
+                      selectedPictures.find((picFileName) => picFileName === picture.filename)
+                        ? 'border-opacity-40'
+                        : 'border-opacity-10',
+                    ]"
+                  >
+                    <img
+                      v-if="picture.blob"
+                      :src="createObjectURL(picture.blob)"
+                      class="object-contain w-full h-auto"
+                      alt="Picture thumbnail"
+                    />
+                    <div reactive class="fullscreen-button" @click="openPicInFullScreen(picture)">
+                      <v-icon size="40" class="text-white"> mdi-fullscreen </v-icon>
+                    </div>
+                    <div reactive class="download-button" @click="downloadPictures(picture)">
+                      <v-icon size="20" class="text-white"> mdi-download </v-icon>
+                    </div>
+                    <div
+                      v-if="isMultipleSelectionMode"
+                      class="checkmark-button"
+                      :class="selectedVideos.find((v) => v.fileName === picture.filename) ? 'bg-green' : 'bg-white'"
+                      @click.stop="togglePictureIntoSelectionArray(picture.filename)"
+                    >
+                      <v-icon size="15" class="text-white">
+                        {{
+                          selectedVideos.find((v) => v.fileName === picture.filename)
+                            ? 'mdi-check-circle-outline'
+                            : 'mdi-radiobox-blank'
+                        }}
+                      </v-icon>
+                    </div>
+                  </div>
+                  <div class="flex justify-center mt-1 text-xs text-white/80 truncate">
+                    {{ picture.filename }}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="flex justify-center items-center w-full h-full text-xl text-center">
+              {{ loadingData ? 'Loading' : 'No pictures found' }}
+            </div>
+          </template>
           <template v-if="currentTab === 'videos'">
             <!-- Available Videos -->
             <div
@@ -490,6 +547,37 @@
       </div>
     </template>
   </InteractionDialog>
+  <v-dialog
+    v-if="showFullScreenPictureModal"
+    :model-value="showFullScreenPictureModal"
+    :persistent="false"
+    @update:model-value="showFullScreenPictureModal = $event"
+  >
+    <div class="flex flex-col justify-center items-center w-full h-full">
+      <div class="relative inline-block">
+        <img
+          v-if="fullScreenPicture"
+          :src="createObjectURL(fullScreenPicture.blob)"
+          class="block object-contain max-w-full max-h-[95vh]"
+          alt="Full Screen Picture"
+        />
+        <v-btn
+          class="absolute top-2 right-2 p-1 bg-[#00000055] text-white"
+          size="sm"
+          icon
+          @click="showFullScreenPictureModal = false"
+        >
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+
+        <div class="absolute top-2 left-2 px-2 py-1 bg-[#00000055] rounded z-[1000] border-4 border-red-500">
+          <p class="text-2xl text-white">
+            {{ fullScreenPicture?.filename }}
+          </p>
+        </div>
+      </div>
+    </div>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -502,14 +590,18 @@ import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useSnackbar } from '@/composables/snackbar'
 import { isElectron } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
+import { useSnapshotStore } from '@/stores/snapshot'
 import { useVideoStore } from '@/stores/video'
 import { DialogActions } from '@/types/general'
+import { SnapshotLibraryFile } from '@/types/snapshot'
 import { VideoLibraryFile, VideoLibraryLogFile } from '@/types/video'
 
+import GlassModal from './GlassModal.vue'
 import InteractionDialog from './InteractionDialog.vue'
 
 const videoStore = useVideoStore()
 const interfaceStore = useAppInterfaceStore()
+const snapshotStore = useSnapshotStore()
 const { openSnackbar } = useSnackbar()
 
 const { showDialog, closeDialog } = useInteractionDialog()
@@ -557,6 +649,12 @@ const deleteButtonLoading = ref(false)
 const videoBlobURL = ref<string | null>(null)
 const loadingVideoBlob = ref(false)
 const videoThumbnailURLs = reactive<Record<string, string | null>>({})
+const availablePictures = ref<SnapshotLibraryFile[]>([])
+const selectedPictures = ref<string[]>([])
+const showFullScreenPictureModal = ref(false)
+const fullScreenPicture = ref<SnapshotLibraryFile | null>(null)
+
+const createObjectURL = (blob: Blob): string => URL.createObjectURL(blob)
 
 const dialogStyle = computed(() => {
   const scale = interfaceStore.isOnSmallScreen ? windowWidth.value / 1100 : 1
@@ -568,7 +666,7 @@ const dialogStyle = computed(() => {
 
 const menuButtons = [
   { name: 'Videos', icon: 'mdi-video-outline', selected: true, disabled: false, tooltip: '' },
-  { name: 'Pictures', icon: 'mdi-image-outline', selected: false, disabled: true, tooltip: 'Coming soon' },
+  { name: 'Snapshots', icon: 'mdi-image-outline', selected: false, disabled: false, tooltip: '' },
 ]
 
 const fileActionButtons = computed(() => [
@@ -610,6 +708,32 @@ const openVideoFolder = (): void => {
   } else {
     openSnackbar({
       message: 'This feature is only available in the desktop version of Cockpit.',
+      duration: 3000,
+      variant: 'error',
+      closeButton: true,
+    })
+  }
+}
+
+const openPicInFullScreen = (picture: SnapshotLibraryFile): void => {
+  fullScreenPicture.value = picture
+  showFullScreenPictureModal.value = true
+}
+
+const downloadPictures = async (picture?: SnapshotLibraryFile): Promise<void> => {
+  try {
+    await snapshotStore.downloadFilesFromSnapshotDB(picture ? [picture.filename] : selectedPictures.value)
+    openSnackbar({
+      message: 'Pictures downloaded successfully.',
+      duration: 3000,
+      variant: 'success',
+      closeButton: true,
+    })
+  } catch (error) {
+    const errorMsg = `Error downloading picture: ${(error as Error).message ?? error!.toString()}`
+    console.error(errorMsg)
+    openSnackbar({
+      message: errorMsg,
       duration: 3000,
       variant: 'error',
       closeButton: true,
@@ -665,6 +789,29 @@ const toggleVideoIntoSelectionArray = (video: VideoLibraryFile): void => {
   } else {
     selectedVideos.value.push(video)
     isMultipleSelectionMode.value = true
+  }
+}
+
+const togglePictureIntoSelectionArray = (filename: string): void => {
+  const idx = selectedPictures.value.findIndex((picture) => picture === filename)
+  if (idx >= 0) {
+    // remove it (only if more than one)
+    if (selectedPictures.value.length > 1) {
+      selectedPictures.value.splice(idx, 1)
+    }
+  } else {
+    selectedPictures.value.push(filename)
+    isMultipleSelectionMode.value = true
+  }
+}
+
+// handle click with Ctrl/Cmd for multi-select
+const onPictureClick = (filename: string): void => {
+  console.log('🚀 ~ filename:', filename)
+  if (isMultipleSelectionMode.value) {
+    togglePictureIntoSelectionArray(filename)
+  } else {
+    selectedPictures.value = [filename]
   }
 }
 
@@ -930,7 +1077,7 @@ const fetchVideosAndLogData = async (): Promise<void> => {
     if (videoStore.isVideoFilename(key)) {
       videoFilesOperations.push({ fileName: key, isProcessed: true, thumbnail: videoStore.videoStorage.getItem(key) })
       const thumbnail = await videoStore.getVideoThumbnail(key, true)
-      videoThumbnailURLs[key] = thumbnail ? URL.createObjectURL(thumbnail) : null
+      videoThumbnailURLs[key] = thumbnail ? createObjectURL(thumbnail) : null
     }
     if (key.endsWith('.ass')) {
       logFileOperations.push({ fileName: key })
@@ -941,7 +1088,7 @@ const fetchVideosAndLogData = async (): Promise<void> => {
   const unprocessedVideos = await videoStore.unprocessedVideos
   const unprocessedVideoOperations = Object.entries(unprocessedVideos).map(async ([hash, videoInfo]) => {
     const thumbnail = await videoStore.getVideoThumbnail(hash, false)
-    videoThumbnailURLs[hash] = thumbnail ? URL.createObjectURL(thumbnail) : null
+    videoThumbnailURLs[hash] = thumbnail ? createObjectURL(thumbnail) : null
     return { ...videoInfo, ...{ hash: hash, isProcessed: false } }
   })
 
@@ -956,6 +1103,26 @@ const fetchVideosAndLogData = async (): Promise<void> => {
 
   availableVideos.value = [...videos, ...validUnprocessedVideos]
   availableLogFiles.value = logFiles
+
+  loadingData.value = false
+}
+
+const fetchPictures = async (): Promise<void> => {
+  loadingData.value = true
+  availablePictures.value = []
+
+  // 1) get all snapshot-keys from IndexedDB (or Electron)
+  const keys = await snapshotStore.snapshotStorage.keys()
+
+  // 2) build an array of promises to fetch each blob
+  const snapshotFilesOperations = keys.map(async (key) => {
+    const blob = await snapshotStore.snapshotStorage.getItem(key)
+    return { filename: key, blob } as SnapshotLibraryFile
+  })
+
+  // 3) await them all, and store
+  const snapshots = await Promise.all(snapshotFilesOperations)
+  availablePictures.value = snapshots
 
   loadingData.value = false
 }
@@ -1004,7 +1171,7 @@ const loadVideoBlobIntoPlayer = async (videoFileName: string): Promise<void> => 
     const videoBlob = await videoStore.videoStorage.getItem(videoFileName)
 
     if (videoBlob instanceof Blob && videoPlayer) {
-      videoBlobURL.value = URL.createObjectURL(videoBlob)
+      videoBlobURL.value = createObjectURL(videoBlob)
       videoPlayer.src = videoBlobURL.value
       videoPlayer.load()
     }
@@ -1119,6 +1286,7 @@ watch(
 
 onMounted(async () => {
   await fetchVideosAndLogData()
+  await fetchPictures()
   if (availableVideos.value.length > 0) {
     await loadVideoBlobIntoPlayer(availableVideos.value[0].fileName)
   }
@@ -1252,6 +1420,46 @@ onBeforeUnmount(() => {
 
 .play-button:hover {
   opacity: 0.8;
+  transition: all;
+  transition-duration: 0.4s;
+}
+
+.fullscreen-button {
+  position: absolute;
+  display: flex;
+  justify-content: end;
+  align-items: end;
+  bottom: 40%;
+  right: 40%;
+  border-radius: 6px;
+  background: #ffffff22;
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+.fullscreen-button:hover {
+  background: #ffffff33;
+  opacity: 0.9;
+  transition: all;
+  transition-duration: 0.4s;
+}
+
+.download-button {
+  position: absolute;
+  display: flex;
+  justify-content: end;
+  align-items: end;
+  bottom: 20%;
+  right: 3%;
+  border-radius: 6px;
+  background: #ffffff33;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.download-button:hover {
+  background: #ffffff55;
+  opacity: 1;
   transition: all;
   transition-duration: 0.4s;
 }
