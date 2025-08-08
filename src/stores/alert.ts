@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
 
@@ -8,6 +8,8 @@ import { Alert, AlertLevel } from '../types/alert'
 export const useAlertStore = defineStore('alert', () => {
   const alerts = reactive([new Alert(AlertLevel.Success, 'Cockpit started')])
   const enableVoiceAlerts = useBlueOsStorage('cockpit-enable-voice-alerts', true)
+  const neverShowArmedMenuWarning = useBlueOsStorage('cockpit-never-show-armed-menu-warning', false)
+  const skipArmedMenuWarningThisSession = ref(false)
   // eslint-disable-next-line jsdoc/require-jsdoc
   const availableAlertSpeechVoices = reactive<SpeechSynthesisVoice[]>([])
   const selectedAlertSpeechVoiceName = useBlueOsStorage<string | undefined>(
@@ -159,5 +161,7 @@ export const useAlertStore = defineStore('alert', () => {
     pushInfoAlert,
     pushWarningAlert,
     pushCriticalAlert,
+    neverShowArmedMenuWarning,
+    skipArmedMenuWarningThisSession,
   }
 })

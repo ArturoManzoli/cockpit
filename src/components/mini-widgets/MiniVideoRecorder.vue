@@ -34,14 +34,18 @@
     <div class="flex justify-center w-6">
       <v-divider vertical class="h-6 ml-1" />
       <v-badge
+        v-if="numberOfVideosOnDB > 0"
         color="info"
         :content="numberOfVideosOnDB"
         :dot="isOutside || isVideoLibraryDialogOpen"
         class="cursor-pointer"
         @click="openVideoLibraryModal"
       >
-        <v-icon class="w-6 h-6 ml-1 text-slate-100" @click="openVideoLibraryModal"> mdi-video-box </v-icon></v-badge
-      >
+        <v-icon class="w-6 h-6 ml-1 text-slate-100" @click="openVideoLibraryModal"> mdi-video-box </v-icon>
+      </v-badge>
+      <v-icon v-else class="w-6 h-6 ml-1 text-slate-100 cursor-pointer" @click="openVideoLibraryModal">
+        mdi-video-box
+      </v-icon>
     </div>
   </div>
   <v-dialog v-model="widgetStore.miniWidgetManagerVars(miniWidget.hash).configMenuOpen" width="auto">
@@ -128,6 +132,7 @@ const selectedExternalId = ref<string | undefined>()
 const externalStreamId = computed(() => selectedExternalId.value)
 
 const openVideoLibraryModal = (): void => {
+  interfaceStore.videoLibraryMode = 'videos'
   interfaceStore.videoLibraryVisibility = true
 }
 
@@ -297,7 +302,7 @@ if (widgetStore.isRealMiniWidget(miniWidget.value.hash)) {
 
     // If the stream name is defined, try to connect the widget to the MediaStream
     if (externalStreamId.value !== undefined) {
-      const updatedMediaStream = videoStore.getMediaStream(miniWidget.value.options.internalStreamName)
+      const updatedMediaStream = videoStore.getMediaStream(externalStreamId.value)
       // If the widget is not connected to the MediaStream, try to connect it
       if (!isEqual(updatedMediaStream, mediaStream.value)) {
         mediaStream.value = updatedMediaStream

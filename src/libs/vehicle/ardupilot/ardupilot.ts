@@ -1,6 +1,12 @@
 import { differenceInMilliseconds } from 'date-fns'
 import { unit } from 'mathjs'
 
+import {
+  createDataLakeVariable,
+  getAllDataLakeVariablesInfo,
+  getDataLakeVariableInfo,
+  setDataLakeVariableData,
+} from '@/libs/actions/data-lake'
 import { sendMavlinkMessage } from '@/libs/communication/mavlink'
 import type { MAVLinkMessageDictionary, Package, Type } from '@/libs/connection/m2r/messages/mavlink2rest'
 import {
@@ -20,9 +26,10 @@ import {
 import { MavFrame } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { type Message } from '@/libs/connection/m2r/messages/mavlink2rest-message'
 import { SignalTyped } from '@/libs/signal'
-import { degrees, round, sleep } from '@/libs/utils'
+import { degrees, frequencyHzToIntervalUs, round, sleep } from '@/libs/utils'
 import {
   type ArduPilotParameterSetData,
+  type MessageIntervalOptions,
   alertLevelFromMavSeverity,
   convertCockpitWaypointsToMavlink,
   convertMavlinkWaypointsToCockpit,
@@ -45,10 +52,18 @@ import type { MetadataFile } from '@/types/ardupilot-metadata'
 import { type MissionLoadingCallback, type Waypoint, defaultLoadingCallback } from '@/types/mission'
 
 import * as Vehicle from '../vehicle'
-import { defaultMessageFrequency } from './defaults'
+import { flattenData } from './data-flattener'
+import { defaultMessageIntervalsOptions } from './defaults'
+
+export const MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY = 'cockpit-mavlink-message-intervals'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ArduPilot = ArduPilotVehicle<any>
+
+const preDefinedDataLakeVariables = {
+  cameraTilt: { id: 'cameraTiltDeg', name: 'Camera Tilt Degrees', type: 'number' },
+  ardupilotSystemId: { id: 'ardupilotSystemId', name: 'ArduPilot System ID', type: 'number' },
+}
 
 /**
  * Generic ArduPilot vehicle
@@ -76,13 +91,10 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   _statusGPS = new StatusGPS()
   _vehicleSpecificErrors = [0, 0, 0, 0]
   _metadata: MetadataFile
-  _dateLastUpdateAvailableGenericVariables = new Date()
-  _availableGenericVariablesdMessagePaths: string[] = []
-  _usedGenericVariablesdMessagePaths: { [key in string]: string[] } = {}
-
   _messages: MAVLinkMessageDictionary = new Map()
 
-  onMAVLinkMessage = new SignalTyped()
+  onIncomingMAVLinkMessage = new SignalTyped()
+  onOutgoingMAVLinkMessage = new SignalTyped()
   _flying = false
 
   protected currentSystemId = 1
@@ -109,14 +121,25 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   /**
    * Construct a new generic ArduPilot type
    * @param {Vehicle.Type} type
-   * @param {number} system_id
+   * @param {number} systemId
    */
-  constructor(type: Vehicle.Type, system_id: number) {
+  constructor(type: Vehicle.Type, systemId: number) {
     super(Vehicle.Firmware.ArduPilot, type)
-    this.currentSystemId = system_id
+    this.currentSystemId = systemId
 
     // Request vehicle to stream a pre-defined list of messages so the GCS can receive them
-    this.requestDefaultMessages()
+    try {
+      this.requestDefaultMessages()
+    } catch (error) {
+      console.error('Failed to request default messages from the vehicle.')
+      console.error(error)
+    }
+
+    // Create data-lake variables for the vehicle
+    this.createPredefinedDataLakeVariables()
+
+    // Set the system ID in the data-lake
+    setDataLakeVariableData(preDefinedDataLakeVariables.ardupilotSystemId.id, systemId)
   }
 
   /**
@@ -165,7 +188,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
       return
     }
 
-    throw new Error(`Command failed with result: ${commandAck.result.type}`)
+    throw new Error(`Command '${commandAck.command.type}' failed with result '${commandAck.result.type}'.`)
   }
 
   /**
@@ -254,27 +277,31 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
     return this.sendCommand(commandMessage)
   }
 
-  registerUsageOfMessageType = (messagePath: string): void => {
-    const pathKeys = messagePath.split('/')
-
-    if (!this._usedGenericVariablesdMessagePaths[pathKeys[0]]) {
-      this._usedGenericVariablesdMessagePaths[pathKeys[0]] = []
+  /**
+   * Log outgoing messages
+   * @param {Uint8Array} message
+   */
+  onOutgoingMessage(message: Uint8Array): void {
+    const textDecoder = new TextDecoder()
+    let mavlink_message: Package
+    const text_message = textDecoder.decode(message)
+    try {
+      mavlink_message = JSON.parse(text_message) as Package
+      this.onOutgoingMAVLinkMessage.emit_value(mavlink_message.message.type, mavlink_message)
+    } catch (error) {
+      const pattern = /Ok\((\d+)\)/
+      const match = pattern.exec(text_message)
+      if (match) return
+      console.error(`Failed to parse mavlink message: ${text_message}`)
+      return
     }
-
-    if (Object.values(this._usedGenericVariablesdMessagePaths[pathKeys[0]]).includes(messagePath)) return
-
-    console.log(`Registering usage of message type '${pathKeys[0]}' for path '${messagePath}'.`)
-    this._usedGenericVariablesdMessagePaths[pathKeys[0]] = [
-      ...this._usedGenericVariablesdMessagePaths[pathKeys[0]],
-      messagePath,
-    ]
   }
 
   /**
    *  Decode incoming message
    * @param {Uint8Array} message
    */
-  onMessage(message: Uint8Array): void {
+  onIncomingMessage(message: Uint8Array): void {
     const textDecoder = new TextDecoder()
     let mavlink_message: Package
     const text_message = textDecoder.decode(message)
@@ -294,91 +321,43 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
       return
     }
 
+    const messageType = mavlink_message.message.type
+
+    // Inject variables from the MAVLink messages into the DataLake
+    if (['NAMED_VALUE_FLOAT', 'NAMED_VALUE_INT'].includes(messageType)) {
+      // Special handling for NAMED_VALUE_FLOAT/NAMED_VALUE_INT messages
+      const name = (mavlink_message.message.name as string[]).join('').replace(/\0/g, '')
+      const path = `${messageType}/${name}`
+      if (getDataLakeVariableInfo(path) === undefined) {
+        createDataLakeVariable({ id: path, name: path, type: 'number' })
+      }
+      setDataLakeVariableData(path, mavlink_message.message.value)
+
+      // Create duplicated variables for legacy purposes (that was how they were stored in the old generic-variables system)
+      const oldVariablePath = mavlink_message.message.name.join('').replaceAll('\x00', '')
+      if (getDataLakeVariableInfo(oldVariablePath) === undefined) {
+        createDataLakeVariable({ id: oldVariablePath, name: oldVariablePath, type: 'number' })
+      }
+      setDataLakeVariableData(oldVariablePath, mavlink_message.message.value)
+    } else {
+      // For all other messages, use the flattener
+      const flattened = flattenData(mavlink_message.message)
+      flattened.forEach(({ path, value }) => {
+        if (value === null) return
+        if (typeof value !== 'string' && typeof value !== 'number') return
+        if (getDataLakeVariableInfo(path) === undefined) {
+          createDataLakeVariable({ id: path, name: path, type: typeof value === 'string' ? 'string' : 'number' })
+        }
+        setDataLakeVariableData(path, value)
+      })
+    }
+
     // Update our internal messages
     this._messages.set(mavlink_message.message.type, { ...mavlink_message.message, epoch: new Date().getTime() })
 
-    const mavlinkIdentificationKeys = [
-      'cam_idx',
-      'camera_id',
-      'compass_id',
-      'gcs_system_id',
-      'gimbal_device_id',
-      'gps_id',
-      'hw_unique_id',
-      'id',
-      'idx',
-      'rtk_receiver_id',
-      'sensor_id',
-      'storage_id',
-      'stream_id',
-      'uas_id',
-    ]
-
-    /**
-     * Allows handling messages that are shared by multiple devices, splitting them out by detected device IDs.
-     * @param { Record<string, unknown> } obj The object to be searched for
-     * @param { Record<string, unknown> } acc The destination object for the variables found
-     * @param { string } baseKey A string to be added in front of the actual object keys. Used for deep nested key-value pairs
-     */
-    const getDeepVariables = (obj: Record<string, unknown>, acc: string[], baseKey?: string): void => {
-      Object.entries(obj).forEach(([k, v]) => {
-        if (v instanceof Object && !Array.isArray(v)) {
-          let identifier: string | undefined = undefined
-          Object.keys(v).forEach((subKey) => {
-            if (mavlinkIdentificationKeys.includes(subKey)) {
-              identifier = subKey
-            }
-          })
-          if (identifier === undefined) {
-            getDeepVariables(v as Record<string, unknown>, acc, k)
-          } else {
-            getDeepVariables(v as Record<string, unknown>, acc, `${k}/${identifier}=${v[identifier]}`)
-          }
-        } else {
-          const path = baseKey === undefined ? k : `${baseKey}/${k}`
-          if (!acc.includes(path)) {
-            acc.push(path)
-          }
-        }
-      })
-    }
-
-    if (differenceInMilliseconds(new Date(), this._dateLastUpdateAvailableGenericVariables) > 3000) {
-      this._dateLastUpdateAvailableGenericVariables = new Date()
-      getDeepVariables(Object.fromEntries(this._messages), this._availableGenericVariablesdMessagePaths)
-    }
-
     // TODO: Maybe create a signal class to deal with MAVLink only
     // Where add will use the template argument type to define the lambda argument type
-    this.onMAVLinkMessage.emit_value(mavlink_message.message.type, mavlink_message)
-
-    if (Object.keys(this._usedGenericVariablesdMessagePaths).includes(mavlink_message.message.type)) {
-      this._usedGenericVariablesdMessagePaths[mavlink_message.message.type].forEach((path) => {
-        const pathKeys = path.split('/')
-
-        let parentValue = mavlink_message.message
-        try {
-          for (let i = 1; i < pathKeys.length; i++) {
-            // If pathkeys[i] is an identifier, from the mavlinkIdentificationKeys, check if the message ID matches the identifier
-            if (!pathKeys[i].includes('=')) {
-              parentValue = parentValue[pathKeys[i]]
-            } else {
-              const [identifier, id] = pathKeys[i].split('=')
-              if (parentValue[identifier] == id) {
-                continue
-              } else {
-                break
-              }
-            }
-          }
-        } catch (error) {
-          console.error(`Failed to update generic variable for path '${path}'.`)
-          console.error(error)
-        }
-        this._genericVariables[path] = parentValue
-      })
-      this.onGenericVariables.emit()
-    }
+    this.onIncomingMAVLinkMessage.emit_value(mavlink_message.message.type, mavlink_message)
 
     switch (mavlink_message.message.type) {
       // command_ack
@@ -426,11 +405,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
         } else {
           pitch = Math.asin(sinp)
         }
-        if (!this._availableGenericVariablesdMessagePaths.includes('cameraTiltDeg')) {
-          this._availableGenericVariablesdMessagePaths.push('cameraTiltDeg')
-        }
-        this._genericVariables['cameraTiltDeg'] = degrees(pitch)
-        this.onGenericVariables.emit()
+        setDataLakeVariableData(preDefinedDataLakeVariables.cameraTilt.id, degrees(pitch))
         break
       }
       case MAVLinkType.GLOBAL_POSITION_INT: {
@@ -521,25 +496,6 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
         break
       }
 
-      case MAVLinkType.NAMED_VALUE_FLOAT: {
-        const namedValueFloatMessage = mavlink_message.message as Message.NamedValueFloat
-        const messageName = namedValueFloatMessage.name.join('').replaceAll('\x00', '')
-        if (!this._availableGenericVariablesdMessagePaths.includes(messageName)) {
-          this._availableGenericVariablesdMessagePaths.push(messageName)
-        }
-        this._genericVariables[messageName] = namedValueFloatMessage.value
-        this.onGenericVariables.emit()
-        break
-      }
-
-      case MAVLinkType.NAMED_VALUE_INT: {
-        const namedValueIntMessage = mavlink_message.message as Message.NamedValueInt
-        const messageName = namedValueIntMessage.name.join('').replaceAll('\x00', '')
-        this._genericVariables[messageName] = namedValueIntMessage.value
-        this.onGenericVariables.emit()
-        break
-      }
-
       default:
         break
     }
@@ -576,7 +532,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
     const gotoMessage: Message.SetPositionTargetLocalNed = {
       time_boot_ms: 0,
       type: MAVLinkType.SET_POSITION_TARGET_LOCAL_NED,
-      target_system: 1,
+      target_system: this.currentSystemId,
       target_component: 1,
       coordinate_frame: { type: MavFrame.MAV_FRAME_LOCAL_OFFSET_NED },
       type_mask: { bits: 0b0000111111111000 },
@@ -837,7 +793,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   requestParametersList(): void {
     const paramRequestMessage: Message.ParamRequestList = {
       type: MAVLinkType.PARAM_REQUEST_LIST,
-      target_system: 0,
+      target_system: this.currentSystemId,
       target_component: 0,
     }
     sendMavlinkMessage(paramRequestMessage)
@@ -866,20 +822,70 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   }
 
   /**
+   * Set the interval for a specific message type
+   * @param { MAVLinkType } messageType
+   * @param { number } intervalUs Interval in microseconds. -1 to disable the message. 0 to use the default interval (as configured by the vehicle or other sources).
+   */
+  async setMessageInterval(messageType: MAVLinkType, intervalUs: number): Promise<void> {
+    if (intervalUs < 0 && intervalUs !== -1) {
+      throw new Error('Cannot set a negative interval for a message interval.')
+    }
+    await this.sendCommandLong(MavCmd.MAV_CMD_SET_MESSAGE_INTERVAL, getMAVLinkMessageId(messageType), intervalUs)
+  }
+
+  /**
+   * Configure message interval with options
+   * @param { MAVLinkType } messageType
+   * @param { MessageIntervalOptions } options
+   */
+  async setMessageFrequency(messageType: MAVLinkType, options: MessageIntervalOptions): Promise<void> {
+    switch (options.intervalType) {
+      case 'default':
+        await this.setMessageInterval(messageType, 0)
+        break
+      case 'disabled':
+        await this.setMessageInterval(messageType, -1)
+        break
+      case 'custom': {
+        if (options.frequencyHz === undefined || options.frequencyHz <= 0) {
+          throw new Error('Custom interval requires a positive frequency value.')
+        }
+        const intervalUs = round(frequencyHzToIntervalUs(options.frequencyHz), 0)
+        await this.setMessageInterval(messageType, intervalUs)
+        break
+      }
+      default:
+        throw new Error(`Unknown interval type!`) // This should never happen
+    }
+  }
+
+  /**
    * Request the vehicle to send a pre-defined list of messages, on it's data stream
    * Those are messages usually used by any Ardupilot vehicle
    */
   async requestDefaultMessages(): Promise<void> {
-    const frequencyHzToIntervalUs = (frequencyHz: number): number => {
-      return 1000000 / frequencyHz
-    }
+    // Get custom message intervals from BlueOS storage, fallback to defaults if not available
+    const customMessageIntervalsStoredString = window.localStorage.getItem(MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY)
+    const cockpitDefaultMessageIntervals = defaultMessageIntervalsOptions
 
-    const messagesWithIntervals = Object.entries(defaultMessageFrequency).map(([messageType, frequencyHz]) => {
-      return { id: getMAVLinkMessageId(messageType as MAVLinkType), intervalUs: frequencyHzToIntervalUs(frequencyHz) }
+    let toBeSetIntervals: Record<string, MessageIntervalOptions> = {}
+    if (customMessageIntervalsStoredString === null) {
+      toBeSetIntervals = cockpitDefaultMessageIntervals
+    } else {
+      const customMessageIntervals = JSON.parse(customMessageIntervalsStoredString)
+      toBeSetIntervals = { ...cockpitDefaultMessageIntervals, ...customMessageIntervals }
+    }
+    window.localStorage.setItem(MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY, JSON.stringify(toBeSetIntervals))
+
+    // Remove any message that was configured to not be touched
+    Object.entries(toBeSetIntervals).forEach(([messageType, options]) => {
+      if (options.intervalType === 'dontTouch') {
+        delete toBeSetIntervals[messageType]
+      }
     })
 
-    const commandPromises = messagesWithIntervals.map((message) => {
-      return this.sendCommandLong(MavCmd.MAV_CMD_SET_MESSAGE_INTERVAL, message.id, message.intervalUs)
+    const commandPromises = Object.entries(toBeSetIntervals).map(([messageType, options]) => {
+      return this.setMessageFrequency(messageType as MAVLinkType, options as MessageIntervalOptions)
     })
 
     const results = await Promise.allSettled(commandPromises)
@@ -933,7 +939,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   requestMissionItem(seq: number, missionType: MavMissionType): void {
     const message: Message.MissionRequestInt = {
       type: MAVLinkType.MISSION_REQUEST_INT,
-      target_system: 0,
+      target_system: this.currentSystemId,
       target_component: 0,
       seq: seq,
       mission_type: { type: missionType },
@@ -950,7 +956,7 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   sendMissionAck(success: boolean, missionType: MavMissionType): void {
     const message: Message.MissionAck = {
       type: MAVLinkType.MISSION_ACK,
-      target_system: 0,
+      target_system: this.currentSystemId,
       target_component: 0,
       mavtype: { type: success ? MavMissionResult.MAV_MISSION_ACCEPTED : MavMissionResult.MAV_MISSION_DENIED },
       mission_type: { type: missionType },
@@ -1074,6 +1080,54 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
   }
 
   /**
+   * Set home waypoint on the vehicle
+   * @param { [number, number] } coordinates Coordinates of the home waypoint
+   * @param { number } altitude Altitude of the home waypoint
+   */
+  async setHomeWaypoint(coordinates: [number, number], altitude: number): Promise<void> {
+    await this.sendCommandLong(MavCmd.MAV_CMD_DO_SET_HOME, 0, 0, 0, 0, coordinates[0], coordinates[1], altitude)
+  }
+
+  /**
+   * Fetch the home waypoint from the vehicle
+   * and converts the message into a Waypoint.
+   * @returns {Promise<Waypoint>} The home waypoint.
+   */
+  async fetchHomeWaypoint(): Promise<Waypoint> {
+    await this.sendCommandLong(MavCmd.MAV_CMD_REQUEST_MESSAGE, getMAVLinkMessageId(MAVLinkType.HOME_POSITION))
+    const startTime = new Date().getTime()
+    let homePosition: Message.HomePosition | undefined = undefined
+    while (!homePosition && new Date().getTime() - startTime < 5000) {
+      await sleep(100)
+      homePosition = this._messages.get(MAVLinkType.HOME_POSITION) as Message.HomePosition
+    }
+    if (!homePosition) {
+      throw new Error('Home position not received from vehicle.')
+    }
+    const homeMissionItem: Message.MissionItemInt = {
+      type: MAVLinkType.MISSION_ITEM_INT,
+      target_system: this.currentSystemId,
+      target_component: 1,
+      seq: 0,
+      frame: { type: MavFrame.MAV_FRAME_GLOBAL_RELATIVE_ALT },
+      command: { type: MavCmd.MAV_CMD_GET_HOME_POSITION },
+      current: 1,
+      autocontinue: 1,
+      param1: 0,
+      param2: 0,
+      param3: 0,
+      param4: 0,
+      x: homePosition.latitude,
+      y: homePosition.longitude,
+      z: homePosition.altitude,
+      mission_type: { type: MavMissionType.MAV_MISSION_TYPE_MISSION },
+    }
+
+    const waypoints = convertMavlinkWaypointsToCockpit([homeMissionItem])
+    return waypoints[0]
+  }
+
+  /**
    * Clear mission that is on the vehicle
    */
   async clearMissions(): Promise<void> {
@@ -1178,5 +1232,18 @@ export abstract class ArduPilotVehicle<Modes> extends Vehicle.AbstractVehicle<Mo
 
     loadingCallback(100)
     console.debug('Successfully sent all mission items.')
+  }
+
+  /**
+   * Create data-lake variables for the vehicle
+   */
+  createPredefinedDataLakeVariables(): void {
+    // Register BlueOS variables in the data lake
+    Object.values(preDefinedDataLakeVariables).forEach((variable) => {
+      if (!Object.values(getAllDataLakeVariablesInfo()).find((v) => v.id === variable.id)) {
+        // @ts-ignore: The type is right, only being incorrectly inferred by TS
+        createDataLakeVariable({ ...variable, persistent: false, persistValue: false })
+      }
+    })
   }
 }

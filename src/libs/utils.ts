@@ -127,19 +127,6 @@ export const sleep = (delay: number): Promise<void> => {
 }
 
 /**
- * Try to run the given function and alert the user if an error occurs
- * @param {() => Promise<void>} tryFunction The time to sleep in milliseconds
- * @returns {Promise<void>} A promise that resolves after the specified delay
- */
-export const tryOrAlert = async (tryFunction: () => Promise<void>): Promise<void> => {
-  try {
-    await tryFunction()
-  } catch (error) {
-    showDialog({ message: error as string, variant: 'error' })
-  }
-}
-
-/**
  * Wait till the next tick to reload Cockpit
  * @param {number} timeout The time to wait before reloading, in milliseconds. Default value is 500 ms.
  */
@@ -170,4 +157,120 @@ export const isElectron = (): boolean => {
   }
 
   return false
+}
+
+/**
+ * Copy text to clipboard
+ * @param {string} text The text to copy
+ * @returns {Promise<void>} A promise that resolves when the text is copied
+ */
+export const copyToClipboard = async (text: string): Promise<void> => {
+  try {
+    if (navigator && navigator.clipboard) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      window.scrollTo(0, 0)
+    }
+  } catch (error) {
+    throw new Error(`Failed to copy text. Error: ${error}`)
+  }
+}
+
+/**
+ * Check if a string represents a valid number
+ * @param {string} str The string to check
+ * @returns {boolean} True if the string represents a valid number, false otherwise
+ */
+export const isNumber = (str: string): boolean => {
+  if (typeof str !== 'string') {
+    return false
+  }
+  // Handle empty strings
+  if (str.trim() === '') {
+    return false
+  }
+  // Convert string to number and check if it's valid
+  return !isNaN(Number(str)) && isFinite(Number(str))
+}
+
+/**
+ * Humanize a string
+ * @param {string} str The string to humanize
+ * @returns {string} The humanized string
+ */
+export const humanizeString = (str: string): string => {
+  return str
+    .replace(/-/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+}
+
+/**
+ * Convert a string to a machine-friendly version of it
+ * @param {string} str The string to convert
+ * @returns {string} The machine-friendly string
+ */
+export const machinizeString = (str: string): string => {
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Get an unindented string
+ * Trims all lines by the same amount of whitespace, so that the string is not indented
+ * @param {string} str The string to unindent
+ * @returns {string} The unindented string
+ */
+export const getUnindentedString = (str: string): string => {
+  const originalLines = str.split('\n')
+
+  // Calculate the minimum indentation between all non-empty lines
+  let minIndentation = Infinity
+  for (const line of originalLines) {
+    if (line.trim() === '') {
+      // Do not consider empty lines for calculating the minimum indentation
+      continue
+    } else if (!line.startsWith(' ')) {
+      // If there's an unindented non-empty line, there's no general minimum indentation
+      minIndentation = 0
+      break
+    } else {
+      const indentation = line.match(/^\s*/)?.[0].length || 0
+      minIndentation = Math.min(minIndentation, indentation)
+    }
+  }
+
+  // Unindent all lines
+  const unindentedLines = []
+  for (const [index, line] of originalLines.entries()) {
+    if (index === 0 && line.trim() === '') {
+      continue
+    }
+    unindentedLines.push(line.slice(minIndentation))
+  }
+
+  return unindentedLines.join('\n')
+}
+
+/**
+ * Convert a frequency in Hz to an interval in microseconds
+ * @param {number} frequencyHz The frequency in Hz. Must be positive.
+ * @returns {number} The interval in microseconds
+ */
+export const frequencyHzToIntervalUs = (frequencyHz: number): number => {
+  if (frequencyHz <= 0) {
+    throw new Error('Cannot convert a non-positive frequency to an interval in microseconds.')
+  }
+  return 1000000 / frequencyHz
 }

@@ -9,7 +9,11 @@
     @click="widgetStore.editingMode && widgetStore.showElementPropsDrawer(miniWidget.hash)"
   >
     <div :style="{ minWidth: miniWidget.options.layout?.labelWidth + 'px' }">
-      <p v-if="miniWidget.options.layout?.label !== ''" class="mr-3 mb-[3px]">
+      <p
+        v-if="miniWidget.options.layout?.label !== ''"
+        :style="{ color: miniWidget.options.layout?.coloredLabel ? miniWidget.options.layout?.color : '#FFFFFF' }"
+        class="mr-3 mb-[3px]"
+      >
         {{ miniWidget.options.layout?.label }}
       </p>
     </div>
@@ -35,10 +39,10 @@ import { toRefs } from '@vueuse/core'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 
 import {
-  deleteDataLakeVariable,
   listenDataLakeVariable,
   setDataLakeVariableData,
   unlistenDataLakeVariable,
+  updateDataLakeVariableInfo,
 } from '@/libs/actions/data-lake'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import { CustomWidgetElementOptions, CustomWidgetElementType } from '@/types/widgets'
@@ -70,6 +74,25 @@ watch(
   { immediate: true, deep: true }
 )
 
+const startListeningDataLakeVariable = (): void => {
+  if (miniWidget.value.options.dataLakeVariable) {
+    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable?.name, (value) => {
+      sliderValue.value = value as number
+    })
+    sliderValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as number
+  }
+}
+
+watch(
+  () => miniWidget.value.options.dataLakeVariable?.name,
+  (newVal) => {
+    if (newVal) {
+      startListeningDataLakeVariable()
+    }
+  },
+  { immediate: true }
+)
+
 const handleSliderChange = (): void => {
   if (widgetStore.editingMode) return
   if (miniWidget.value.options.dataLakeVariable) {
@@ -88,23 +111,23 @@ onMounted(() => {
         maxValue: 100,
         showTooltip: true,
         color: '#FFFFFF',
+        coloredLabel: false,
         labelWidth: miniWidget.value.options.layout?.labelWidth || 0,
       },
       variableType: 'number',
       dataLakeVariable: undefined,
     })
   }
-  if (miniWidget.value.options.dataLakeVariable) {
-    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable?.name, (value) => {
-      sliderValue.value = value as number
-    })
-    sliderValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as number
+
+  if (miniWidget.value.options.dataLakeVariable && !miniWidget.value.options.dataLakeVariable.allowUserToChangeValue) {
+    updateDataLakeVariableInfo({ ...miniWidget.value.options.dataLakeVariable, allowUserToChangeValue: true })
   }
+
+  startListeningDataLakeVariable()
 })
 
 onUnmounted(() => {
   if (miniWidget.value.options.dataLakeVariable) {
-    deleteDataLakeVariable(miniWidget.value.options.dataLakeVariable.id)
     if (listenerId) {
       unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, listenerId)
     }

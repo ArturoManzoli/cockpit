@@ -51,8 +51,9 @@ export enum WidgetType {
   Attitude = 'Attitude',
   Compass = 'Compass',
   CompassHUD = 'CompassHUD',
-  CustomWidgetBase = 'CustomWidgetBase',
+  CollapsibleContainer = 'CollapsibleContainer',
   DepthHUD = 'DepthHUD',
+  DoItYourself = 'DoItYourself',
   IFrame = 'IFrame',
   ImageView = 'ImageView',
   Map = 'Map',
@@ -74,6 +75,8 @@ export enum MiniWidgetType {
   BatteryIndicator = 'BatteryIndicator',
   ChangeAltitudeCommander = 'ChangeAltitudeCommander',
   Clock = 'Clock',
+  GoFullScreen = 'GoFullScreen',
+  EnterEditMode = 'EnterEditMode',
   DepthIndicator = 'DepthIndicator',
   MissionIdentifier = 'MissionIdentifier',
   RelativeAltitudeIndicator = 'RelativeAltitudeIndicator',
@@ -82,8 +85,10 @@ export enum MiniWidgetType {
   JoystickCommIndicator = 'JoystickCommIndicator',
   MiniVideoRecorder = 'MiniVideoRecorder',
   ModeSelector = 'ModeSelector',
+  EkfStateIndicator = 'EkfStateIndicator',
   SatelliteIndicator = 'SatelliteIndicator',
   ViewSelector = 'ViewSelector',
+  SnapshotTool = 'SnapshotTool',
 }
 
 /**
@@ -186,19 +191,19 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable | null
       /**
        * Action parameter
        */
       dataLakeVariable: DataLakeVariable
       /**
-       * The label text
-       */
-      text: string
-      /**
        * Layout options
        */
       layout: {
+        /**
+         * The label text
+         */
+        text: string
         /**
          * The size of the label's font (in pixels)
          */
@@ -245,7 +250,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -304,7 +309,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -351,7 +356,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -414,7 +419,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -465,7 +470,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -486,6 +491,10 @@ export type CustomWidgetElementOptions = {
          * The color of the slider
          */
         color: string
+        /**
+         * Apply color to the label
+         */
+        coloredLabel: boolean
         /**
          * The minimum value of the slider
          */
@@ -532,7 +541,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Variable type
        */
-      variableType: 'string' | 'boolean' | 'number'
+      variableType: DataLakeVariable['type'] | null
       /**
        * Action parameter
        */
@@ -804,6 +813,63 @@ export type Profile = {
    * Editable name for the profile
    */
   name: string
+}
+
+export const isWidgetConfigurable: Record<WidgetType, boolean> = {
+  [WidgetType.Attitude]: true,
+  [WidgetType.Compass]: true,
+  [WidgetType.CompassHUD]: true,
+  [WidgetType.CollapsibleContainer]: true,
+  [WidgetType.DepthHUD]: true,
+  [WidgetType.DoItYourself]: true,
+  [WidgetType.IFrame]: true,
+  [WidgetType.ImageView]: true,
+  [WidgetType.Map]: true,
+  [WidgetType.MiniWidgetsBar]: false,
+  [WidgetType.Plotter]: true,
+  [WidgetType.URLVideoPlayer]: true,
+  [WidgetType.VideoPlayer]: true,
+  [WidgetType.VirtualHorizon]: false,
+}
+
+export const isMiniWidgetConfigurable: Record<MiniWidgetType, boolean> = {
+  [MiniWidgetType.Alerter]: false,
+  [MiniWidgetType.ArmerButton]: false,
+  [MiniWidgetType.BaseCommIndicator]: false,
+  [MiniWidgetType.BatteryIndicator]: true,
+  [MiniWidgetType.ChangeAltitudeCommander]: false,
+  [MiniWidgetType.Clock]: false,
+  [MiniWidgetType.GoFullScreen]: false,
+  [MiniWidgetType.EkfStateIndicator]: false,
+  [MiniWidgetType.EnterEditMode]: false,
+  [MiniWidgetType.DepthIndicator]: false,
+  [MiniWidgetType.MissionIdentifier]: true,
+  [MiniWidgetType.RelativeAltitudeIndicator]: false,
+  [MiniWidgetType.TakeoffLandCommander]: false,
+  [MiniWidgetType.VeryGenericIndicator]: true,
+  [MiniWidgetType.JoystickCommIndicator]: true,
+  [MiniWidgetType.MiniVideoRecorder]: true,
+  [MiniWidgetType.ModeSelector]: false,
+  [MiniWidgetType.SatelliteIndicator]: false,
+  [MiniWidgetType.ViewSelector]: false,
+  [MiniWidgetType.SnapshotTool]: true,
+}
+
+export const widgetHasOwnContextMenu: Record<WidgetType, boolean> = {
+  [WidgetType.Attitude]: false,
+  [WidgetType.Compass]: false,
+  [WidgetType.CompassHUD]: false,
+  [WidgetType.CollapsibleContainer]: false,
+  [WidgetType.DepthHUD]: false,
+  [WidgetType.DoItYourself]: false,
+  [WidgetType.IFrame]: false,
+  [WidgetType.ImageView]: false,
+  [WidgetType.Map]: true,
+  [WidgetType.MiniWidgetsBar]: false,
+  [WidgetType.Plotter]: false,
+  [WidgetType.URLVideoPlayer]: false,
+  [WidgetType.VideoPlayer]: false,
+  [WidgetType.VirtualHorizon]: false,
 }
 
 export const validateWidget = (maybeWidget: Widget): maybeWidget is Widget => {

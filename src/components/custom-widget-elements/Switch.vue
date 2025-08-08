@@ -26,10 +26,10 @@
 import { onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 
 import {
-  deleteDataLakeVariable,
   listenDataLakeVariable,
   setDataLakeVariableData,
   unlistenDataLakeVariable,
+  updateDataLakeVariableInfo,
 } from '@/libs/actions/data-lake'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import { CustomWidgetElementOptions, CustomWidgetElementType } from '@/types/widgets'
@@ -60,6 +60,25 @@ watch(
   { immediate: true, deep: true }
 )
 
+const startListeningDataLakeVariable = (): void => {
+  if (miniWidget.value.options.dataLakeVariable) {
+    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
+      switchValue.value = value as boolean
+    })
+    switchValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as boolean
+  }
+}
+
+watch(
+  () => miniWidget.value.options.dataLakeVariable?.name,
+  (newVal) => {
+    if (newVal) {
+      startListeningDataLakeVariable()
+    }
+  },
+  { immediate: true }
+)
+
 const handleToggleAction = (): void => {
   if (widgetStore.editingMode) return
   if (miniWidget.value.options.dataLakeVariable) {
@@ -83,17 +102,17 @@ onMounted(() => {
     })
 
     switchValue.value = true
-  } else if (miniWidget.value.options.dataLakeVariable) {
-    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
-      switchValue.value = value as boolean
-    })
-    switchValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as boolean
   }
+
+  if (miniWidget.value.options.dataLakeVariable && !miniWidget.value.options.dataLakeVariable.allowUserToChangeValue) {
+    updateDataLakeVariableInfo({ ...miniWidget.value.options.dataLakeVariable, allowUserToChangeValue: true })
+  }
+
+  startListeningDataLakeVariable()
 })
 
 onUnmounted(() => {
   if (miniWidget.value.options.dataLakeVariable) {
-    deleteDataLakeVariable(miniWidget.value.options.dataLakeVariable.id)
     if (listenerId) {
       unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, listenerId)
     }

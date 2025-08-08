@@ -54,7 +54,7 @@ export const cockpitStandardToProtocols: JoystickProtocolActionsMapping[] = [
         [JoystickButton.B14]: { action: availableMavlinkManualControlButtonFunctions['Lights1 dimmer'] },
         [JoystickButton.B15]: { action: availableMavlinkManualControlButtonFunctions['Lights1 brighter'] },
         [JoystickButton.B16]: { action: availableCockpitActions.toggle_bottom_bar },
-        [JoystickButton.B17]: { action: availableMavlinkManualControlButtonFunctions['Roll pitch toggle'] },
+        [JoystickButton.B17]: { action: otherAvailableActions.no_function },
       },
       [CockpitModifierKeyOption.shift]: {
         [JoystickButton.B0]: { action: otherAvailableActions.no_function },
@@ -227,14 +227,19 @@ export const availableGamepadToCockpitMaps: { [key in JoystickModel]: GamepadToC
     buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
   },
   [JoystickModel.XboxOne_Wireless]: {
-    name: 'Xbox One S',
+    name: 'Xbox One Wireless',
     axes: [0, 1, 2, 3],
-    buttons: [0, 1, 2, 3, 4, 11, 6, 7, 8, 9, 5, 11, 12, 13, 14, 15, 16, 17],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  },
+  [JoystickModel.XboxOne_Wired]: {
+    name: 'Xbox One (wired)',
+    axes: [0, 1, 2, 3],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   },
   [JoystickModel.XboxOneS_Bluetooth]: {
-    name: 'Xbox One S',
+    name: 'Xbox One S (bluetooth)',
     axes: [0, 1, 2, 3],
-    buttons: [0, 1, 2, 3, 4, 11, 6, 7, 8, 9, 5, 11, 12, 13, 14, 15, 16, 17],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   },
   [JoystickModel.XboxController_Bluetooth]: {
     name: 'Xbox Controller (bluetooth)',
@@ -255,6 +260,16 @@ export const availableGamepadToCockpitMaps: { [key in JoystickModel]: GamepadToC
     name: JoystickModel.XboxController_360,
     axes: [0, 1, 5, 6, 7, 2, 3, 8, 9, 4],
     buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  },
+  [JoystickModel.SteamDeckLCD]: {
+    name: 'Steam Deck LCD',
+    axes: [0, 1, 2, 3],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  },
+  [JoystickModel.SteamDeckOLED]: {
+    name: 'Steam Deck OLED',
+    axes: [0, 1, 2, 3],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   },
   [JoystickModel.Unknown]: {
     name: 'Standard gamepad',

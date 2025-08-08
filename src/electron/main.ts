@@ -1,16 +1,18 @@
 import { app, BrowserWindow, protocol, screen } from 'electron'
-import logger from 'electron-log'
 import { join } from 'path'
 
 import { setupAutoUpdater } from './services/auto-update'
 import store from './services/config-store'
+import { setupElectronLogService } from './services/electron-log'
+import { setupJoystickMonitoring } from './services/joystick'
 import { setupNetworkService } from './services/network'
+import { setupResourceMonitoringService } from './services/resource-monitoring'
+import { serialService } from './services/serial'
 import { setupFilesystemStorage } from './services/storage'
+import { setupWorkspaceService } from './services/workspace'
 
-// If the app is packaged, push logs to the system instead of the console
-if (app.isPackaged) {
-  Object.assign(console, logger.functions)
-}
+// Setup the logger service as soon as possible to avoid different behaviors across runtime
+setupElectronLogService()
 
 export const ROOT_PATH = {
   dist: join(__dirname, '..'),
@@ -29,13 +31,16 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
     },
+    autoHideMenuBar: true,
     width: store.get('windowBounds')?.width ?? screen.getPrimaryDisplay().workAreaSize.width,
     height: store.get('windowBounds')?.height ?? screen.getPrimaryDisplay().workAreaSize.height,
     x: store.get('windowBounds')?.x ?? screen.getPrimaryDisplay().bounds.x,
     y: store.get('windowBounds')?.y ?? screen.getPrimaryDisplay().bounds.y,
   })
 
-  mainWindow.on('close', () => {
+  serialService.setMainWindow(mainWindow)
+
+  mainWindow.on('move', () => {
     const windowBounds = mainWindow!.getBounds()
     const { x, y, width, height } = windowBounds
     store.set('windowBounds', { x, y, width, height })
@@ -74,6 +79,9 @@ protocol.registerSchemesAsPrivileged([
 
 setupFilesystemStorage()
 setupNetworkService()
+setupResourceMonitoringService()
+setupWorkspaceService()
+setupJoystickMonitoring()
 
 app.whenReady().then(async () => {
   console.log('Electron app is ready.')

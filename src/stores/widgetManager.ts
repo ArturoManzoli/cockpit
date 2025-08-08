@@ -1,6 +1,6 @@
 import '@/libs/cosmos'
 
-import { useDebounceFn, useStorage, useWindowSize } from '@vueuse/core'
+import { useStorage, useWindowSize } from '@vueuse/core'
 import { saveAs } from 'file-saver'
 import { defineStore } from 'pinia'
 import { v4 as uuid4 } from 'uuid'
@@ -17,7 +17,6 @@ import { miniWidgetsProfile } from '@/assets/defaults'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { resetJustMadeKey, useBlueOsStorage } from '@/composables/settingsSyncer'
 import { openSnackbar } from '@/composables/snackbar'
-import { useSnackbar } from '@/composables/snackbar'
 import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import * as Words from '@/libs/funny-name/words'
 import {
@@ -45,7 +44,6 @@ import {
 } from '@/types/widgets'
 
 const { showDialog } = useInteractionDialog()
-const { showSnackbar } = useSnackbar()
 
 export const savedProfilesKey = 'cockpit-saved-profiles-v8'
 
@@ -70,6 +68,8 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
   const elementToShowOnDrawer = ref<CustomWidgetElement>()
   const widgetToEdit = ref<Widget>()
   const miniWidgetLastValues = useBlueOsStorage<Record<string, any>>('cockpit-mini-widget-last-values', {})
+  const floatingWidgetContainers = ref<MiniWidgetContainer[]>([])
+  const currentContextMenu = ref<any | null>(null)
 
   const editWidgetByHash = (hash: string): Widget | undefined => {
     widgetToEdit.value = currentProfile.value.views
@@ -81,7 +81,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
   const getElementByHash = (hash: string): CustomWidgetElement | undefined => {
     let customWidgetElement = currentProfile.value.views
       .flatMap((view) => view.widgets)
-      .filter((widget) => widget.component === WidgetType.CustomWidgetBase)
+      .filter((widget) => widget.component === WidgetType.CollapsibleContainer)
       .flatMap((widget) => widget.options.elementContainers)
       .flatMap((container) => container.elements)
       .find((element) => element.hash === hash)
@@ -92,8 +92,16 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
 
     customWidgetElement = currentProfile.value.views
       .flatMap((view) => view.miniWidgetContainers || [])
-      .flatMap((container) => container.widgets) // Get all widgets in mini-widget containers
+      .flatMap((container) => container.widgets)
       .find((miniWidget) => miniWidget.hash === hash)
+
+    if (customWidgetElement) {
+      return customWidgetElement
+    }
+
+    customWidgetElement = currentMiniWidgetsProfile.value.containers
+      .flatMap((container) => container.widgets)
+      .find((widget) => widget.hash === hash)
 
     return customWidgetElement
   }
@@ -101,7 +109,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
   const showElementPropsDrawer = (customWidgetElementHash: string): void => {
     const customWidgetElement = getElementByHash(customWidgetElementHash)
     if (!customWidgetElement) {
-      showSnackbar({ variant: 'error', message: 'Could not find element with the given hash.', duration: 3000 })
+      openSnackbar({ variant: 'error', message: 'Could not find element with the given hash.', duration: 3000 })
       return
     }
     elementToShowOnDrawer.value = customWidgetElement
@@ -116,7 +124,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
 
     const customWidget = currentProfile.value.views
       .flatMap((view) => view.widgets)
-      .filter((widget) => widget.component === WidgetType.CustomWidgetBase)
+      .filter((widget) => widget.component === WidgetType.CollapsibleContainer)
       .find((widget) =>
         widget.options.elementContainers.some((container: CustomWidgetElementContainer) =>
           container.elements.includes(customWidgetElement)
@@ -144,7 +152,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     const widgetIndex = currentViewWidgets.findIndex((widget) => widget.hash === widgetHash)
 
     if (widgetIndex === -1) {
-      showSnackbar({ variant: 'error', message: 'Widget not found with the given hash.', duration: 3000 })
+      openSnackbar({ variant: 'error', message: 'Widget not found with the given hash.', duration: 3000 })
       return
     }
 
@@ -155,7 +163,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     loadedWidget.position = currentPosition
     currentViewWidgets[widgetIndex] = loadedWidget
 
-    showSnackbar({ variant: 'success', message: 'Widget loaded successfully with new hash.', duration: 3000 })
+    openSnackbar({ variant: 'success', message: 'Widget loaded successfully with new hash.', duration: 3000 })
   }
 
   const reassignHashesToWidget = (widget: Widget): void => {
@@ -272,11 +280,11 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
   const miniWidgetContainersInCurrentView = computed(() => {
     const fixedBarContainers = currentMiniWidgetsProfile.value.containers
     const viewBarContainers = currentView.value.miniWidgetContainers
-    const floatingWidgetContainers = currentView.value.widgets
+    floatingWidgetContainers.value = currentView.value.widgets
       .filter((w) => w.component === WidgetType.MiniWidgetsBar)
       .filter((w) => w.options && w.options.miniWidgetsContainer)
       .map((w) => w.options.miniWidgetsContainer)
-    return [...fixedBarContainers, ...viewBarContainers, ...floatingWidgetContainers]
+    return [...fixedBarContainers, ...viewBarContainers, ...floatingWidgetContainers.value]
   })
 
   /**
@@ -571,8 +579,8 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
       options: widget.options,
     }
 
-    if (widget.component === WidgetType.CustomWidgetBase) {
-      widget.options = {
+    if (widget.component === WidgetType.CollapsibleContainer) {
+      newWidget.options = {
         elementContainers: defaultCustomWidgetContainers,
         columns: 1,
         leftColumnWidth: 50,
@@ -608,17 +616,33 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     const container: MiniWidgetContainer | undefined = miniWidgetContainersInCurrentView.value.find((cont) => {
       return cont.widgets.includes(miniWidget)
     })
-    if (container === undefined) {
-      showDialog({ variant: 'error', message: 'Mini-widget container not found.' })
+    const customWidgetContainer = getElementByHash(miniWidget.hash)
+    if (container) {
+      const index = container.widgets.indexOf(miniWidget)
+      container.widgets.splice(index, 1)
+      // Remove miniWidget variable from the list of currently logged variables
+      CurrentlyLoggedVariables.removeVariable(miniWidget.options.displayName)
+      return
+    }
+    if (customWidgetContainer) {
+      removeElementFromCustomWidget(miniWidget.hash)
+      CurrentlyLoggedVariables.removeVariable(miniWidget.options.displayName)
       return
     }
 
-    const index = container.widgets.indexOf(miniWidget)
-    container.widgets.splice(index, 1)
-
-    // Remove miniWidget variable from the list of currently logged variables
-    CurrentlyLoggedVariables.removeVariable(miniWidget.options.displayName)
+    showDialog({ variant: 'error', message: 'Mini-widget container not found.' })
   }
+
+  const customWidgetContainers = computed<MiniWidgetContainer[]>(() =>
+    currentProfile.value.views
+      .flatMap((view) => view.widgets)
+      .filter((widget) => widget.component === WidgetType.CollapsibleContainer)
+      .flatMap((widget) => widget.options.elementContainers)
+      .map((container) => ({
+        name: '',
+        widgets: container.elements as unknown as MiniWidget[],
+      }))
+  )
 
   /**
    * States whether the given mini-widget is a real mini-widget
@@ -630,6 +654,8 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     const allContainers = [
       ...savedProfiles.value.flatMap((profile) => profile.views.flatMap((view) => view.miniWidgetContainers)),
       ...currentMiniWidgetsProfile.value.containers,
+      ...floatingWidgetContainers.value,
+      ...customWidgetContainers.value,
     ]
 
     return allContainers.some((container) => container.widgets.some((widget) => widget.hash === miniWidgetHash))
@@ -709,6 +735,13 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     { deep: true }
   )
 
+  // Closes the side config panel on view change and edit mode exit
+  watch([editingMode, currentViewIndex], ([isInEditMode, newViewIdx], [, oldViewIdx]) => {
+    if (!isInEditMode || newViewIdx !== oldViewIdx) {
+      elementToShowOnDrawer.value = undefined
+    }
+  })
+
   const isFullScreen = (widget: Widget): boolean => {
     return isEqual(widget.position, fullScreenPosition) && isEqual(widget.size, fullScreenSize)
   }
@@ -755,18 +788,10 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     loadProfile(defaultProfile)
   }
 
-  const debouncedSelectNextView = useDebounceFn(() => selectNextView(), 10)
-  const selectNextViewCallbackId = registerActionCallback(
-    availableCockpitActions.go_to_next_view,
-    debouncedSelectNextView
-  )
+  const selectNextViewCallbackId = registerActionCallback(availableCockpitActions.go_to_next_view, selectNextView)
   onBeforeUnmount(() => unregisterActionCallback(selectNextViewCallbackId))
 
-  const debouncedSelectPreviousView = useDebounceFn(() => selectPreviousView(), 10)
-  const selectPrevViewCBId = registerActionCallback(
-    availableCockpitActions.go_to_previous_view,
-    debouncedSelectPreviousView
-  )
+  const selectPrevViewCBId = registerActionCallback(availableCockpitActions.go_to_previous_view, selectPreviousView)
   onBeforeUnmount(() => unregisterActionCallback(selectPrevViewCBId))
 
   // Profile migrations
@@ -844,6 +869,16 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     profile.hash = corrDefault?.hash ?? profile.hash
   })
 
+  const copyWidgetToView = (widget: Widget, viewName: string): void => {
+    const targetView = currentProfile.value.views.find((view) => view.name === viewName)
+    if (!targetView) {
+      throw new Error(`View with name "${viewName}" not found.`)
+    }
+    const newWidget = JSON.parse(JSON.stringify(widget))
+    newWidget.hash = uuid4()
+    targetView.widgets.unshift(newWidget)
+  }
+
   return {
     editingMode,
     snapToGrid,
@@ -897,5 +932,7 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     editWidgetByHash,
     setMiniWidgetLastValue,
     getMiniWidgetLastValue,
+    copyWidgetToView,
+    currentContextMenu,
   }
 })

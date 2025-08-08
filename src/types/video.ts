@@ -63,10 +63,6 @@ export interface CommonVideoInfo {
    *  The height of the video
    */
   vHeight?: number
-  /**
-   *  Screen capture from first chunk of the video
-   */
-  thumbnail?: string
 }
 
 /* eslint-disable jsdoc/require-jsdoc  */
@@ -81,17 +77,11 @@ export interface UnprocessedVideoInfo extends CommonVideoInfo {
 }
 
 export interface VideoLibraryFile extends CommonVideoInfo {
-  size?: number
-  url: string
   hash?: string
   isProcessed: boolean
 }
 
-export interface VideoLibraryLogFile extends CommonVideoInfo {
-  size?: number
-  url?: string
-  hash?: string
-}
+export interface VideoLibraryLogFile extends CommonVideoInfo {}
 
 export interface VideoProgress {
   filename: string

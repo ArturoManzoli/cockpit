@@ -1,15 +1,21 @@
 {
   "name": "cockpit",
+  "author": "Blue Robotics",
   "version": "0.0.0",
   "private": true,
   "main": "dist/electron/main.js",
   "description": "An intuitive and customizable cross-platform ground control station for remote vehicles of all types.",
   "scripts": {
     "build": "vite build",
-    "build:serve": "bun run build && bun run serve",
+    "build:serve": "vite build && vite preview",
     "coverage": "vitest --coverage",
     "deploy:electron:dir": "ELECTRON=true electron-builder --dir",
     "deploy:electron": "ELECTRON=true electron-builder --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron:mac:x64": "ELECTRON=true electron-builder --mac --x64 --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron:mac:arm64": "ELECTRON=true electron-builder --mac --arm64 --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron:mac:x64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron:mac:arm64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron:windows": "powershell -Command \"$v = ((git describe --tags --abbrev=0) -replace '^v','').Trim(); electron-builder --win --publish=never --config.extraMetadata.version=$v\"",
     "deploy:flatpak": "ELECTRON=true electron-builder --linux flatpak --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
     "dev": "vite --host",
     "dev:electron": "ELECTRON=true vite --host",
@@ -19,7 +25,8 @@
     "serve": "vite preview",
     "test:ci": "vitest --coverage --run",
     "test:unit": "vitest",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.vitest.json --composite false"
+    "typecheck": "vue-tsc --noEmit -p tsconfig.vitest.json --composite false",
+    "build:lib": "BUILD_MODE=library vite build"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^6.4.0",
@@ -27,10 +34,12 @@
     "@fortawesome/free-solid-svg-icons": "^6.4.0",
     "@fortawesome/vue-fontawesome": "^3.0.3",
     "@j2only/slide-unlock": "^0.5.5",
-    "@mdi/font": "^7.0.96",
-    "@mdi/js": "^7.2.96",
+    "@kmamal/sdl": "0.11.9",
+    "@mdi/font": "^7.4.47",
+    "@mdi/js": "^7.4.47",
     "@peermetrics/webrtc-stats": "^5.7.1",
     "@sentry/vue": "^8.20.0",
+    "@serialport/bindings-cpp": "13.0.0",
     "@turf/turf": "^7.1.0",
     "@types/hammerjs": "^2.0.45",
     "@vueuse/core": "9.8.1",
@@ -41,13 +50,12 @@
     "date-fns": "^2.29.3",
     "electron-log": "^5.2.0",
     "electron-store": "^10.0.0",
-    "electron-updater": "^6.3.9",
+    "electron-updater": "^6.6.2",
     "file-saver": "^2.0.5",
     "floating-vue": "^5.0.3",
     "flowbite": "^2.2.1",
     "flowbite-vue": "^0.1.2",
     "fuse.js": "^7.0.0",
-    "gamepad.js": "^1.0.4",
     "gsap": "^3.11.3",
     "hammerjs": "^2.0.8",
     "haversine-distance": "^1.2.1",
@@ -55,16 +63,21 @@
     "leaflet": "1.9.3",
     "localforage": "^1.10.0",
     "mathjs": "^13.0.3",
+    "mavlink2rest-wasm": "patrickelectric/mavlink2rest-wasm#dbeaf75fbf120a49d8cc4f0b2f7ee67199fc5b28",
+    "monaco-editor": "^0.52.0",
+    "piexifjs": "^1.0.6",
     "pinia": "^2.0.13",
     "posthog-js": "^1.194.3",
     "roboto-fontface": "*",
     "semver": "^7.5.4",
+    "serialport": "^13.0.0",
     "slugify": "^1.6.6",
     "sweetalert2": "^11.7.1",
     "tailwind-scrollbar-hide": "^1.1.7",
     "uuid": "^8.3.2",
     "vue": "^3.4.21",
     "vue-draggable-plus": "^0.2.0-beta.2",
+    "vue-draggable-resizable": "3.0.0",
     "vue-router": "^4.0.14",
     "vue-virtual-scroller": "^2.0.0-beta.8",
     "vue3-slider": "^1.9.0",
@@ -74,6 +87,7 @@
     "webrtc-adapter": "^8.2.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.0.1",
     "@pinia/testing": "^0.0.12",
     "@rushstack/eslint-patch": "^1.1.0",
     "@types/electron-store": "^3.2.2",
@@ -91,6 +105,7 @@
     "@vue/tsconfig": "^0.1.3",
     "autoprefixer": "^10.4.13",
     "c8": "^7.11.3",
+    "dotenv": "^16.5.0",
     "electron": "^29.2.0",
     "electron-builder": "^25.1.8",
     "eslint": "^8.5.0",
@@ -132,10 +147,19 @@
     "artifactName": "${productName}-${os}-${arch}-${version}.${ext}",
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "public/pwa-512x512.png",
+      "hardenedRuntime": true,
+      "entitlements": "./src/assets/entitlements.mac.plist",
+      "entitlementsInherit": "./src/assets/entitlements.mac.plist"
+    },
+    "afterSign": "scripts/notarize.mjs",
+    "win": {
+      "target": "nsis",
       "icon": "public/pwa-512x512.png"
     },
-    "win": {
-      "icon": "public/pwa-512x512.png"
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "linux": {
       "icon": "public/pwa-512x512.png"
@@ -151,12 +175,15 @@
         "--device=all",
         "--socket=pulseaudio",
         "--filesystem=/run/udev:ro",
+        "--filesystem=~/Cockpit:create",
         "--share=network",
         "--talk-name=org.freedesktop.Notifications"
       ],
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "22.08",
       "sdk": "org.freedesktop.Sdk"
-    }
+    },
+    "buildDependenciesFromSource": false,
+    "npmRebuild": false
   }
 }

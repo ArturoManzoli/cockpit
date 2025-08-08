@@ -2,6 +2,7 @@ import { Signal } from '@/libs/signal'
 import * as Protocol from '@/libs/vehicle/protocol/protocol'
 
 import * as Connection from './connection'
+import { SerialConnection } from './serial-connection'
 import { WebSocketConnection } from './websocket-connection'
 
 /**
@@ -14,6 +15,7 @@ export class ConnectionManager {
   // Signals
   static onMainConnection = new Signal<WeakRef<Connection.Abstract>>()
   static onRead = new Signal<Uint8Array>()
+  static onWrite = new Signal<Uint8Array>()
 
   /**
    * Return the connections available
@@ -34,6 +36,10 @@ export class ConnectionManager {
     switch (uri.type()) {
       case Connection.Type.WebSocket:
         connection = new WebSocketConnection(uri, vehicleProtocol)
+        break
+      case Connection.Type.Serial:
+        connection = new SerialConnection(uri, vehicleProtocol)
+        connection.initialize()
         break
 
       default:
@@ -69,7 +75,9 @@ export class ConnectionManager {
     }
 
     previousConnection?.onRead?.clear()
+    previousConnection?.onWrite?.clear()
     connection.onRead.add((data: Uint8Array) => this.onRead.emit_value(data))
+    connection.onWrite.add((data: Uint8Array) => this.onWrite.emit_value(data))
     ConnectionManager._mainConnection = new WeakRef(connection)
     // There is no constructor and updating the register is not expensive in this function
     ConnectionManager.onMainConnection.register_caller(
@@ -96,6 +104,7 @@ export class ConnectionManager {
    */
   static write(data: Uint8Array): boolean {
     ConnectionManager.mainConnection()?.write(data)
+    ConnectionManager.onWrite.emit_value(data)
     return true
   }
 }

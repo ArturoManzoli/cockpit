@@ -166,7 +166,7 @@
           v-for="view in store.currentProfile.views"
           :key="view.hash"
           size="sm"
-          :class="view === store.currentView ? 'bg-[#3B78A8]' : 'bg-transparent'"
+          :class="view === store.currentView ? 'bg-[#4FA483]' : 'bg-transparent'"
           class="wrapclass 2xl:w-[129px] xl:w-[108px] lg:w-[84px] 2xl:h-[85px] xl:h-[75px] lg:h-[65px] 2xl:text-[16px] xl:text-[14px] text-[11px] text-none overflow-x-hidden"
           @click="selectView(view)"
         >
@@ -251,7 +251,7 @@
             Main view area
             <v-badge
               :content="store.currentView.widgets.length"
-              color="#3B78A8"
+              color="#4FA483"
               rounded="md"
               class="ml-10 2xl:mb-1 opacity-90"
               :class="interfaceStore.isLg || interfaceStore.isOnSmallScreen ? 'scale-75' : ''"
@@ -294,6 +294,7 @@
                   />
                   <div
                     class="icon-btn mdi mdi-cog"
+                    :class="{ 'opacity-20 cursor-not-allowed': !isWidgetConfigurable[widget.component as WidgetType] }"
                     @click="store.widgetManagerVars(widget.hash).configMenuOpen = true"
                   />
                   <div class="icon-btn mdi mdi-trash-can" @click="store.deleteWidget(widget)" />
@@ -322,7 +323,7 @@
                   return count + (container.name.startsWith('Top') ? container.widgets.length : 0)
                 }, 0)
               "
-              color="#3B78A8"
+              color="#4FA483"
               rounded="md"
               class="ml-10 2xl:mb-1 opacity-90"
               :class="interfaceStore.isLg || interfaceStore.isOnSmallScreen ? 'scale-75' : ''"
@@ -360,6 +361,7 @@
                     <v-divider vertical class="opacity-10 mr-1" />
                     <div
                       class="icon-btn mdi mdi-cog"
+                      :class="{ 'opacity-20 cursor-not-allowed': !isCogIconEnabled(widget) }"
                       @click="store.miniWidgetManagerVars(widget.hash).configMenuOpen = true"
                     />
                     <div class="icon-btn mdi mdi-trash-can" @click="store.deleteMiniWidget(widget)" />
@@ -388,7 +390,7 @@
                   return count + (container.name.startsWith('Bottom') ? container.widgets.length : 0)
                 }, 0)
               "
-              color="#3B78A8"
+              color="#4FA483"
               rounded="md"
               class="ml-10 2xl:mb-1 opacity-90"
               :class="interfaceStore.isLg || interfaceStore.isOnSmallScreen ? 'scale-75' : ''"
@@ -429,12 +431,70 @@
                     <v-divider vertical class="opacity-10 mr-1" />
                     <div
                       class="icon-btn mdi mdi-cog"
+                      :class="{ 'opacity-20 cursor-not-allowed': !isCogIconEnabled(widget) }"
                       @click="store.miniWidgetManagerVars(widget.hash).configMenuOpen = true"
                     />
                     <div class="icon-btn mdi mdi-trash-can" @click="store.deleteMiniWidget(widget)" />
                   </div>
                 </TransitionGroup>
               </div>
+            </div>
+          </div>
+        </template>
+      </ExpansiblePanel>
+      <ExpansiblePanel
+        v-for="miniWidgetContainer in miniWidgetsBars"
+        :key="miniWidgetContainer.name"
+        :compact="interfaceStore.isLg || interfaceStore.isOnSmallScreen ? true : false"
+        invert-chevron
+        hover-effect
+        elevation-effect
+        no-top-divider
+        :is-expanded="miniWidgetContainer?.widgets!.length > 0"
+      >
+        <template #title>
+          <div
+            class="flex w-[90%] justify-between items-center 2xl:text-[18px] xl:text-[16px] lg:text-[14px] -mb-3 font-normal ml-2"
+          >
+            {{ miniWidgetContainer.name }}
+            <v-badge
+              :content="miniWidgetContainer.widgets?.length"
+              color="#4FA483"
+              rounded="md"
+              class="ml-10 2xl:mb-1 opacity-90"
+              :class="interfaceStore.isLg || interfaceStore.isOnSmallScreen ? 'scale-75' : ''"
+            />
+          </div>
+        </template>
+        <template #content>
+          <div class="w-full mb-1">
+            <div class="flex flex-col items-center w-full 2xl:px-3 overflow-x-hidden grow">
+              <TransitionGroup name="fade">
+                <div v-if="miniWidgetContainer?.widgets?.isEmpty()" class="flex items-center justify-between w-full">
+                  ---
+                </div>
+                <div
+                  v-for="widget in miniWidgetContainer.widgets"
+                  :key="widget.hash"
+                  class="flex items-center justify-center w-full border-[1px] border-[#FFFFFF15] rounded-md 2xl:mx-2 my-[3px] 2xl:p-1 pl-1 pr-[2px] py-[2px] cursor-pointer"
+                  :class="store.miniWidgetManagerVars(widget.hash).highlighted ? 'bg-[#CBCBCB64]' : 'bg-[#CBCBCB2A]'"
+                  @mouseover="store.miniWidgetManagerVars(widget.hash).highlighted = true"
+                  @mouseleave="store.miniWidgetManagerVars(widget.hash).highlighted = false"
+                >
+                  <div class="flex items-center justify-start w-full overflow-auto">
+                    <p class="overflow-hidden select-none text-ellipsis whitespace-nowrap 2xl:text-sm text-xs ml-3">
+                      {{ widget.name || widget.component }}
+                    </p>
+                  </div>
+                  <v-divider vertical class="opacity-10 mr-1" />
+                  <div
+                    class="icon-btn mdi mdi-cog"
+                    :class="{ 'opacity-20 cursor-not-allowed': !isCogIconEnabled(widget) }"
+                    @click="store.miniWidgetManagerVars(widget.hash).configMenuOpen = true"
+                  />
+                  <div class="icon-btn mdi mdi-trash-can" @click="store.deleteMiniWidget(widget)" />
+                </div>
+              </TransitionGroup>
             </div>
           </div>
         </template>
@@ -472,8 +532,8 @@
           <v-btn
             type="flat"
             class="bg-[#FFFFFF33] text-white w-[95%]"
-            @click="store.addWidget(makeNewWidget(WidgetType.CustomWidgetBase), store.currentView)"
-            >Add widget base
+            @click="store.addWidget(makeNewWidget(WidgetType.CollapsibleContainer), store.currentView)"
+            >Add new container
           </v-btn>
         </div>
       </div>
@@ -526,7 +586,7 @@
         id="mini-widget-card"
         :ref="(el) => (miniWidgetContainers[miniWidget.component] = el as HTMLElement)"
         :key="miniWidget.hash"
-        class="flex flex-col items-center w-full justify-between rounded-md bg-[#273842] hover:brightness-125 h-[90%] aspect-square cursor-pointer elevation-4 overflow-clip"
+        class="flex flex-col items-center w-auto justify-between rounded-md bg-[#273842] hover:brightness-125 h-[90%] cursor-pointer elevation-4 overflow-visible"
         :draggable="false"
       >
         <div />
@@ -536,7 +596,7 @@
           </div>
         </div>
         <div
-          class="flex items-center justify-center w-full py-1 px-2 transition-all bg-[#3B78A8] rounded-b-md text-white"
+          class="flex items-center justify-center w-full py-1 px-2 transition-all bg-[#4FA483] rounded-b-md text-white"
         >
           <span class="whitespace-normal text-center">{{
             miniWidget.name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (str) => str.toUpperCase()) ||
@@ -564,7 +624,7 @@
           </div>
         </div>
         <div
-          class="flex items-center justify-center w-full py-1 px-2 transition-all bg-[#3B78A8] rounded-b-md text-white"
+          class="flex items-center justify-center w-full py-1 px-2 transition-all bg-[#4FA483] rounded-b-md text-white"
         >
           <span class="whitespace-normal text-center">{{
             miniWidget.name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (str) => str.toUpperCase()) ||
@@ -622,7 +682,7 @@
     </GlassModal>
   </teleport>
 
-  <SideConfigPanel position="right">
+  <SideConfigPanel position="right" hide-button>
     <ElementConfigPanel v-if="store.elementToShowOnDrawer?.hash" />
   </SideConfigPanel>
 </template>
@@ -639,10 +699,11 @@ import BoatThumb from '@/assets/vehicles/BlueBoat_thumb.png'
 import BlueRoboticsLogo from '@/assets/vehicles/BlueRoboticsLogo.png'
 import RovThumb from '@/assets/vehicles/BlueROV_thumb.png'
 import AttitudeImg from '@/assets/widgets/Attitude.png'
+import CollapsibleContainerImg from '@/assets/widgets/CollapsibleContainer.png'
 import CompassImg from '@/assets/widgets/Compass.png'
 import CompassHUDImg from '@/assets/widgets/CompassHUD.png'
-import CustomWidgetBaseImg from '@/assets/widgets/CustomWidgetBase.png'
 import DepthHUDImg from '@/assets/widgets/DepthHUD.png'
+import DoItYourselfImg from '@/assets/widgets/DoItYourself.png'
 import IFrameImg from '@/assets/widgets/IFrame.png'
 import ImageViewImg from '@/assets/widgets/ImageView.png'
 import MapImg from '@/assets/widgets/Map.png'
@@ -652,6 +713,7 @@ import URLVideoPlayerImg from '@/assets/widgets/URLVideoPlayer.png'
 import VideoPlayerImg from '@/assets/widgets/VideoPlayer.png'
 import VirtualHorizonImg from '@/assets/widgets/VirtualHorizon.png'
 import { useInteractionDialog } from '@/composables/interactionDialog'
+import { openSnackbar } from '@/composables/snackbar'
 import { getWidgetsFromBlueOS } from '@/libs/blueos'
 import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { isHorizontalScroll } from '@/libs/utils'
@@ -661,9 +723,14 @@ import {
   type Profile,
   type View,
   type Widget,
+  CustomWidgetElementContainer,
   CustomWidgetElementType,
   ExternalWidgetSetupInfo,
   InternalWidgetSetupInfo,
+  isMiniWidgetConfigurable,
+  isWidgetConfigurable,
+  MiniWidget,
+  MiniWidgetContainer,
   MiniWidgetType,
   WidgetType,
 } from '@/types/widgets'
@@ -678,6 +745,32 @@ const { showDialog, closeDialog } = useInteractionDialog()
 
 const interfaceStore = useAppInterfaceStore()
 const store = useWidgetManagerStore()
+
+const miniWidgetsBars = computed(() => {
+  let regularContainers = store.miniWidgetContainersInCurrentView.filter(
+    (container) => !container.name.startsWith('Top') && !container.name.startsWith('Bottom')
+  )
+  let customContainers = getAllMiniWidgetFromCustomWidget()
+  return [...regularContainers, ...customContainers]
+})
+
+const getAllMiniWidgetFromCustomWidget = (): MiniWidgetContainer[] => {
+  const allCustomBases = store.currentView.widgets.filter(
+    (widget) => widget.component === WidgetType.CollapsibleContainer
+  )
+
+  return allCustomBases.map((base) => {
+    const baseName = base.name || 'Unnamed Custom Widget'
+    const miniWidgets = base.options.elementContainers.flatMap(
+      (container: CustomWidgetElementContainer) => container.elements
+    )
+
+    return {
+      name: baseName,
+      widgets: miniWidgets,
+    }
+  })
+}
 
 const trashList = ref<Widget[]>([])
 watch(trashList, () => {
@@ -714,12 +807,19 @@ const emit = defineEmits<{
 }>()
 
 watch(
-  () => store.elementToShowOnDrawer?.hash,
+  () => store.elementToShowOnDrawer,
   (newValue) => {
-    if (newValue) interfaceStore.configPanelVisible = true
+    if (newValue?.isCustomElement) interfaceStore.configPanelVisible = true
     if (!newValue) interfaceStore.configPanelVisible = false
   }
 )
+
+const isCogIconEnabled = (widget: MiniWidget): boolean => {
+  return (
+    Object.values(CustomWidgetElementType).includes(widget.component as unknown as CustomWidgetElementType) ||
+    isMiniWidgetConfigurable[widget.component]
+  )
+}
 
 const findUniqueName = (name: string): string => {
   let newName = name
@@ -802,8 +902,9 @@ const widgetImages = {
   Attitude: AttitudeImg,
   Compass: CompassImg,
   CompassHUD: CompassHUDImg,
-  CustomWidgetBase: CustomWidgetBaseImg,
+  CollapsibleContainer: CollapsibleContainerImg,
   DepthHUD: DepthHUDImg,
+  DoItYourself: DoItYourselfImg,
   IFrame: IFrameImg,
   ImageView: ImageViewImg,
   Map: MapImg,
@@ -992,7 +1093,12 @@ const miniWidgetsContainerOptions = ref<UseDraggableOptions>({
 useDraggable(availableMiniWidgetsContainer, availableMiniWidgetTypes, miniWidgetsContainerOptions)
 
 const getExternalWidgetSetupInfos = async (): Promise<void> => {
-  ExternalWidgetSetupInfos.value = await getWidgetsFromBlueOS()
+  try {
+    ExternalWidgetSetupInfos.value = await getWidgetsFromBlueOS()
+  } catch (error) {
+    const errorMessage = 'Error getting info around external widgets from BlueOS.'
+    openSnackbar({ message: errorMessage, variant: 'error', closeButton: true })
+  }
 }
 
 // @ts-ignore: Documentation is not clear on what generic should be passed to 'UseDraggableOptions'
@@ -1037,19 +1143,15 @@ const widgetMode = ref('Regular')
 
 // Resize mini widgets so they fit the layout when the widget mode is set to mini widgets
 const miniWidgetContainers = ref<Record<string, HTMLElement>>({})
-watch(widgetMode, () => {
-  if (widgetMode.value !== 'Mini') return
-  nextTick(() => {
-    Object.values(miniWidgetContainers.value).forEach((element) => {
-      if (element.scrollWidth > element.clientWidth) {
-        let scale = 1
-        while (element.scrollWidth > element.clientWidth) {
-          scale -= 0.01
-          const actualElement = element.children[1] as HTMLElement
-          actualElement.style.scale = `${scale}`
-        }
-      }
-    })
+watch(widgetMode, async (newValue: string): Promise<void> => {
+  if (newValue !== 'Mini') return
+  await nextTick()
+  Object.values(miniWidgetContainers.value).forEach((element: HTMLElement) => {
+    if (element.scrollWidth > element.clientWidth) {
+      const ratio = element.clientWidth / element.scrollWidth
+      const actualElement = element.children[1] as HTMLElement
+      actualElement.style.transform = `scale(${ratio})`
+    }
   })
 })
 

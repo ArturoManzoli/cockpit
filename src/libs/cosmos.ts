@@ -1,7 +1,11 @@
 import { isBrowser } from 'browser-or-node'
 
+import { type ElectronLog } from '@/types/electron-general'
 import { ElectronStorageDB } from '@/types/general'
+import type { ElectronSDLJoystickControllerStateEventData } from '@/types/joystick'
 import { NetworkInfo } from '@/types/network'
+import { SDLStatus } from '@/types/sdl'
+import type { SerialData } from '@/types/serial'
 
 import {
   createDataLakeVariable,
@@ -193,6 +197,32 @@ declare global {
        */
       getInfoOnSubnets: () => Promise<NetworkInfo[]>
       /**
+       * Get memory usage information from the main process
+       * @returns Promise containing memory usage data
+       */
+      getResourceUsage: () => Promise<{
+        /**
+         * The total memory usage of the application in MB
+         */
+        totalMemoryMB: number
+        /**
+         * The main process memory usage in MB
+         */
+        mainMemoryMB: number
+        /**
+         * The total renderer processes memory usage in MB
+         */
+        renderersMemoryMB: number
+        /**
+         * The GPU process memory usage in MB
+         */
+        gpuMemoryMB: number
+        /**
+         * The CPU usage percentage
+         */
+        cpuUsagePercent: number
+      }>
+      /**
        * Register callback for update available event
        */
       onUpdateAvailable: (callback: (info: any) => void) => void
@@ -225,6 +255,17 @@ declare global {
        */
       onDownloadProgress: (callback: (info: any) => void) => void
       /**
+       * Register callback for joystick state updates
+       */
+      onElectronSDLControllerJoystickStateChange: (
+        callback: (data: ElectronSDLJoystickControllerStateEventData) => void
+      ) => void
+      /**
+       * Check if SDL was loaded successfully
+       * @returns Promise with SDL load status
+       */
+      checkSDLStatus: () => Promise<SDLStatus>
+      /**
        * Open cockpit folder
        */
       openCockpitFolder: () => void
@@ -232,6 +273,58 @@ declare global {
        * Open video folder
        */
       openVideoFolder: () => void
+      /**
+       * Capture the workspace area of the application
+       */
+      captureWorkspace(rect?: Electron.Rectangle): Promise<Uint8Array>
+      /**
+       * List available serial ports
+       */
+      serialListPorts: () => Promise<any[]>
+      /**
+       * Open a serial port
+       */
+      serialOpen: (path: string, baudRate?: number) => Promise<boolean>
+      /**
+       * Write data to a serial port
+       */
+      serialWrite: (path: string, data: Uint8Array) => Promise<boolean>
+      /**
+       * Close a serial port
+       */
+      serialClose: (path: string) => Promise<boolean>
+      /**
+       * Check if a serial port is open
+       */
+      serialIsOpen: (path: string) => Promise<boolean>
+      /**
+       * Register callback for serial data events
+       */
+      onSerialData: (callback: (data: SerialData) => void) => void
+      /**
+       * Send a log message to electron-log
+       * @param level - The log level (error, warn, info, debug, trace, log)
+       * @param message - The message to log
+       */
+      systemLog: (level: string, message: string) => void
+      /**
+       * Get a list of all electron logs
+       */
+      getElectronLogs: () => Promise<ElectronLog[]>
+      /**
+       * Get specific electron log content
+       * @param logName - The name of the log file
+       */
+      getElectronLogContent: (logName: string) => Promise<string>
+      /**
+       * Delete a specific electron log
+       * @param logName - The name of the log file to delete
+       */
+      deleteElectronLog: (logName: string) => Promise<boolean>
+      /**
+       * Delete old electron logs (older than 1 day)
+       */
+      deleteOldElectronLogs: () => Promise<string[]>
     }
   }
 }

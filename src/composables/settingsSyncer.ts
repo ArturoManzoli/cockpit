@@ -3,6 +3,7 @@ import { type MaybeRef, onMounted, ref, toRaw, unref, watch } from 'vue'
 
 import {
   getKeyDataFromCockpitVehicleStorage,
+  getVehicleAddress,
   NoPathInBlueOsErrorName,
   setKeyDataOnCockpitVehicleStorage,
 } from '@/libs/blueos'
@@ -21,17 +22,8 @@ setTimeout(() => {
   resetJustMade.value = false
 }, 10000)
 
-const getVehicleAddress = async (): Promise<string> => {
-  const vehicleStore = useMainVehicleStore()
-
-  // Wait until we have a global address
-  while (vehicleStore.globalAddress === undefined) {
-    console.debug('Waiting for vehicle global address on BlueOS sync routine.')
-    await new Promise((r) => setTimeout(r, 1000))
-  }
-
-  return vehicleStore.globalAddress
-}
+let lastUsernameWaitingLogDate: Date = new Date()
+let lastVehicleIdWaitingLogDate: Date = new Date()
 
 /**
  * This composable will keep a setting in sync between the browser's local storage and BlueOS.
@@ -64,7 +56,11 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
 
     // Wait until we have a username
     while (!missionStore.username) {
-      console.debug('Waiting for username on BlueOS sync routine.')
+      if (new Date().getTime() - lastUsernameWaitingLogDate.getTime() > 1000) {
+        console.debug('Waiting for username on BlueOS sync routine.')
+        lastUsernameWaitingLogDate = new Date()
+      }
+
       await new Promise((r) => setTimeout(r, 1000))
     }
 
@@ -76,7 +72,11 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
 
     // Wait until we have a vehicle ID
     while (!vehicleStore.currentlyConnectedVehicleId) {
-      console.debug('Waiting for vehicle ID on BlueOS sync routine.')
+      if (new Date().getTime() - lastVehicleIdWaitingLogDate.getTime() > 1000) {
+        console.debug('Waiting for vehicle ID on BlueOS sync routine.')
+        lastVehicleIdWaitingLogDate = new Date()
+      }
+
       await new Promise((r) => setTimeout(r, 1000))
     }
 
@@ -136,8 +136,11 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
       try {
         await setKeyDataOnCockpitVehicleStorage(vehicleAddress, `settings/${username}/${key}`, newValue)
         const message = `Success updating '${key}' on BlueOS.`
-        openSnackbar({ message, duration: 3000, variant: 'success', closeButton: true })
-        console.info(message)
+        if (finishedInitialFetch.value) {
+          openSnackbar({ message, duration: 3000, variant: 'success', closeButton: true })
+        } else {
+          console.info(message)
+        }
       } catch (fetchError) {
         const message = `Failed updating '${key}' on BlueOS. Will keep trying.`
         openSnackbar({ message, duration: 3000, variant: 'error', closeButton: true })
@@ -192,7 +195,7 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
       if (useBlueOsValue) {
         currentValue.value = valueOnBlueOS as T
         const message = `Fetched remote value of key ${key} from the vehicle.`
-        openSnackbar({ message, duration: 3000, variant: 'success' })
+        console.info(message)
 
         // TODO: This is a workaround to make the profiles work after an import.
         // We need to find a better way to handle this, without reloading.
@@ -210,7 +213,7 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
       } else {
         await updateValueOnBlueOS(currentValue.value)
         const message = `Pushed local value of key ${key} to the vehicle.`
-        openSnackbar({ message, duration: 3000, variant: 'success' })
+        console.info(message)
       }
 
       console.info(`Success syncing '${key}' with BlueOS.`)
@@ -288,10 +291,4 @@ export function useBlueOsStorage<T>(key: string, defaultValue: MaybeRef<T>): Rem
   )
 
   return currentValue
-}
-
-export const getSettingsUsernamesFromBlueOS = async (): Promise<string[]> => {
-  const vehicleAddress = await getVehicleAddress()
-  const usernames = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, 'settings')
-  return Object.keys(usernames as string[])
 }

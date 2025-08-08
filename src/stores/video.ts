@@ -15,7 +15,7 @@ import { WebRTCManager } from '@/composables/webRTC'
 import { getIpsInformationFromVehicle } from '@/libs/blueos'
 import eventTracker from '@/libs/external-telemetry/event-tracking'
 import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
-import { datalogger } from '@/libs/sensors-logging'
+import { CockpitStandardLog, datalogger } from '@/libs/sensors-logging'
 import { isEqual, sleep } from '@/libs/utils'
 import { tempVideoStorage, videoStorage } from '@/libs/videoStorage'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
@@ -34,7 +34,7 @@ import {
 } from '@/types/video'
 
 import { useAlertStore } from './alert'
-const { showSnackbar } = useSnackbar()
+const { openSnackbar } = useSnackbar()
 
 export const useVideoStore = defineStore('video', () => {
   const missionStore = useMissionStore()
@@ -57,6 +57,7 @@ export const useVideoStore = defineStore('video', () => {
   const timeNow = useTimestamp({ interval: 500 })
   const autoProcessVideos = useBlueOsStorage('cockpit-auto-process-videos', true)
   const lastRenamedStreamName = ref('')
+  const isRecordingAllStreams = ref(false)
 
   const namesAvailableStreams = computed(() => mainWebRTCManager.availableStreams.value.map((stream) => stream.name))
 
@@ -199,8 +200,18 @@ export const useVideoStore = defineStore('video', () => {
 
     activeStreams.value[streamName]!.mediaRecorder!.stop()
 
-    datalogger.stopLogging()
+    datalogger.stopLogging(streamName)
     alertStore.pushAlert(new Alert(AlertLevel.Success, `Stopped recording stream ${streamName}.`))
+  }
+
+  const videoThumbnailFilename = (videoFileName: string): string => {
+    return `thumbnail_${videoFileName}.jpeg`
+  }
+
+  const getVideoThumbnail = async (videoFileNameOrHash: string, isProcessed: boolean): Promise<Blob | null> => {
+    const db = isProcessed ? videoStorage : tempVideoStorage
+    const thumbnail = await db.getItem(videoThumbnailFilename(videoFileNameOrHash))
+    return thumbnail || null
   }
 
   /**
@@ -208,8 +219,8 @@ export const useVideoStore = defineStore('video', () => {
    * @param {Blob} firstChunkBlob
    * @returns {Promise<string>} A promise that resolves with the base64-encoded image data of the thumbnail.
    */
-  const extractThumbnailFromVideo = async (firstChunkBlob: Blob): Promise<string> => {
-    return new Promise<string>((resolve, reject) => {
+  const extractThumbnailFromVideo = async (firstChunkBlob: Blob): Promise<Blob> => {
+    return new Promise<Blob>((resolve, reject) => {
       const videoObjectUrl = URL.createObjectURL(firstChunkBlob)
       const video = document.createElement('video')
 
@@ -241,11 +252,87 @@ export const useVideoStore = defineStore('video', () => {
         video.currentTime = 0
         seekResolve = () => {
           context.drawImage(video, 0, 0, width, height)
-          const base64ImageData = canvas.toDataURL('image/jpeg', 0.6)
-          resolve(base64ImageData)
-          URL.revokeObjectURL(videoObjectUrl)
+          const blobCallback = (blob: Blob | null): void => {
+            if (!blob) {
+              reject('Failed to create blob')
+              return
+            }
+            resolve(blob)
+            URL.revokeObjectURL(videoObjectUrl)
+          }
+          canvas.toBlob(blobCallback, 'image/jpeg', 0.6)
         }
       })
+    })
+  }
+
+  /**
+   * Generates a fake placeholder thumbnail for videos.
+   * @param {Date} dateStart - The date the video started recording
+   * @returns {Promise<Blob>} A promise that resolves with a placeholder thumbnail blob.
+   */
+  const generatePlaceholderThumbnail = async (dateStart: Date): Promise<Blob> => {
+    return new Promise<Blob>((resolve, reject) => {
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) {
+        reject('2D context not available.')
+        return
+      }
+
+      const [width, height] = [660, 370]
+      canvas.width = width
+      canvas.height = height
+
+      // Create gradient background
+      const gradient = context.createLinearGradient(0, 0, width, height)
+      gradient.addColorStop(0, '#4fa483') // Cockpit green
+      gradient.addColorStop(1, '#77bda2') // Cockpit green slightly lighter
+      context.fillStyle = gradient
+      context.fillRect(0, 0, width, height)
+
+      // Add video icon
+      context.fillStyle = '#ffffff'
+      context.font = 'bold 128px Arial'
+      context.textAlign = 'center'
+      context.fillText('▶', width / 2, height / 2 + 10)
+
+      // Add file name
+      context.fillStyle = '#e5e7eb' // Gray-200
+      context.font = '48px Arial'
+      context.textAlign = 'center'
+
+      // Truncate filename if too long
+      // @ts-ignore: replaceAll is available in any modern browser
+      const parsedFilename = dateStart.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+      const maxLength = 50
+      const displayName =
+        parsedFilename.length > maxLength ? parsedFilename.substring(0, maxLength) + '...' : parsedFilename
+      context.fillText(displayName, width / 2, height / 2 + 120)
+
+      // Add "Video Thumbnail" text
+      context.fillStyle = '#9ca3af' // Gray-400
+      context.font = '14px Arial'
+
+      // Add border
+      context.strokeStyle = '#374151' // Gray-700
+      context.lineWidth = 2
+      context.strokeRect(1, 1, width - 2, height - 2)
+
+      const blobCallback = (blob: Blob | null): void => {
+        if (!blob) {
+          reject('Failed to create placeholder thumbnail blob')
+          return
+        }
+        resolve(blob)
+      }
+      canvas.toBlob(blobCallback, 'image/jpeg', 0.8)
     })
   }
 
@@ -271,10 +358,8 @@ export const useVideoStore = defineStore('video', () => {
       return
     }
 
-    if (!datalogger.logging()) {
-      datalogger.startLogging()
-      sleep(100)
-    }
+    datalogger.startLogging(streamName)
+    await sleep(100)
 
     activeStreams.value[streamName]!.timeRecordingStart = new Date()
     const streamData = activeStreams.value[streamName] as StreamData
@@ -304,7 +389,6 @@ export const useVideoStore = defineStore('video', () => {
       fileName,
       vWidth,
       vHeight,
-      thumbnail: '',
     }
     unprocessedVideos.value = { ...unprocessedVideos.value, ...{ [recordingHash]: videoInfo } }
 
@@ -323,7 +407,7 @@ export const useVideoStore = defineStore('video', () => {
 
       console.error(chunkLossWarningMsg)
 
-      showSnackbar({
+      openSnackbar({
         message: 'Oops, looks like a video chunk could not be saved. Retrying...',
         duration: 2000,
         variant: 'info',
@@ -384,21 +468,6 @@ export const useVideoStore = defineStore('video', () => {
       updatedInfo.dateLastRecordingUpdate = new Date()
       unprocessedVideos.value = { ...unprocessedVideos.value, ...{ [recordingHash]: updatedInfo } }
 
-      // Gets the thumbnail from the first chunk
-      if (chunksCount === 0) {
-        try {
-          const videoChunk = await tempVideoStorage.getItem(chunkName)
-          if (videoChunk) {
-            const firstChunkBlob = new Blob([videoChunk as Blob])
-            const thumbnail = await extractThumbnailFromVideo(firstChunkBlob)
-            updatedInfo.thumbnail = thumbnail
-            unprocessedVideos.value = { ...unprocessedVideos.value, ...{ [recordingHash]: updatedInfo } }
-          }
-        } catch (error) {
-          console.error('Failed to extract thumbnail:', error)
-        }
-      }
-
       // If the chunk was saved, remove it from the unsaved list
       clearTimeout(unsavedChunkAlerts[chunkName])
       delete unsavedChunkAlerts[chunkName]
@@ -414,7 +483,7 @@ export const useVideoStore = defineStore('video', () => {
       if (autoProcessVideos.value) {
         try {
           await processVideoChunksAndTelemetry([recordingHash])
-          showSnackbar({
+          openSnackbar({
             message: 'Video processing completed.',
             duration: 2000,
             variant: 'success',
@@ -441,8 +510,12 @@ export const useVideoStore = defineStore('video', () => {
   }
 
   const discardUnprocessedFilesFromVideoDB = async (hashes: string[]): Promise<void> => {
+    const allKeys = await tempVideoStorage.keys()
     for (const hash of hashes) {
-      await tempVideoStorage.removeItem(hash)
+      const keysToRemove = allKeys.filter((key) => key.includes(hash))
+      for (const key of keysToRemove) {
+        await tempVideoStorage.removeItem(key)
+      }
       delete unprocessedVideos.value[hash]
     }
   }
@@ -586,7 +659,7 @@ export const useVideoStore = defineStore('video', () => {
 
       debouncedUpdateFileProgress(info.fileName, 30, 'Grouping video chunks.')
       const keys = await tempVideoStorage.keys()
-      const filteredKeys = keys.filter((key) => key.includes(hash))
+      const filteredKeys = keys.filter((key) => key.includes(hash) && key !== videoThumbnailFilename(hash))
       for (const key of filteredKeys) {
         const blob = await tempVideoStorage.getItem(key)
         if (blob && blob.size > 0) {
@@ -628,21 +701,45 @@ export const useVideoStore = defineStore('video', () => {
       updateLastProcessingUpdate(hash)
 
       debouncedUpdateFileProgress(info.fileName, 75, `Saving video file.`)
-      await videoStorage.setItem(`${info.fileName}.${extensionContainer || 'webm'}`, durFixedBlob ?? mergedBlob)
+      const finalFileName = `${info.fileName}.${extensionContainer || 'webm'}`
+      await videoStorage.setItem(finalFileName, durFixedBlob ?? mergedBlob)
+
+      // Save thumbnail in the storage
+      // Try to extract the thumbnail from the first 10 chunks, if it fails, generate a placeholder
+      let thumbnail: Blob | undefined = undefined
+      for (let i = 0; i < chunkBlobs.length; i++) {
+        if (i > 10) {
+          console.warn('Reached maximum thumbnail extraction attempts.')
+          break
+        }
+        try {
+          thumbnail = await extractThumbnailFromVideo(chunkBlobs[i])
+        } catch (error) {
+          console.warn(`Failed to extract thumbnail from chunk ${i}. Error: ${error}`)
+        }
+      }
+      if (!thumbnail) {
+        console.warn('Failed to extract thumbnail from video. Generating placeholder thumbnail.')
+        thumbnail = await generatePlaceholderThumbnail(dateStart)
+      }
+      await videoStorage.setItem(videoThumbnailFilename(finalFileName), thumbnail)
 
       updateLastProcessingUpdate(hash)
 
       debouncedUpdateFileProgress(info.fileName, 80, `Generating telemetry file.`)
-      const telemetryLog = await datalogger.findLogByInitialTime(dateStart)
-      if (!telemetryLog) {
-        throw new Error(`No telemetry log found for the video ${info.fileName}:`)
+      let telemetryLog: CockpitStandardLog | undefined = undefined
+      try {
+        telemetryLog = await datalogger.generateLog(dateStart, dateFinish)
+      } catch (error) {
+        openSnackbar({ message: `Failed to generate telemetry file. ${error}`, variant: 'error', duration: 5000 })
       }
 
-      debouncedUpdateFileProgress(info.fileName, 95, `Saving telemetry file.`)
-      const videoTelemetryLog = datalogger.getSlice(telemetryLog, dateStart, dateFinish)
-      const assLog = datalogger.toAssOverlay(videoTelemetryLog, info.vWidth!, info.vHeight!, dateStart.getTime())
-      const logBlob = new Blob([assLog], { type: 'text/plain' })
-      videoStorage.setItem(`${info.fileName}.ass`, logBlob)
+      if (telemetryLog !== undefined) {
+        debouncedUpdateFileProgress(info.fileName, 95, `Converting telemetry file.`)
+        const assLog = datalogger.toAssOverlay(telemetryLog, info.vWidth!, info.vHeight!, dateStart.getTime())
+        const logBlob = new Blob([assLog], { type: 'text/plain' })
+        videoStorage.setItem(`${info.fileName}.ass`, logBlob)
+      }
 
       updateLastProcessingUpdate(hash)
 
@@ -838,6 +935,7 @@ export const useVideoStore = defineStore('video', () => {
   // Video recording actions
   const startRecordingAllStreams = (): void => {
     const streamsThatStarted: string[] = []
+    isRecordingAllStreams.value = true
 
     namesAvailableStreams.value.forEach((streamName) => {
       if (!isRecording(streamName)) {
@@ -850,11 +948,13 @@ export const useVideoStore = defineStore('video', () => {
       alertStore.pushAlert(new Alert(AlertLevel.Error, 'No streams available to be recorded.'))
       return
     }
-    alertStore.pushAlert(new Alert(AlertLevel.Success, `Started recording streams: ${streamsThatStarted.join(', ')}.`))
+    const msg = `Started recording all ${streamsThatStarted.length} streams: ${streamsThatStarted.join(', ')}.`
+    alertStore.pushAlert(new Alert(AlertLevel.Success, msg))
   }
 
   const stopRecordingAllStreams = (): void => {
     const streamsThatStopped: string[] = []
+    isRecordingAllStreams.value = false
 
     namesAvailableStreams.value.forEach((streamName) => {
       if (isRecording(streamName)) {
@@ -867,7 +967,16 @@ export const useVideoStore = defineStore('video', () => {
       alertStore.pushAlert(new Alert(AlertLevel.Error, 'No streams were being recorded.'))
       return
     }
-    alertStore.pushAlert(new Alert(AlertLevel.Success, `Stopped recording streams: ${streamsThatStopped.join(', ')}.`))
+    const msg = `Stopped recording all ${streamsThatStopped.length} streams: ${streamsThatStopped.join(', ')}.`
+    alertStore.pushAlert(new Alert(AlertLevel.Success, msg))
+  }
+
+  const toggleRecordingAllStreams = (): void => {
+    if (isRecordingAllStreams.value) {
+      stopRecordingAllStreams()
+    } else {
+      startRecordingAllStreams()
+    }
   }
 
   const renameStreamInternalNameById = (streamID: string, newInternalName: string): void => {
@@ -889,7 +998,7 @@ export const useVideoStore = defineStore('video', () => {
       console.log(`Stream internal name updated from '${oldInternalName}' to '${newInternalName}'.`)
     } else {
       console.warn(`Stream with ID '${streamID}' not found.`)
-      showSnackbar({
+      openSnackbar({
         variant: 'error',
         message: `Stream with ID '${streamID}' not found.`,
         duration: 3000,
@@ -904,6 +1013,10 @@ export const useVideoStore = defineStore('video', () => {
   registerActionCallback(
     availableCockpitActions.stop_recording_all_streams,
     useThrottleFn(stopRecordingAllStreams, 3000)
+  )
+  registerActionCallback(
+    availableCockpitActions.toggle_recording_all_streams,
+    useThrottleFn(toggleRecordingAllStreams, 3000)
   )
 
   return {
@@ -942,6 +1055,8 @@ export const useVideoStore = defineStore('video', () => {
     overallProgress,
     processVideoChunksAndTelemetry,
     isVideoFilename,
+    getVideoThumbnail,
+    videoThumbnailFilename,
     activeStreams,
     renameStreamInternalNameById,
     lastRenamedStreamName,

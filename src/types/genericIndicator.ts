@@ -51,7 +51,7 @@ export const veryGenericIndicatorPresets: VeryGenericIndicatorPreset[] = [
     variableName: 'TetherTrn',
     iconName: 'mdi-horizontal-rotate-clockwise',
     variableUnit: 'x',
-    variableMultiplier: 100,
+    variableMultiplier: 1,
   },
   {
     displayName: 'Lights (1)',
@@ -86,6 +86,13 @@ export const veryGenericIndicatorPresets: VeryGenericIndicatorPreset[] = [
     variableName: 'RollPitch',
     iconName: 'mdi-controller',
     variableUnit: '',
+    variableMultiplier: 1,
+  },
+  {
+    displayName: 'Altitude',
+    variableName: 'RANGEFINDER/distance',
+    iconName: 'mdi-arrow-collapse-down',
+    variableUnit: 'm',
     variableMultiplier: 1,
   },
 ]

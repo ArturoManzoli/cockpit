@@ -1,6 +1,7 @@
 <template>
   <div
-    class="flex fixed w-[250px] h-[78vh] right-0 top-0 border-l-[1px] border-[#FFFFFF44] text-white elevation-5 bg-[#051e2d]"
+    class="flex fixed w-[250px] right-0 top-0 border-l-[1px] border-[#FFFFFF44] text-white elevation-5 bg-[#051e2d]"
+    :style="getMarginsFromBarsHeight"
   >
     <div class="flex flex-col text-center">
       <v-btn
@@ -76,9 +77,10 @@
               <template v-if="typeof currentElement.options.layout[optionKey] === 'number'">
                 <div class="max-w-[120px]">
                   <input
-                    v-model="currentElement.options.layout[optionKey]"
+                    v-model.number="currentElement.options.layout[optionKey]"
                     type="number"
                     class="p-2 bg-[#FFFFFF11] w-[128px]"
+                    @blur="validateNumber(optionKey)"
                   />
                 </div>
               </template>
@@ -231,7 +233,7 @@
         </template>
       </ExpansiblePanel>
       <ExpansiblePanel
-        v-if="currentElement"
+        v-if="currentElement && currentElement.isCustomElement"
         :key="currentElement.hash"
         no-bottom-divider
         no-top-divider
@@ -242,25 +244,66 @@
         invert-chevron
         :is-expanded="true"
       >
-        <template #title>Cockpit actions</template>
+        <template #title>Actions</template>
         <template #content>
           <div class="flex flex-col items-center mb-4 -ml-[7px] w-[248px]">
             <template v-if="currentElement.component !== CustomWidgetElementType.Button">
-              <div class="flex w-full justify-between items-center h-[40px] border-b-[1px] border-[#FFFFFF33]">
-                <p class="text-center w-full text-sm">Action URL parameter</p>
-                <v-btn
-                  v-if="
-                    openNewDataLakeVariableForm === false && currentElement.options.dataLakeVariable?.name === undefined
-                  "
-                  variant="elevated"
-                  class="bg-[#3B78A8] mr-[13px]"
-                  size="x-small"
-                  @click="openNewDataLakeVariableForm = true"
-                  >create</v-btn
+              <div class="flex w-full justify-between items-center h-auto border-b-[1px] border-[#FFFFFF33]">
+                <p class="text-center w-full text-sm">Data-lake variable</p>
+                <div
+                  v-if="!openNewDataLakeVariableForm && !openDataLakeVariableSelector"
+                  class="flex flex-col justify-end items-center self-end h-auto mt-1"
                 >
+                  <v-btn
+                    v-if="
+                      openNewDataLakeVariableForm === false &&
+                      currentElement.options.dataLakeVariable?.name === undefined
+                    "
+                    variant="elevated"
+                    class="bg-[#3B78A8] mr-[13px] w-[60px]"
+                    size="x-small"
+                    @click="openNewDataLakeVariableForm = true"
+                    >create</v-btn
+                  >
+                  <v-btn
+                    v-if="!currentElement.options.dataLakeVariable?.name"
+                    variant="elevated"
+                    class="bg-[#FFFFFF22] mr-[13px] my-1"
+                    size="x-small"
+                    @click="openDataLakeVariableSelector = true"
+                    >select</v-btn
+                  >
+                </div>
+                <template
+                  v-if="
+                    (openDataLakeVariableSelector || currentElement.options.dataLakeVariable?.name) &&
+                    !openNewDataLakeVariableForm
+                  "
+                >
+                  <div class="max-w-[120px]">
+                    <select v-model="currentElement.options.dataLakeVariable" class="p-2 bg-[#FFFFFF11] w-[120px]">
+                      <option
+                        v-for="variable in availableDataLakeVariables"
+                        :key="variable.name"
+                        :value="variable"
+                        class="bg-[#000000AA]"
+                      >
+                        {{ variable.name }}
+                      </option>
+                    </select>
+                  </div>
+                </template>
               </div>
+              <v-btn
+                v-if="openDataLakeVariableSelector"
+                variant="text"
+                class="self-start mt-[9px]"
+                size="x-small"
+                @click="handleResetVariable"
+                >{{ currentElement.options.dataLakeVariable?.name ? 'reset' : 'back' }}</v-btn
+              >
             </template>
-            <template v-if="openNewDataLakeVariableForm || currentElement.options.dataLakeVariable?.name">
+            <template v-if="openNewDataLakeVariableForm">
               <div
                 class="flex justify-between items-center h-[40px] w-full border-b-[1px] border-[#FFFFFF33]"
                 :class="{
@@ -274,28 +317,39 @@
                 <p class="ml-1 text-[14px]">Description</p>
                 <input v-model="futureDataLakeVariable.description" type="text" class="p-2 bg-[#FFFFFF11] w-[123px]" />
               </div>
-              <div class="flex w-full justify-end">
+              <div class="flex w-full justify-between">
                 <v-btn
+                  v-if="openNewDataLakeVariableForm"
                   variant="text"
+                  class="self-start mt-[9px]"
                   size="x-small"
-                  class="mr-[15px] mt-2"
-                  :disabled="currentElement.options.dataLakeVariable === undefined"
-                  @click="deleteParameterFromDataLake"
-                  >delete</v-btn
+                  @click="handleResetVariable"
+                  >{{ currentElement.options.dataLakeVariable?.name ? 'reset' : 'back' }}</v-btn
                 >
-                <v-btn
-                  variant="elevated"
-                  size="x-small"
-                  class="bg-[#3B78A8] mr-1 mt-2"
-                  :class="{
-                    'opacity-10': futureDataLakeVariable.name === '',
-                  }"
-                  :disabled="futureDataLakeVariable.name === ''"
-                  @click="saveOrUpdateParameter"
-                  >{{ currentElement.options.dataLakeVariable === undefined ? 'save' : 'update' }}</v-btn
-                >
+                <div>
+                  <v-btn
+                    variant="text"
+                    size="x-small"
+                    class="mr-[15px] mt-2"
+                    :disabled="currentElement.options.dataLakeVariable === undefined"
+                    @click="deleteParameterFromDataLake"
+                    >delete</v-btn
+                  >
+                  <v-btn
+                    variant="elevated"
+                    size="x-small"
+                    class="bg-[#3B78A8] mr-1 mt-2"
+                    :class="{
+                      'opacity-10': futureDataLakeVariable.name === '',
+                    }"
+                    :disabled="futureDataLakeVariable.name === ''"
+                    @click="saveOrUpdateParameter"
+                    >{{ currentElement.options.dataLakeVariable === undefined ? 'save' : 'update' }}</v-btn
+                  >
+                </div>
               </div>
             </template>
+
             <template v-if="currentElement.component === CustomWidgetElementType.Button">
               <div class="flex justify-between items-center h-[40px] w-full border-b-[1px] border-[#FFFFFF33]">
                 <p class="ml-1 text-[14px]">Action to trigger</p>
@@ -325,24 +379,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import { useSnackbar } from '@/composables/snackbar'
 import {
   createDataLakeVariable,
   deleteDataLakeVariable,
+  getAllDataLakeVariablesInfo,
   getDataLakeVariableInfo,
   updateDataLakeVariableInfo,
 } from '@/libs/actions/data-lake'
-import { getAllHttpRequestActionConfigs, HttpRequestActionConfig } from '@/libs/actions/http-request'
+import { availableCockpitActions } from '@/libs/joystick/protocols/cockpit-actions'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import { CustomWidgetElement, CustomWidgetElementType, DataLakeVariable } from '@/types/widgets'
 
 const widgetStore = useWidgetManagerStore()
 const interfaceStore = useAppInterfaceStore()
-const { showSnackbar } = useSnackbar()
+const { openSnackbar } = useSnackbar()
 
 const currentElement = ref<CustomWidgetElement | undefined>(widgetStore.elementToShowOnDrawer)
 const defaultDataLakeVariable: DataLakeVariable = {
@@ -352,11 +407,11 @@ const defaultDataLakeVariable: DataLakeVariable = {
   description: '',
 }
 
-const availableCockpitActions = reactive<Record<string, HttpRequestActionConfig>>({})
 const futureDataLakeVariable = ref<DataLakeVariable>(defaultDataLakeVariable)
 const openNewDataLakeVariableForm = ref(false)
 const isOptionsMenuOpen = ref<{ [key: number]: boolean }>({})
 const dataLakeVariableError = ref<string[]>([])
+const openDataLakeVariableSelector = ref(false)
 
 watch(
   () => widgetStore.elementToShowOnDrawer,
@@ -369,11 +424,47 @@ watch(
       description: '',
     }
     openNewDataLakeVariableForm.value = false
+    openDataLakeVariableSelector.value = false
     if (newValue && newValue.hash) {
       widgetStore.miniWidgetManagerVars(newValue.hash).configMenuOpen = false
     }
   }
 )
+
+const getMarginsFromBarsHeight = computed(() => {
+  return {
+    marginTop: widgetStore.currentTopBarHeightPixels + 'px',
+    marginBottom: widgetStore.currentBottomBarHeightPixels + 'px',
+    height:
+      window.innerHeight - widgetStore.currentTopBarHeightPixels - widgetStore.currentBottomBarHeightPixels - 1 + 'px',
+  }
+})
+
+const handleResetVariable = (): void => {
+  currentElement.value!.options.dataLakeVariable = undefined
+  futureDataLakeVariable.value = defaultDataLakeVariable
+  openNewDataLakeVariableForm.value = false
+  openDataLakeVariableSelector.value = false
+}
+
+const validateNumber = (optionKey: string): void => {
+  if (!currentElement.value) return
+
+  const value = currentElement.value.options.layout[optionKey]
+  if (value === '' || isNaN(Number(value))) {
+    if (optionKey === 'minValue') {
+      currentElement.value.options.layout[optionKey] = 0
+    } else if (optionKey === 'maxValue') {
+      currentElement.value.options.layout[optionKey] = currentElement.value.options.layout['minValue'] + 1
+    } else {
+      currentElement.value.options.layout[optionKey] = 0
+    }
+  }
+}
+
+const availableDataLakeVariables = computed(() => {
+  return getAllDataLakeVariablesInfo()
+})
 
 const CloseConfigPanel = (): void => {
   widgetStore.elementToShowOnDrawer = undefined
@@ -381,7 +472,7 @@ const CloseConfigPanel = (): void => {
 }
 
 const showActionExistsError = (): void => {
-  showSnackbar({
+  openSnackbar({
     message: 'Variable name already exists',
     variant: 'error',
   })
@@ -395,12 +486,12 @@ const deleteParameterFromDataLake = async (): Promise<void> => {
   if (currentElement.value?.options.dataLakeVariable?.name) {
     try {
       await deleteDataLakeVariable(currentElement.value.options.dataLakeVariable)
-      showSnackbar({
+      openSnackbar({
         message: 'Action variable deleted',
         variant: 'success',
       })
     } catch (e) {
-      showSnackbar({
+      openSnackbar({
         message: 'Error deleting action variable',
         variant: 'error',
       })
@@ -428,13 +519,13 @@ const saveOrUpdateParameter = (): void => {
       showActionExistsError()
       return
     }
-    createDataLakeVariable(newDataLakeVariable)
+    createDataLakeVariable({ ...newDataLakeVariable, allowUserToChangeValue: true })
     currentElement.value.options.dataLakeVariable = newDataLakeVariable
     return
   }
   if (futureDataLakeVariable.value && currentElement.value?.options.dataLakeVariable?.name) {
     newDataLakeVariable.id = currentElement.value.options.dataLakeVariable.id
-    updateDataLakeVariableInfo(newDataLakeVariable)
+    updateDataLakeVariableInfo({ ...newDataLakeVariable, allowUserToChangeValue: true })
     currentElement.value.options.dataLakeVariable = newDataLakeVariable
   }
 }
@@ -504,23 +595,16 @@ const deleteElement = (): void => {
     try {
       widgetStore.removeElementFromCustomWidget(currentElement.value.hash)
       widgetStore.elementToShowOnDrawer = undefined
-      deleteParameterFromDataLake()
     } catch (e) {
       widgetStore.deleteMiniWidget(currentElement.value as any) // eslint-disable-line
     }
-    deleteParameterFromDataLake()
   }
-}
-
-const loadSavedActions = (): void => {
-  Object.assign(availableCockpitActions, getAllHttpRequestActionConfigs())
 }
 
 onMounted(() => {
   if (currentElement.value?.options.dataLakeVariable?.name) {
     futureDataLakeVariable.value = currentElement.value?.options.dataLakeVariable
   }
-  loadSavedActions()
 })
 </script>
 

@@ -18,20 +18,21 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt install -y xvfb
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22.13.0'
 
-      - name: Run bun
+      - name: Install, lint, typecheck, and build
         run: |
-          bun install --frozen-lockfile
-          bun run lint
-          bun run typecheck
-          bun run build
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn lint
+          yarn typecheck
+          yarn build
 
   deploy-page:
     needs: test
@@ -42,14 +43,15 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22.13.0'
 
-      - name: Run bun
+      - name: Install and build
         run: |
-          bun install --frozen-lockfile
-          bun run build
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn build
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@4.1.5
@@ -70,24 +72,35 @@ jobs:
           arch: x64
           extension: dmg
           latestMetadataName: latest-mac.yml
+          deployCommand: deploy:electron:mac:x64
+
+        - os: macos-14
+          suffix: mac
+          arch: arm64
+          extension: dmg
+          latestMetadataName: latest-mac.yml
+          deployCommand: deploy:electron:mac:arm64
 
         - os: ubuntu-latest
           suffix: linux
           arch: x86_64
           extension: AppImage
           latestMetadataName: latest-linux.yml
+          deployCommand: deploy:electron
 
         - os: ubuntu-24-arm
           suffix: linux
           arch: arm64
           extension: AppImage
           latestMetadataName: latest-linux-arm64.yml
+          deployCommand: deploy:electron
 
         - os: windows-latest
           suffix: win
           arch: x64
           extension: exe
           latestMetadataName: latest.yml
+          deployCommand: deploy:electron:windows
 
     steps:
       - name: Checkout
@@ -103,9 +116,10 @@ jobs:
           sudo apt install -y --fix-missing snapd
           sudo snap install snapcraft --classic
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22.13.0'
 
       - name: Set version as environment variable (Windows)
         if: matrix.os == 'windows-latest'
@@ -115,20 +129,71 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: echo "VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_ENV
 
-      - name: Bun build
+      - name: Install and build
         run: |
-          bun install --frozen-lockfile
-          bun run build
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn build
 
-      - name: Bun deploy (arm)
+      - name: Import Apple Certificate and Setup Keychain
+        if: (matrix.os == 'macos-13' || matrix.os == 'macos-14') && github.event_name != 'pull_request'
+        env:
+          MAC_CERTIFICATE_BASE64: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          MAC_CERTIFICATE_PWD: ${{ secrets.MAC_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_NAME="build.keychain"
+          CERT_PATH="certificate.p12"
+
+          echo "Decoding certificate..."
+          echo "${MAC_CERTIFICATE_BASE64}" | base64 --decode > "${CERT_PATH}"
+
+          echo "Creating keychain ${KEYCHAIN_NAME}..."
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+          # Make the new keychain the default
+          security default-keychain -s "${KEYCHAIN_NAME}"
+          # Unlock the keychain
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+
+          echo "Importing certificate into ${KEYCHAIN_NAME}..."
+          # Import the certificate and allow codesign and productbuild to use it
+          security import "${CERT_PATH}" -k "${KEYCHAIN_NAME}" -P "${MAC_CERTIFICATE_PWD}" -T /usr/bin/codesign -T /usr/bin/productbuild
+
+          echo "Setting key partition list for the imported key to allow access in CI..."
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_NAME}"
+
+          rm "${CERT_PATH}"
+
+          # Make keychain name available to electron-builder
+          echo "CSC_KEYCHAIN_NAME=${KEYCHAIN_NAME}" >> $GITHUB_ENV
+
+      - name: Deploy (arm)
         if: matrix.os == 'ubuntu-24-arm'
         run: |
-          SNAPCRAFT_BUILD_ENVIRONMENT="host" bun run deploy:electron
+          SNAPCRAFT_BUILD_ENVIRONMENT="host" yarn ${{ matrix.deployCommand }}
 
-      - name: Bun deploy (others)
-        if: matrix.os != 'ubuntu-24-arm'
+      - name: Deploy (macOS - Release Build)
+        if: (matrix.os == 'macos-13' || matrix.os == 'macos-14') && github.event_name != 'pull_request'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # CSC_KEYCHAIN_NAME is set by the 'Import Apple Certificate...' step
         run: |
-          bun run deploy:electron
+          echo "INFO: Building macOS for Release (non-PR). Signing and notarization will be attempted."
+          yarn ${{ matrix.deployCommand }}
+
+      - name: Deploy (macOS - PR Build)
+        if: (matrix.os == 'macos-13' || matrix.os == 'macos-14') && github.event_name == 'pull_request'
+        # No Apple ID env vars here, and 'Import Apple Certificate...' step was skipped, so no CSC_KEYCHAIN_NAME
+        run: |
+          echo "INFO: Building macOS for Pull Request. Signing and notarization will be skipped."
+          yarn ${{ matrix.deployCommand }}:pr
+
+      - name: Deploy (Windows / Linux non-arm)
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
+        # No Apple specific env vars needed here as electron-builder ignores them on these platforms
+        run: |
+          yarn ${{ matrix.deployCommand }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -138,7 +203,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload diff artifact (mac-only)
-        if: matrix.os == 'macos-13'
+        if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
           name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
@@ -148,7 +213,7 @@ jobs:
       - name: Upload latest metadata artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.latestMetadataName }}
+          name: ${{ matrix.latestMetadataName }}-${{ matrix.arch }}
           path: dist/latest*.yml
           if-no-files-found: error
 
@@ -165,7 +230,7 @@ jobs:
 
       - name: Upload diff release (mac-only)
         uses: svenstaro/upload-release-action@v2
-        if: startsWith(github.ref, 'refs/tags/') && success() && matrix.os == 'macos-13'
+        if: startsWith(github.ref, 'refs/tags/') && success() && (matrix.os == 'macos-13' || matrix.os == 'macos-14')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
@@ -209,9 +274,10 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22.13.0'
 
       - name: Install flatpak
         run: |
@@ -226,16 +292,16 @@ jobs:
       - name: Build electron (arm)
         if: matrix.os == 'ubuntu-24-arm'
         run: |
-          bun install --frozen-lockfile
-          bun run build
-          env DEBUG="@malept/flatpak-bundler" bun run deploy:flatpak --arm64
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn build
+          env DEBUG="@malept/flatpak-bundler" yarn deploy:flatpak --arm64
 
       - name: Build electron (x86_64)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          bun install --frozen-lockfile
-          bun run build
-          env DEBUG="@malept/flatpak-bundler" bun run deploy:flatpak --x64
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn build
+          env DEBUG="@malept/flatpak-bundler" yarn deploy:flatpak --x64
 
       - name: Rename 'aarch64' to 'arm64'
         if: matrix.os == 'ubuntu-24-arm'
@@ -280,14 +346,15 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: oven-sh/setup-bun@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22.13.0'
 
       - name: Build cockpit
         run: |
-          bun install --frozen-lockfile
-          bun run build
+          yarn install --frozen-lockfile --network-timeout 600000
+          yarn build
 
       - name: Prepare
         id: prepare
@@ -344,7 +411,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') && success()
     steps:
       - name: Build and Publish Extension in BlueOS CLoud
-        uses: bluerobotics/blueos-cloud-action@0.0.1
+        uses: bluerobotics/blueos-cloud-action@0.0.3
         with:
           BCLOUD_PAT: ${{secrets.BCLOUD_PAT}}
           PLATFORMS: linux/arm/v7,linux/arm64,linux/amd64

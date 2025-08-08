@@ -1,5 +1,7 @@
 import { JoystickModel } from '@/libs/joystick/manager'
 
+import { SDLControllerState, SDLJoystickState } from './sdl'
+
 /**
  * Available joystick protocols.
  * Each protocol is expected to have it's own way of doing thing, including mapping, limiting, communicating, etc.
@@ -8,6 +10,7 @@ export enum JoystickProtocol {
   CockpitModifierKey = 'cockpit-modifier-key',
   MAVLinkManualControl = 'mavlink-manual-control',
   CockpitAction = 'cockpit-action',
+  DataLakeVariable = 'data-lake-variable',
   Other = 'other',
 }
 
@@ -54,18 +57,23 @@ export class Joystick {
    * @returns {JoystickState}
    */
   get state(): JoystickState {
-    return {
-      buttons:
-        this.gamepadToCockpitMap?.buttons.map((idx) => {
-          if (idx === null || this.gamepad.buttons[idx] === undefined) return undefined
-          return this.gamepad.buttons[idx].value
-        }) || [],
-      axes:
-        this.gamepadToCockpitMap?.axes.map((idx) => {
-          if (idx === null || this.gamepad.axes[idx] === undefined) return undefined
-          return this.gamepad.axes[idx]
-        }) || [],
-    }
+    let buttons =
+      this.gamepadToCockpitMap?.buttons.map((idx) => {
+        if (idx === null || this.gamepad.buttons[idx] === undefined) return undefined
+        return this.gamepad.buttons[idx].value
+      }) || []
+
+    buttons = buttons.filter((button) => button !== undefined)
+
+    let axes =
+      this.gamepadToCockpitMap?.axes.map((idx) => {
+        if (idx === null || this.gamepad.axes[idx] === undefined) return undefined
+        return this.gamepad.axes[idx]
+      }) || []
+
+    axes = axes.filter((axis) => axis !== undefined)
+
+    return { buttons, axes }
   }
 }
 
@@ -327,4 +335,198 @@ export class JoystickAxisInput implements JoystickInput {
    * @param {JoystickAxis} id Axis identification
    */
   constructor(public id: JoystickAxis) {}
+}
+
+/**
+ * Joystick calibration options
+ * @description The calibration options for each joystick model. They help ensuring the joystick behaves as the user expects.
+ */
+export type JoystickCalibration = {
+  /**
+   * Deadband calibration
+   * @description This will help eliminate small unwanted movements around the center position.
+   */
+  deadband: {
+    /**
+     * Whether the deadband is enabled
+     */
+    enabled: boolean
+    /**
+     * The thresholds for each axis
+     */
+    thresholds: {
+      /**
+       * The thresholds for each axis
+       */
+      axes: number[]
+      /**
+       * The thresholds for each button
+       */
+      buttons: number[]
+    }
+  }
+  /**
+   * Exponential scaling calibration
+   * @description This will help adjust the sensitivity curve of your joystick.
+   */
+  exponential: {
+    /**
+     * Whether the exponential scaling is enabled
+     */
+    enabled: boolean
+    /**
+     * The exponential factors for each axis
+     */
+    factors: {
+      /**
+       * The exponential factors for each axis
+       */
+      axes: number[]
+      /**
+       * The exponential factors for each button
+       */
+      buttons: number[]
+    }
+  }
+}
+
+export type JoystickCalibrationOptions = {
+  [joystickModel in string]: JoystickCalibration
+}
+
+/**
+ * Data for the event of a new state of a joystick on the Electron side
+ */
+export interface ElectronSDLJoystickControllerStateEventBase {
+  /**
+   * Joystick device id
+   */
+  deviceId: number
+  /**
+   * Joystick device name
+   */
+  deviceName: string
+  /**
+   * Joystick product id
+   */
+  productId: string
+  /**
+   * Joystick vendor id
+   */
+  vendorId: string
+  /**
+   * Joystick type
+   */
+  type: 'joystick' | 'controller'
+}
+
+/**
+ * Data for the event of a new state of a joystick on the Electron side
+ */
+export interface ElectronSDLControllerStateEventData extends ElectronSDLJoystickControllerStateEventBase {
+  /**
+   * Controller type
+   */
+  type: 'controller'
+  /**
+   * Controller state
+   */
+  state: SDLControllerState
+}
+
+/**
+ * Data for the event of a new state of a joystick on the Electron side
+ */
+export interface ElectronSDLJoystickStateEventData extends ElectronSDLJoystickControllerStateEventBase {
+  /**
+   * Joystick type
+   */
+  type: 'joystick'
+  /**
+   * Joystick state
+   */
+  state: SDLJoystickState
+}
+
+// eslint-disable-next-line prettier/prettier
+export type ElectronSDLJoystickControllerStateEventData = ElectronSDLControllerStateEventData | ElectronSDLJoystickStateEventData
+
+export type JoystickSdlStandardToGamepadStandard = {
+  /**
+   * SDL button index as key to Gamepad button index as value
+   */
+  buttons: {
+    [key: number]: number
+  }
+  /**
+   * SDL axis index as key to Gamepad axis index as value
+   */
+  axes: {
+    [key: number]:
+      | number
+      | {
+          /**
+           * Gamepad axis index
+           */
+          axis: number
+          /**
+           * Gamepad button index (if the axis should also be mapped as a button)
+           */
+          button: number
+        }
+  }
+}
+
+/**
+ * Convert SDL controller state to Gamepad state, using the default mapping for both
+ * @param {SDLControllerState} sdlState - SDL controller state
+ * @returns {JoystickState} Gamepad state
+ */
+export const convertSDLControllerStateToGamepadState = (sdlState: SDLControllerState): JoystickState => {
+  return {
+    buttons: [
+      sdlState.buttons.a ? 1 : 0,
+      sdlState.buttons.b ? 1 : 0,
+      sdlState.buttons.x ? 1 : 0,
+      sdlState.buttons.y ? 1 : 0,
+      sdlState.buttons.leftShoulder ? 1 : 0,
+      sdlState.buttons.rightShoulder ? 1 : 0,
+      sdlState.axes.leftTrigger,
+      sdlState.axes.rightTrigger,
+      sdlState.buttons.back ? 1 : 0,
+      sdlState.buttons.start ? 1 : 0,
+      sdlState.buttons.leftStick ? 1 : 0,
+      sdlState.buttons.rightStick ? 1 : 0,
+      sdlState.buttons.dpadUp ? 1 : 0,
+      sdlState.buttons.dpadDown ? 1 : 0,
+      sdlState.buttons.dpadLeft ? 1 : 0,
+      sdlState.buttons.dpadRight ? 1 : 0,
+      sdlState.buttons.guide ? 1 : 0,
+      sdlState.buttons.extra ? 1 : 0,
+      sdlState.buttons.paddle1 ? 1 : 0,
+      sdlState.buttons.paddle2 ? 1 : 0,
+      sdlState.buttons.paddle3 ? 1 : 0,
+      sdlState.buttons.paddle4 ? 1 : 0,
+    ],
+    axes: [
+      sdlState.axes.leftStickX,
+      sdlState.axes.leftStickY,
+      sdlState.axes.rightStickX,
+      sdlState.axes.rightStickY,
+      sdlState.axes.leftTrigger,
+      sdlState.axes.rightTrigger,
+    ],
+  }
+}
+
+/**
+ * Convert SDL joystick state to Gamepad state, using the default mapping for both
+ * @param {SDLJoystickState} sdlState - SDL joystick state
+ * @returns {JoystickState} Gamepad state
+ */
+export const convertSDLJoystickStateToGamepadState = (sdlState: SDLJoystickState): JoystickState => {
+  return {
+    buttons: sdlState.buttons.map((button) => (button ? 1 : 0)),
+    axes: sdlState.axes,
+  }
 }

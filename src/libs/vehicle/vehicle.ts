@@ -66,10 +66,6 @@ export abstract class AbstractVehicle<Modes> {
   _cockpitRegistrationUUID: string
   _funnyName: string
 
-  // Used to store generic data that does not belong to any specific subclass
-  // Usually used for development purposes (e.g.: test the implementation of new sensors)
-  _genericVariables: Record<string, unknown> = {}
-
   // Signals
   onArm = new Signal<boolean>()
   onAttitude = new Signal<Attitude>()
@@ -77,7 +73,6 @@ export abstract class AbstractVehicle<Modes> {
   onBatteries = new Signal<Battery[]>()
   onCpuLoad = new Signal<number>()
   onCommandAck = new Signal<CommandAck>()
-  onGenericVariables = new Signal<Record<string, unknown>>()
   onMode = new Signal<Modes>()
   onPosition = new Signal<Coordinates>()
   onPowerSupply = new Signal<PowerSupply>()
@@ -113,7 +108,6 @@ export abstract class AbstractVehicle<Modes> {
     this.onAttitude.register_caller(() => this.attitude())
     this.onBatteries.register_caller(() => this.batteries())
     this.onCpuLoad.register_caller(() => this.cpuLoad())
-    this.onGenericVariables.register_caller(() => this.genericVariables())
     this.onMode.register_caller(() => this.mode())
     this.onPosition.register_caller(() => this.position())
     this.onPowerSupply.register_caller(() => this.powerSupply())
@@ -141,14 +135,6 @@ export abstract class AbstractVehicle<Modes> {
   }
 
   /**
-   * Return the generic variables hashmap of the vehicle
-   * @returns {Record<string, unknown>}
-   */
-  genericVariables(): Record<string, unknown> {
-    return this._genericVariables
-  }
-
-  /**
    * Return the icon based on the vehicle type
    * @returns {string}
    */
@@ -169,7 +155,8 @@ export abstract class AbstractVehicle<Modes> {
     }
   }
 
-  abstract onMessage(message: Uint8Array): void
+  abstract onIncomingMessage(message: Uint8Array): void
+  abstract onOutgoingMessage(message: Uint8Array): void
 
   abstract arm(): Promise<void>
   abstract altitude(): Altitude

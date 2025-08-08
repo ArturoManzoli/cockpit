@@ -57,6 +57,9 @@
               <v-list-item @click="handleOptionClick('load')">
                 <v-list-item-title>Load</v-list-item-title>
               </v-list-item>
+              <v-list-item @click="handleOptionClick('copy-to-view')">
+                <v-list-item-title>Clone to another view</v-list-item-title>
+              </v-list-item>
             </v-list>
           </v-menu>
         </div>
@@ -150,66 +153,102 @@
   </div>
 
   <Teleport to="body">
-    <GlassModal :is-visible="widgetStore.widgetManagerVars(widget.hash).configMenuOpen">
-      <v-card class="px-8 pb-6 pt-2 rounded-lg w-[400px] bg-transparent">
-        <v-card-title class="text-center -mt-1">Custom Widget options</v-card-title>
-        <v-btn
-          class="absolute top-3 right-0 text-lg rounded-full"
-          variant="text"
-          size="small"
-          @click="widgetStore.widgetManagerVars(widget.hash).configMenuOpen = false"
-        >
-          <v-icon>mdi-close</v-icon>
-        </v-btn>
-        <div class="flex flex-col justify-start items-start gap-x-4 mt-3 w-full">
-          <p class="text-start">Name:</p>
-          <v-text-field ref="nameInput" v-model="widget.name" density="compact" class="w-3/4" />
-          <p class="text-start">Columns:</p>
-          <v-text-field
-            ref="nameInput"
-            v-model="widget.options.columns"
-            min="1"
-            max="2"
-            type="number"
-            density="compact"
-            class="w-1/4"
-          />
-          <p class="mt-1">Background color</p>
-          <input v-model="widget.options.backgroundColor" type="color" class="p-0 w-20 mr-4" />
-          <p class="mt-3">Background opacity:</p>
-          <v-slider v-model="widget.options.backgroundOpacity" min="0" max="1" color="white" thumb-label width="250" />
-          <p class="mt-3">Background blur:</p>
-          <v-slider v-model="widget.options.backgroundBlur" min="0" max="100" color="white" thumb-label width="250" />
-        </div>
-      </v-card>
-    </GlassModal>
-    <Transition>
-      <div
-        v-if="showWidgetTrashArea"
-        ref="widgetTrashArea"
-        class="absolute w-32 h-32 -translate-x-32 -translate-y-32 bottom-[20%] left-1/3 bg-[#FF000055] z-[65] rounded-xl flex items-center justify-center hover:bg-slate-200/50 transition-all"
-      >
-        <div class="relative flex justify-center items-center w-full h-full">
-          <FontAwesomeIcon
-            icon="fa-solid fa-trash"
-            class="absolute h-16 transition-all -translate-x-7 -translate-y-8 top-1/2 left-1/2 text-white"
-          />
-          <VueDraggable
-            v-model="trashList"
-            :animation="150"
-            group="generalGroup"
-            class="flex flex-wrap items-center justify-center w-full h-full gap-2"
-            @add="handleDeleteWidget"
+    <v-dialog v-model="widgetStore.widgetManagerVars(widget.hash).configMenuOpen" persistent>
+      <GlassModal :is-visible="widgetStore.widgetManagerVars(widget.hash).configMenuOpen">
+        <v-card class="px-8 pb-6 pt-2 rounded-lg w-[400px] bg-transparent">
+          <v-card-title class="text-center -mt-1">Custom Widget options</v-card-title>
+          <v-btn
+            class="absolute top-3 right-0 text-lg rounded-full"
+            variant="text"
+            size="small"
+            @click="widgetStore.widgetManagerVars(widget.hash).configMenuOpen = false"
           >
-            <div v-for="miniWidget in trashList" :key="miniWidget.hash">
-              <div class="select-none">
-                <MiniWidgetInstantiator :mini-widget="miniWidget" />
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+          <div class="flex flex-col justify-start items-start gap-x-4 mt-3 w-full">
+            <p class="text-start">Name:</p>
+            <v-text-field ref="nameInput" v-model="widget.name" density="compact" class="w-3/4" />
+            <p class="text-start">Columns:</p>
+            <v-text-field
+              ref="nameInput"
+              v-model="widget.options.columns"
+              min="1"
+              max="2"
+              type="number"
+              density="compact"
+              class="w-1/4"
+            />
+            <p class="mt-1">Background color</p>
+            <input v-model="widget.options.backgroundColor" type="color" class="p-0 w-20 mr-4" />
+            <p class="mt-3">Background opacity:</p>
+            <v-slider
+              v-model="widget.options.backgroundOpacity"
+              min="0"
+              max="1"
+              color="white"
+              thumb-label
+              width="250"
+            />
+            <p class="mt-3">Background blur:</p>
+            <v-slider v-model="widget.options.backgroundBlur" min="0" max="100" color="white" thumb-label width="250" />
+          </div>
+        </v-card>
+      </GlassModal>
+
+      <Transition>
+        <div
+          v-if="showWidgetTrashArea"
+          ref="widgetTrashArea"
+          class="absolute w-32 h-32 -translate-x-32 -translate-y-32 bottom-[20%] left-1/3 bg-[#FF000055] z-[65] rounded-xl flex items-center justify-center hover:bg-slate-200/50 transition-all"
+        >
+          <div class="relative flex justify-center items-center w-full h-full">
+            <FontAwesomeIcon
+              icon="fa-solid fa-trash"
+              class="absolute h-16 transition-all -translate-x-7 -translate-y-8 top-1/2 left-1/2 text-white"
+            />
+            <VueDraggable
+              v-model="trashList"
+              :animation="150"
+              group="generalGroup"
+              class="flex flex-wrap items-center justify-center w-full h-full gap-2"
+              @add="handleDeleteWidget"
+            >
+              <div v-for="miniWidget in trashList" :key="miniWidget.hash">
+                <div class="select-none">
+                  <MiniWidgetInstantiator :mini-widget="miniWidget" />
+                </div>
               </div>
-            </div>
-          </VueDraggable>
+            </VueDraggable>
+          </div>
         </div>
-      </div>
-    </Transition>
+      </Transition>
+
+      <GlassModal :is-visible="selectViewToShareDialog">
+        <v-card class="px-3 pb-6 pt-2 rounded-lg w-auto bg-transparent z-40">
+          <v-card-title class="flex justify-around -mt-1 w-full px-0">
+            <div />
+            <p class="mx-8">Clone widget to</p>
+            <v-icon class="cursor-pointer self-end" @click="selectViewToShareDialog = false">mdi-close</v-icon>
+          </v-card-title>
+          <div class="flex w-full justify-center items-center mt-4">
+            <select
+              v-model="selectedViewToShareWidget"
+              class="bg-[#50505022] dark:bg-gray-800 dark:text-white w-[180px] p-2 border border-gray-300 dark:border-gray-600 rounded appearance-none"
+              @change="handleCopyWidgetToView"
+            >
+              <option
+                v-for="view in widgetStore.currentProfile.views"
+                :key="view.name"
+                :value="view.name"
+                class="bg-gray-800 dark:bg-gray-800 dark:text-white"
+              >
+                {{ view.name }}
+              </option>
+            </select>
+          </div>
+        </v-card>
+      </GlassModal>
+    </v-dialog>
   </Teleport>
 </template>
 
@@ -231,7 +270,7 @@ import MiniWidgetInstantiator from '../MiniWidgetInstantiator.vue'
 
 const widgetStore = useWidgetManagerStore()
 const interfaceStore = useAppInterfaceStore()
-const { showSnackbar } = useSnackbar()
+const { openSnackbar } = useSnackbar()
 
 const props = defineProps<{
   /**
@@ -255,6 +294,27 @@ const widgetBase = ref<HTMLElement | null>(null)
 const isWrapped = ref(false)
 const wrapDirection = ref<'left' | 'right'>('right')
 const trashList = ref<MiniWidget[] | CustomWidgetElement[]>([])
+const selectViewToShareDialog = ref(false)
+const selectedViewToShareWidget = ref<string>('')
+
+const handleCopyWidgetToView = (): void => {
+  if (selectedViewToShareWidget.value) {
+    try {
+      widgetStore.copyWidgetToView(currentWidget.value, selectedViewToShareWidget.value)
+      openSnackbar({
+        variant: 'success',
+        message: 'Widget cloned successfully.',
+      })
+    } catch (error: any) {
+      openSnackbar({
+        variant: 'error',
+        message: error.message || 'Error cloning widget.',
+      })
+    }
+    selectViewToShareDialog.value = false
+    selectedViewToShareWidget.value = ''
+  }
+}
 
 const updateWrapDirection = (): void => {
   if (widgetBase.value) {
@@ -300,7 +360,7 @@ const saveName = (): void => {
 const loadWidget = (event: Event): void => {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) {
-    showSnackbar({ variant: 'error', message: 'No file selected.', duration: 3000 })
+    openSnackbar({ variant: 'error', message: 'No file selected.', duration: 3000 })
     return
   }
 
@@ -311,7 +371,7 @@ const loadWidget = (event: Event): void => {
       const hash = currentWidget.value.hash
       widgetStore.loadWidgetFromFile(hash, loadedWidget)
     } catch (error) {
-      showSnackbar({ variant: 'error', message: 'Invalid widget file format.', duration: 3000 })
+      openSnackbar({ variant: 'error', message: 'Invalid widget file format.', duration: 3000 })
     }
   }
 
@@ -341,6 +401,8 @@ const handleOptionClick = (option: string): void => {
     })
 
     input.click()
+  } else if (option === 'copy-to-view') {
+    selectViewToShareDialog.value = true
   }
 }
 
@@ -415,6 +477,8 @@ const widgetAdded = (e: SortableEvent.SortableEvent, containerName: string): voi
     if (newWidget && e.pullMode === 'clone') {
       newWidget.hash = uuid()
       widgetStore.miniWidgetManagerVars(newWidget.hash).configMenuOpen = true
+      lastKnownHashes.value.set(containerName, currentHashes)
+      return
     }
     widgetStore.showElementPropsDrawer(newWidget.hash)
     lastKnownHashes.value.set(containerName, currentHashes)
@@ -446,7 +510,7 @@ const loadWidgetFromStore = (): void => {
       currentWidget.value = loadedWidget
     }
   } catch (error) {
-    showSnackbar({ variant: 'warning', message: 'Error reading widget file.', duration: 1000 })
+    openSnackbar({ variant: 'warning', message: 'Error reading widget file.', duration: 1000 })
   }
 }
 

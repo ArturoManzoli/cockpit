@@ -17,10 +17,10 @@
         </div>
 
         <div v-else-if="vehicles.length > 0" class="flex flex-col gap-2 mb-3">
-          <div class="h-4 font-weight-bold mb-5">Vehicles found!</div>
+          <div class="h-4 font-weight-bold text-center mb-5">Vehicles found!</div>
           <div v-for="vehicle in vehicles" :key="vehicle.address" class="flex items-center gap-2">
-            <v-btn variant="tonal" class="w-full justify-start" @click="selectVehicle(vehicle.address)">
-              {{ vehicle.name }}
+            <v-btn variant="tonal" class="max-w-[500px] justify-start truncate" @click="selectVehicle(vehicle.address)">
+              <span class="max-w-[300px] truncate">{{ vehicle.name }}</span>
               <span class="text-xs ml-2 opacity-50">({{ vehicle.address }})</span>
             </v-btn>
           </div>
@@ -71,7 +71,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
 }>()
 
-const { showSnackbar } = useSnackbar()
+const { openSnackbar } = useSnackbar()
 const mainVehicleStore = useMainVehicleStore()
 const discoveryService = vehicleDiscover
 
@@ -123,7 +123,7 @@ const selectVehicle = async (address: string): Promise<void> => {
   mainVehicleStore.globalAddress = address
   isOpen.value = false
   await reloadCockpit()
-  showSnackbar({ message: 'Vehicle address updated', variant: 'success', duration: 5000 })
+  openSnackbar({ message: 'Vehicle address updated', variant: 'success', duration: 5000 })
 }
 
 const preventFutureAutoSearchs = (): void => {

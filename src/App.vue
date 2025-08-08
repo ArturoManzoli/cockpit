@@ -11,7 +11,7 @@
         <div
           id="menu-trigger"
           class="menu-trigger border-4 flex items-center justify-center w-[30px] px-0 py-2 cursor-pointer overflow-hidden rounded-r-lg rounded-br-lg -ml-[1px]"
-          :class="[interfaceStore.isOnSmallScreen ? 'top-[30%]' : 'top-[50%]']"
+          :class="[interfaceStore.isOnSmallScreen ? 'top-[20%] scale-75 -ml-[3px]' : 'top-[50%]']"
           :style="
             interfaceStore.highlightedComponent === 'menu-trigger'
               ? interfaceStore.globalGlassMenuHighlightStyles
@@ -22,218 +22,31 @@
           <v-icon class="text-white text-[46px] opacity-80">mdi-menu-right</v-icon>
         </div>
       </div>
-      <transition name="slide-in-left">
-        <div
-          v-if="interfaceStore.isMainMenuVisible"
-          ref="mainMenu"
-          class="left-menu slide-in"
-          :style="[
-            glassMenuStyles,
-            simplifiedMainMenu ? { width: '45px', borderRadius: '0 10px 10px 0' } : mainMenuWidth,
-          ]"
-        >
-          <v-window v-model="interfaceStore.mainMenuCurrentStep" class="h-full w-full">
-            <v-window-item :value="1" class="h-full">
-              <div
-                class="relative flex flex-col h-full justify-between align-center items-center select-none"
-                :class="
-                  interfaceStore.isOnSmallScreen
-                    ? 'gap-y-2 pt-2 pb-3 sm:gap-y-1 sm:py-0 sm:-ml-[3px] xs:gap-y-1 xs:py-0 xs:-ml-[3px]'
-                    : 'lg:gap-y-3 xl:gap-y-4 gap-y-5 py-5'
-                "
-              >
-                <GlassButton
-                  v-if="route.name === 'widgets-view'"
-                  :label="simplifiedMainMenu ? '' : 'Edit Interface'"
-                  :selected="widgetStore.editingMode"
-                  :label-class="[menuLabelSize, '-mb-0.5']"
-                  icon="mdi-pencil"
-                  :icon-class="interfaceStore.isOnSmallScreen ? 'scale-[90%] -mr-[2px]' : 'scale-[90%] -mr-[3px]'"
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? 'Edit Mode' : undefined"
-                  :width="buttonSize"
-                  @click="
-                    () => {
-                      widgetStore.editingMode = !widgetStore.editingMode
-                      closeMainMenu()
-                    }
-                  "
-                />
-                <GlassButton
-                  v-if="route.name !== 'widgets-view'"
-                  :label="simplifiedMainMenu ? '' : 'Flight'"
-                  :label-class="menuLabelSize"
-                  icon="mdi-send"
-                  :icon-class="
-                    interfaceStore.isOnSmallScreen ? '-mb-[1px] -mr-[3px] scale-90' : '-mb-[1px] -mr-[5px] scale-90'
-                  "
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? 'Flight' : undefined"
-                  :width="buttonSize"
-                  :selected="$route.name === 'Flight'"
-                  @click="
-                    () => {
-                      $router.push('/')
-                      closeMainMenu()
-                    }
-                  "
-                />
-                <GlassButton
-                  v-if="route.name !== 'Mission planning'"
-                  :label="simplifiedMainMenu ? '' : 'Mission Planning'"
-                  :label-class="menuLabelSize"
-                  icon="mdi-map-marker-radius-outline"
-                  :icon-class="
-                    interfaceStore.isOnSmallScreen
-                      ? 'scale-[95%] -mr-[2px] -mb-[1px]'
-                      : 'scale-[95%] ml-[2px] lg:-mr-[2px]'
-                  "
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? 'Mission Planning' : undefined"
-                  :width="buttonSize"
-                  :selected="$route.name === 'Mission planning'"
-                  @click="
-                    () => {
-                      $router.push('/mission-planning')
-                      closeMainMenu()
-                    }
-                  "
-                />
-                <GlassButton
-                  :label="simplifiedMainMenu ? '' : 'Settings'"
-                  :label-class="[menuLabelSize, '-mb-1']"
-                  icon="mdi-cog"
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :icon-class="
-                    interfaceStore.isOnSmallScreen
-                      ? 'scale-[100%] -mb-[1px] md:ml-[2px]'
-                      : 'scale-[97%]  lg:ml-[1px] -mr-[2px] xl:-mb-[4px]'
-                  "
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? 'Configuration' : undefined"
-                  :width="buttonSize"
-                  :selected="showConfigurationMenu"
-                  class="mb-2"
-                  :style="
-                    interfaceStore.highlightedComponent === 'config-menu-item' && {
-                      animation: 'highlightBackground 0.5s alternate 20',
-                      borderRadius: '10px',
-                    }
-                  "
-                  @click="interfaceStore.mainMenuCurrentStep = 2"
-                />
-                <GlassButton
-                  :label="simplifiedMainMenu ? '' : isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'"
-                  :label-class="menuLabelSize"
-                  :icon="fullScreenToggleIcon"
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :icon-class="
-                    interfaceStore.isOnSmallScreen
-                      ? '-mb-[1px] scale-90 -mr-[2px] md:ml-[1px] md:-mb-[2px]'
-                      : '2xl:-mb-[2px] xl:-mb-[2px] -mb-[1px] scale-90 -mr-[3px]'
-                  "
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? (isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen') : undefined"
-                  :button-class="simplifiedMainMenu ? '-mb-2' : ''"
-                  :width="buttonSize"
-                  :selected="false"
-                  @click="
-                    () => {
-                      toggleFullscreen()
-                      closeMainMenu()
-                    }
-                  "
-                />
-                <GlassButton
-                  :label="simplifiedMainMenu ? '' : 'About'"
-                  :label-class="[menuLabelSize, '-mb-1']"
-                  icon="mdi-information-outline"
-                  :icon-size="simplifiedMainMenu ? 25 : undefined"
-                  :icon-class="
-                    interfaceStore.isOnSmallScreen
-                      ? 'scale-[90%] mt-[15px] -mr-[4px] md:ml-[1px] md:-mb-[2px]'
-                      : 'scale-[95%] -mb-[2px] lg:-mr-[1px] -mr-[2px] xl:-mb-[2px]'
-                  "
-                  :variant="simplifiedMainMenu ? 'uncontained' : 'round'"
-                  :tooltip="simplifiedMainMenu ? 'About' : undefined"
-                  :button-class="!simplifiedMainMenu ? '-mt-[5px]' : undefined"
-                  :width="buttonSize"
-                  :selected="showConfigurationMenu"
-                  @click="openAboutDialog"
-                />
-              </div>
-            </v-window-item>
-            <v-window-item :value="2" class="h-full w-full">
-              <div
-                class="flex flex-col w-full h-full justify-between"
-                :class="simplifiedMainMenu ? 'py-0 gap-y-0' : 'py-2 gap-y-1'"
-              >
-                <GlassButton
-                  v-for="menuitem in configMenu"
-                  :key="menuitem.title"
-                  :label="interfaceStore.isOnSmallScreen ? undefined : menuitem.title"
-                  :label-class="menuLabelSize"
-                  :button-class="interfaceStore.isOnSmallScreen ? '-ml-[2px]' : ''"
-                  :icon="menuitem.icon"
-                  :selected="currentConfigMenuComponent === menuitem.component"
-                  variant="uncontained"
-                  :height="buttonSize * 0.45"
-                  :icon-size="buttonSize * 0.5"
-                  :style="
-                    interfaceStore.highlightedComponent === menuitem.title && {
-                      animation: 'highlightBackground 0.5s alternate 50',
-                      borderRadius: '4px',
-                    }
-                  "
-                  @click="toggleConfigComponent(menuitem.component)"
-                  ><template #content
-                    ><div v-if="currentConfigMenuComponent === menuitem.component" class="arrow-left"></div></template
-                ></GlassButton>
-                <div class="flex flex-col justify-center align-center">
-                  <v-divider width="70%" class="mb-3" />
-                  <GlassButton
-                    :label-class="menuLabelSize"
-                    icon="mdi-arrow-left"
-                    :icon-class="interfaceStore.isOnSmallScreen ? '' : '-mb-[1px]'"
-                    :button-class="interfaceStore.isOnSmallScreen ? (simplifiedMainMenu ? '-mt-1' : 'mt-1') : undefined"
-                    variant="round"
-                    :width="buttonSize / 2.4"
-                    :selected="false"
-                    @click="
-                      () => {
-                        interfaceStore.mainMenuCurrentStep = 1
-                        currentConfigMenuComponent = null
-                      }
-                    "
-                  />
-                </div>
-              </div>
-            </v-window-item>
-          </v-window>
-        </div>
-      </transition>
+      <MainMenu
+        v-model:currentSubMenuComponent="currentSubMenuComponent"
+        @close-main-menu="closeMainMenu"
+        @open-about-dialog="handleShowAboutDialog"
+      />
 
       <teleport to="body">
         <GlassModal
           :is-visible="
-            currentConfigMenuComponent !== null &&
+            currentSubMenuComponent !== null &&
             interfaceStore.mainMenuCurrentStep === 2 &&
             interfaceStore.isMainMenuVisible
           "
           position="menuitem"
           :class="interfaceStore.isVideoLibraryVisible ? 'opacity-0' : 'opacity-100'"
-          @close-modal="currentConfigMenuComponent = null"
+          @close-modal="currentSubMenuComponent = null"
         >
-          <component :is="currentConfigMenuComponent"></component>
+          <component :is="currentSubMenuComponent"></component>
         </GlassModal>
       </teleport>
 
       <div ref="routerSection" class="router-view">
         <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }" :style="connectionStatusFeedback">
           <div
+            v-show="showTopBarNow"
             id="mainTopBar"
             class="bar top-bar"
             :style="[
@@ -313,225 +126,122 @@
     </v-main>
   </v-app>
   <About v-if="showAboutDialog" @update:show-about-dialog="showAboutDialog = $event" />
-  <Tutorial :show-tutorial="interfaceStore.isTutorialVisible" />
-  <VideoLibraryModal :open-modal="interfaceStore.isVideoLibraryVisible" />
+  <Tutorial v-if="interfaceStore.isTutorialVisible" />
+  <VideoLibraryModal v-if="interfaceStore.isVideoLibraryVisible" />
   <VehicleDiscoveryDialog v-model="showDiscoveryDialog" show-auto-search-option />
+  <ActionDiscoveryModal auto-check-on-mount />
   <UpdateNotification v-if="isElectron()" />
+  <SnackbarContainer />
+  <SkullAnimation
+    :is-visible="interfaceStore.showSkullAnimation"
+    @animation-complete="interfaceStore.hideSkullAnimation"
+  />
+  <Transition
+    leave-active-class="transition-opacity duration-500 ease-in-out"
+    leave-from-class="opacity-100"
+    leave-to-class="opacity-0"
+  >
+    <SplashScreen v-if="interfaceStore.showSplashScreen" />
+  </Transition>
 </template>
 
 <script setup lang="ts">
-import { onClickOutside, useDebounceFn, useFullscreen, useStorage, useWindowSize } from '@vueuse/core'
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useStorage, useWindowSize } from '@vueuse/core'
+import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import ActionDiscoveryModal from '@/components/ActionDiscoveryModal.vue'
 import GlassModal from '@/components/GlassModal.vue'
+import SkullAnimation from '@/components/SkullAnimation.vue'
+import SnackbarContainer from '@/components/SnackbarContainer.vue'
 import Tutorial from '@/components/Tutorial.vue'
 import UpdateNotification from '@/components/UpdateNotification.vue'
 import VehicleDiscoveryDialog from '@/components/VehicleDiscoveryDialog.vue'
 import VideoLibraryModal from '@/components/VideoLibraryModal.vue'
-import { useInteractionDialog } from '@/composables/interactionDialog'
 import {
   availableCockpitActions,
   registerActionCallback,
   unregisterActionCallback,
 } from '@/libs/joystick/protocols/cockpit-actions'
-import { isElectron } from '@/libs/utils'
+import { isElectron, sleep } from '@/libs/utils'
 
 import About from './components/About.vue'
 import AltitudeSlider from './components/AltitudeSlider.vue'
 import EditMenu from './components/EditMenu.vue'
-import GlassButton from './components/GlassButton.vue'
+import MainMenu from './components/MainMenu.vue'
 import MiniWidgetContainer from './components/MiniWidgetContainer.vue'
 import SlideToConfirm from './components/SlideToConfirm.vue'
+import SplashScreen from './components/SplashScreen.vue'
+import { openMainMenuIfSafeOrDesired } from './composables/armSafetyDialog'
 import { useSnackbar } from './composables/snackbar'
+import { checkBlueOsUserDataSimilarity } from './libs/blueos'
 import { useAppInterfaceStore } from './stores/appInterface'
+import { useDevelopmentStore } from './stores/development'
 import { useMainVehicleStore } from './stores/mainVehicle'
 import { useWidgetManagerStore } from './stores/widgetManager'
-import { ConfigComponent } from './types/general'
-import ConfigurationActionsView from './views/ConfigurationActionsView.vue'
-import ConfigurationAlertsView from './views/ConfigurationAlertsView.vue'
-import ConfigurationDevelopmentView from './views/ConfigurationDevelopmentView.vue'
-import ConfigurationGeneralView from './views/ConfigurationGeneralView.vue'
-import ConfigurationJoystickView from './views/ConfigurationJoystickView.vue'
-import ConfigurationTelemetryView from './views/ConfigurationLogsView.vue'
-import ConfigurationMissionView from './views/ConfigurationMissionView.vue'
-import ConfigurationUIView from './views/ConfigurationUIView.vue'
-import ConfigurationVideoView from './views/ConfigurationVideoView.vue'
-
-const { showDialog, closeDialog } = useInteractionDialog()
-const { showSnackbar } = useSnackbar()
+import { SubMenuComponent } from './types/general'
+const { openSnackbar } = useSnackbar()
 
 const widgetStore = useWidgetManagerStore()
 const vehicleStore = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
+const devStore = useDevelopmentStore()
 
 const showAboutDialog = ref(false)
-const showConfigurationMenu = ref(false)
-const currentConfigMenuComponent = ref<ConfigComponent>(null)
+const currentSubMenuComponent = ref<SubMenuComponent>(null)
+
+const handleShowAboutDialog = (): void => {
+  showAboutDialog.value = true
+}
 
 // Main menu
-const isMenuOpen = ref(false)
 const isSlidingOut = ref(false)
-const simplifiedMainMenu = ref(false)
-const windowHeight = ref(window.innerHeight)
 
-const configMenu = [
-  {
-    icon: 'mdi-view-dashboard-variant',
-    title: 'General',
-    component: markRaw(ConfigurationGeneralView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-monitor-cellphone',
-    title: 'Interface',
-    component: markRaw(ConfigurationUIView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-controller',
-    title: 'Joystick',
-    component: markRaw(ConfigurationJoystickView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-video',
-    title: 'Video',
-    component: markRaw(ConfigurationVideoView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-subtitles-outline',
-    title: 'Telemetry',
-    component: markRaw(ConfigurationTelemetryView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-alert-rhombus-outline',
-    title: 'Alerts',
-    component: markRaw(ConfigurationAlertsView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-dev-to',
-    title: 'Dev',
-    component: markRaw(ConfigurationDevelopmentView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-map-marker-path',
-    title: 'Mission',
-    component: markRaw(ConfigurationMissionView) as ConfigComponent,
-  },
-  {
-    icon: 'mdi-run-fast',
-    title: 'Actions',
-    component: markRaw(ConfigurationActionsView) as ConfigComponent,
-  },
-]
-
-watch(
-  () => interfaceStore.configComponent,
-  (component) => {
-    if (component < 0) {
-      currentConfigMenuComponent.value = null
-      return
-    }
-    currentConfigMenuComponent.value = configMenu[component].component
-  }
-)
-
-const toggleConfigComponent = (component: ConfigComponent): void => {
-  if (currentConfigMenuComponent.value === null) {
-    currentConfigMenuComponent.value = component
-    interfaceStore.configModalVisibility = true
-    return
-  }
-  if (currentConfigMenuComponent.value === component) {
-    currentConfigMenuComponent.value = null
-    interfaceStore.configModalVisibility = false
-    return
-  }
-  currentConfigMenuComponent.value = component
-  interfaceStore.configModalVisibility = true
-}
+const { width: windowWidth } = useWindowSize()
 
 const isConfigModalVisible = computed(() => interfaceStore.isConfigModalVisible)
 
+// Check if the user data in browser storage is the same as on blueOS; if not, keep the splash screen open for a maximum of 20 seconds.
+onBeforeMount(async () => {
+  if (!devStore.showSplashScreenOnStartup) {
+    interfaceStore.showSplashScreen = false
+    return
+  }
+  const minSplashDuration = 5000
+  const maxSplashDuration = 15000
+  const startTime = Date.now()
+  let isBlueOSUserDataSimilar = false
+
+  // Close splash screen no matter what, after 15 seconds
+  setTimeout(() => {
+    interfaceStore.showSplashScreen = false
+  }, maxSplashDuration)
+
+  while (!isBlueOSUserDataSimilar) {
+    isBlueOSUserDataSimilar = await checkBlueOsUserDataSimilarity(vehicleStore.globalAddress)
+    if (!isBlueOSUserDataSimilar) await sleep(1000)
+  }
+
+  const elapsed = Date.now() - startTime
+  if (elapsed < minSplashDuration) await sleep(minSplashDuration - elapsed)
+
+  interfaceStore.showSplashScreen = false
+})
+
 watch(isConfigModalVisible, (newVal) => {
   if (newVal === false) {
-    currentConfigMenuComponent.value = null
+    currentSubMenuComponent.value = null
   }
 })
 
-watch(
-  () => windowHeight.value < 450,
-  (isSmall: boolean) => {
-    simplifiedMainMenu.value = isSmall
-  }
-)
-
-const updateWindowHeight = (): void => {
-  windowHeight.value = window.innerHeight
-}
-
-onMounted(() => {
-  window.addEventListener('resize', updateWindowHeight)
-  if (windowHeight.value < 450) {
-    simplifiedMainMenu.value = true
-  }
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateWindowHeight)
-})
-
-const mainMenuWidth = computed(() => {
-  const width =
-    interfaceStore.isOnSmallScreen && interfaceStore.mainMenuCurrentStep === 2
-      ? '60px'
-      : `${interfaceStore.mainMenuWidth}px`
-  return { width }
+const topBottomBarScale = computed(() => {
+  return windowWidth.value / originalBarWidth
 })
 
 const toggleMainMenu = (): void => {
-  if (isMenuOpen.value === true) {
+  if (interfaceStore.isMainMenuVisible) {
     closeMainMenu()
   } else {
-    openMainMenu()
-  }
-}
-
-const openMainMenu = (): void => {
-  if (vehicleStore.isArmed) {
-    showDialog({
-      title: 'Be careful',
-      maxWidth: '650px',
-      message: 'The vehicle is currently armed and it is not recommended to open the main menu.',
-      actions: [
-        {
-          text: 'Continue anyway',
-          action: () => {
-            interfaceStore.isMainMenuVisible = true
-            isMenuOpen.value = true
-            closeDialog()
-          },
-        },
-        {
-          text: 'Disarm vehicle',
-          action: () => {
-            disarmVehicle()
-          },
-        },
-      ],
-      variant: 'warning',
-    }).then((result) => {
-      if (result.isConfirmed && vehicleStore.isArmed) {
-        vehicleStore.disarm().then(() => {
-          interfaceStore.isMainMenuVisible = true
-          isMenuOpen.value = true
-        })
-      } else {
-        interfaceStore.isMainMenuVisible = true
-        isMenuOpen.value = true
-      }
-    })
-  } else {
-    interfaceStore.isMainMenuVisible = true
-    isMenuOpen.value = true
+    openMainMenuIfSafeOrDesired()
   }
 }
 
@@ -541,17 +251,9 @@ const closeMainMenu = (): void => {
   setTimeout(() => {
     interfaceStore.isMainMenuVisible = false
     isSlidingOut.value = false
-    isMenuOpen.value = false
     interfaceStore.mainMenuCurrentStep = 1
-    currentConfigMenuComponent.value = null
+    currentSubMenuComponent.value = null
   }, 20)
-}
-
-const disarmVehicle = (): void => {
-  vehicleStore.disarm().then(() => {
-    interfaceStore.isMainMenuVisible = true
-  })
-  closeDialog()
 }
 
 const handleEscKey = (event: KeyboardEvent): void => {
@@ -585,7 +287,7 @@ watch(
   () => vehicleStore.isVehicleOnline,
   (isOnline) => {
     if (!isOnline) {
-      showSnackbar({
+      openSnackbar({
         message: 'Vehicle connection lost: reestablishing',
         variant: 'error',
         duration: 3000,
@@ -597,93 +299,28 @@ watch(
       return
     }
 
-    showSnackbar({ message: 'Vehicle connected', variant: 'success', duration: 3000, closeButton: false })
+    openSnackbar({ message: 'Vehicle connected', variant: 'success', duration: 3000, closeButton: false })
     connectionStatusFeedback.value = { border: '3px solid green' }
 
     resetConnectionStatusFeedback()
   }
 )
 
-const buttonSize = computed(() => {
-  if (interfaceStore.is2xl) return 60
-  if (interfaceStore.isXl) return 55
-  if (interfaceStore.isLg) return 50
-  if (interfaceStore.isMd) return 45
-  if (interfaceStore.isSm && windowHeight.value > 700) return 50
-  if (interfaceStore.isSm && windowHeight.value < 700) return 40
-  if (interfaceStore.isXs && windowHeight.value >= 700) return 50
-  return 40
-})
-
-const menuLabelSize = computed(() => {
-  if (interfaceStore.is2xl) return 'text-[15px]'
-  if (interfaceStore.isXl) return 'text-[14px]'
-  if (interfaceStore.isLg) return 'text-[13px]'
-  if (interfaceStore.isMd) return 'text-[12px]'
-  if (interfaceStore.isSm) return 'text-[10px]'
-  if (interfaceStore.isXs && windowHeight.value >= 700) return 'text-[12px]'
-  return 'text-[10px]'
-})
-
-const mainMenu = ref()
-onClickOutside(mainMenu, () => {
-  if (interfaceStore.mainMenuCurrentStep === 1 && !interfaceStore.isTutorialVisible) {
-    closeMainMenu()
-  }
-  if (
-    interfaceStore.mainMenuCurrentStep === 2 &&
-    currentConfigMenuComponent.value === null &&
-    !interfaceStore.isTutorialVisible
-  ) {
-    closeMainMenu()
-  }
-})
-
-const glassMenuStyles = computed(() => ({
-  backgroundColor: interfaceStore.UIGlassEffect.bgColor,
-  color: interfaceStore.UIGlassEffect.fontColor,
-  backdropFilter: `blur(${interfaceStore.UIGlassEffect.blur}px)`,
-}))
-
-const openAboutDialog = (): void => {
-  showAboutDialog.value = true
-  closeMainMenu()
-}
-
-const route = useRoute()
 const routerSection = ref()
-
-// Full screen toggling
-const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
-
-const debouncedToggleFullScreen = useDebounceFn(() => toggleFullscreen(), 10)
-const fullScreenCallbackId = registerActionCallback(
-  availableCockpitActions.toggle_full_screen,
-  debouncedToggleFullScreen
-)
-onBeforeUnmount(() => unregisterActionCallback(fullScreenCallbackId))
-
-const fullScreenToggleIcon = computed(() => (isFullscreen.value ? 'mdi-fullscreen-exit' : 'mdi-overscan'))
-
 const currentSelectedViewName = computed(() => widgetStore.currentView.name)
-
-const { width: windowWidth } = useWindowSize()
-
 const originalBarWidth = 1800
 
 const topBarScaleStyle = computed(() => {
-  const scale = windowWidth.value / originalBarWidth
   return {
-    transform: `scale(${scale})`,
+    transform: `scale(${topBottomBarScale.value})`,
     transformOrigin: 'top left',
     width: `${originalBarWidth}px`,
   }
 })
 
 const bottomBarScaleStyle = computed(() => {
-  const scale = windowWidth.value / originalBarWidth
   return {
-    transform: `scale(${scale})`,
+    transform: `scale(${topBottomBarScale.value})`,
     transformOrigin: 'bottom left',
     width: `${originalBarWidth}px`,
   }
@@ -710,13 +347,14 @@ const showTopBarNow = ref(true)
 watch([() => widgetStore.currentView, () => widgetStore.currentView.showBottomBarOnBoot], () => {
   showBottomBarNow.value = widgetStore.currentView.showBottomBarOnBoot
 })
-const debouncedToggleBottomBar = useDebounceFn(() => (showBottomBarNow.value = !showBottomBarNow.value), 25)
 const bottomBarToggleCallbackId = registerActionCallback(
   availableCockpitActions.toggle_bottom_bar,
-  debouncedToggleBottomBar
+  () => (showBottomBarNow.value = !showBottomBarNow.value)
 )
-const debouncedToggleTopBar = useDebounceFn(() => (showTopBarNow.value = !showTopBarNow.value), 25)
-const topBarToggleCallbackId = registerActionCallback(availableCockpitActions.toggle_top_bar, debouncedToggleTopBar)
+const topBarToggleCallbackId = registerActionCallback(
+  availableCockpitActions.toggle_top_bar,
+  () => (showTopBarNow.value = !showTopBarNow.value)
+)
 onBeforeUnmount(() => {
   unregisterActionCallback(bottomBarToggleCallbackId)
   unregisterActionCallback(topBarToggleCallbackId)
@@ -730,13 +368,19 @@ const showDiscoveryDialog = ref(false)
 const preventAutoSearch = useStorage('cockpit-prevent-auto-vehicle-discovery-dialog', false)
 
 onMounted(() => {
-  if (!isElectron() || preventAutoSearch.value) return
+  if (isElectron() && !preventAutoSearch.value) {
+    // Wait 5 seconds to check if we're connected to a vehicle
+    setTimeout(() => {
+      if (vehicleStore.isVehicleOnline) return
+      showDiscoveryDialog.value = true
+    }, 5000)
+  }
 
-  // Wait 5 seconds to check if we're connected to a vehicle
-  setTimeout(() => {
-    if (vehicleStore.isVehicleOnline) return
-    showDiscoveryDialog.value = true
-  }, 5000)
+  if (!interfaceStore.userHasSeenTutorial) {
+    setTimeout(() => {
+      interfaceStore.isTutorialVisible = true
+    }, 6000)
+  }
 })
 </script>
 
@@ -749,47 +393,6 @@ body {
 
 body.hide-cursor {
   cursor: none;
-}
-
-.left-menu {
-  position: fixed;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  border-radius: 0 20px 20px 0;
-  border: 1px #cbcbcb22 solid;
-  border-left: none;
-  top: 50%;
-  left: 0;
-  transform: translateY(-50%);
-  box-shadow: 0px 4px 4px 0px rgba(0, 0, 0, 0.3), 0px 8px 12px 6px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
-}
-
-@keyframes slideInLeft {
-  from {
-    transform: translateX(-100%) translateY(-50%);
-  }
-  to {
-    transform: translateX(0) translateY(-50%);
-  }
-}
-
-@keyframes slideOutLeft {
-  from {
-    transform: translateX(0) translateY(-50%);
-  }
-  to {
-    transform: translateX(-100%) translateY(-50%);
-  }
-}
-
-.slide-in-left-enter-active {
-  animation: slideInLeft 300ms ease forwards;
-}
-
-.slide-in-left-leave-active {
-  animation: slideOutLeft 300ms ease forwards;
 }
 
 .router-view {

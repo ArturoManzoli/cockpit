@@ -33,12 +33,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 
-import {
-  deleteDataLakeVariable,
-  listenDataLakeVariable,
-  setDataLakeVariableData,
-  unlistenDataLakeVariable,
-} from '@/libs/actions/data-lake'
+import { listenDataLakeVariable, setDataLakeVariableData, unlistenDataLakeVariable } from '@/libs/actions/data-lake'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import { CustomWidgetElementOptions, CustomWidgetElementType, SelectorOption } from '@/types/widgets'
 
@@ -99,6 +94,25 @@ const handleSelection = (value: string | number | boolean): void => {
   widgetStore.setMiniWidgetLastValue(miniWidget.value.hash, selected.value)
 }
 
+const startListeningDataLakeVariable = (): void => {
+  if (miniWidget.value.options.dataLakeVariable) {
+    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
+      selectedValue.value = value as string
+    })
+    selectedValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as string
+  }
+}
+
+watch(
+  () => miniWidget.value.options.dataLakeVariable?.name,
+  (newVal) => {
+    if (newVal) {
+      startListeningDataLakeVariable()
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   if (!miniWidget.value.options || Object.keys(miniWidget.value.options).length === 0) {
     miniWidget.value.isCustomElement = true
@@ -113,11 +127,7 @@ onMounted(() => {
     })
   }
   if (miniWidget.value.options.dataLakeVariable) {
-    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
-      selectedOption.value = options.value.find((option) => option.value === value)
-    })
-    const storedValue = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash)
-    selectedOption.value = options.value.find((option: SelectorOption) => option.value === storedValue)
+    startListeningDataLakeVariable()
   }
   if (miniWidget.value.options.lastSelected?.name !== '') {
     selectedOption.value = miniWidget.value.options.lastSelected
@@ -126,7 +136,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (miniWidget.value.options.dataLakeVariable) {
-    deleteDataLakeVariable(miniWidget.value.options.dataLakeVariable.id)
     if (listenerId) {
       unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, listenerId)
     }

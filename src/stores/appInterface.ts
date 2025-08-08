@@ -1,18 +1,49 @@
 import { useWindowSize } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import { defaultDisplayUnitPreferences } from '@/assets/defaults'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
+import { setupPostPiniaConnection } from '@/libs/post-pinia-connections'
 
 const { width: windowWidth, height: windowHeight } = useWindowSize()
 
+/**
+ * Available sub menus names
+ */
+export enum SubMenuName {
+  settings = 'settings',
+  tools = 'tools',
+}
+
+/**
+ * Available sub menus names
+ */
+export enum SubMenuComponentName {
+  SettingsGeneral = 'settings-general',
+  SettingsInterface = 'settings-interface',
+  SettingsJoystick = 'settings-joystick',
+  SettingsVideo = 'settings-video',
+  SettingsTelemetry = 'settings-telemetry',
+  SettingsAlerts = 'settings-alerts',
+  SettingsDev = 'settings-dev',
+  SettingsMission = 'settings-mission',
+  SettingsActions = 'settings-actions',
+  SettingsDataLake = 'settings-datalake',
+  SettingsMAVLink = 'settings-mavlink',
+  ToolsMAVLink = 'tools-mavlink',
+  ToolsDataLake = 'tools-datalake',
+}
+
 export const useAppInterfaceStore = defineStore('responsive', {
   state: () => ({
+    pirateMode: useBlueOsStorage('cockpit-pirate-mode', false),
+    showSkullAnimation: false,
     width: windowWidth.value,
     height: windowHeight.value,
     configModalVisibility: false,
     videoLibraryVisibility: false,
+    videoLibraryMode: 'video',
     UIGlassEffect: useBlueOsStorage('cockpit-ui-glass-effect', {
       opacity: 0.9,
       bgColor: '#63636354',
@@ -20,14 +51,17 @@ export const useAppInterfaceStore = defineStore('responsive', {
       blur: 25,
     }),
     displayUnitPreferences: useBlueOsStorage('cockpit-display-unit-preferences', defaultDisplayUnitPreferences),
-    mainMenuStyleTrigger: useBlueOsStorage('main-menu-style', 'center-left'),
+    mainMenuStyleTrigger: useBlueOsStorage('cockpit-main-menu-style', 'center-left'),
     componentToHighlight: 'none',
     isMainMenuVisible: false,
     mainMenuCurrentStep: 1,
-    configComponent: -1,
+    currentSubMenuName: ref<SubMenuName | null>(null),
+    currentSubMenuComponentName: ref<SubMenuComponentName | null>(null),
     isGlassModalAlwaysOnTop: false,
     isTutorialVisible: false,
+    userHasSeenTutorial: useBlueOsStorage('cockpit-has-seen-tutorial', false),
     configPanelVisible: false,
+    showSplashScreen: true,
   }),
   actions: {
     updateWidth() {
@@ -40,6 +74,12 @@ export const useAppInterfaceStore = defineStore('responsive', {
         .toString(16)
         .padStart(2, '0')
       this.UIGlassEffect.bgColor = `#${hex}${alphaHex}`
+    },
+    triggerSkullAnimation() {
+      this.showSkullAnimation = true
+    },
+    hideSkullAnimation() {
+      this.showSkullAnimation = false
     },
   },
   getters: {
@@ -97,4 +137,22 @@ export const useAppInterfaceStore = defineStore('responsive', {
 watch(windowWidth, () => {
   const store = useAppInterfaceStore()
   store.updateWidth()
+})
+
+// Watch for pirate mode changes and trigger skull animation
+setupPostPiniaConnection(() => {
+  const store = useAppInterfaceStore()
+  watch(
+    () => {
+      return store.pirateMode
+    },
+    (newValue, oldValue) => {
+      const pirateModeEnabled = newValue === true && oldValue === false
+      // Only trigger animation when pirate mode changes from false to true
+      if (pirateModeEnabled) {
+        console.log('Pirate mode enabled.')
+        store.triggerSkullAnimation()
+      }
+    }
+  )
 })
