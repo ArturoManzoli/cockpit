@@ -709,6 +709,7 @@ import ImageViewImg from '@/assets/widgets/ImageView.png'
 import MapImg from '@/assets/widgets/Map.png'
 import MiniWidgetsBarImg from '@/assets/widgets/MiniWidgetsBar.png'
 import PlotterImg from '@/assets/widgets/Plotter.png'
+import RadCamManagerImg from '@/assets/widgets/RadCamManager.png'
 import URLVideoPlayerImg from '@/assets/widgets/URLVideoPlayer.png'
 import VideoPlayerImg from '@/assets/widgets/VideoPlayer.png'
 import VirtualHorizonImg from '@/assets/widgets/VirtualHorizon.png'
@@ -913,6 +914,7 @@ const widgetImages = {
   URLVideoPlayer: URLVideoPlayerImg,
   VideoPlayer: VideoPlayerImg,
   VirtualHorizon: VirtualHorizonImg,
+  RadCamManager: RadCamManagerImg,
 }
 
 const selectView = (view: View): void => {

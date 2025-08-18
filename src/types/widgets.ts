@@ -62,6 +62,7 @@ export enum WidgetType {
   URLVideoPlayer = 'URLVideoPlayer',
   VideoPlayer = 'VideoPlayer',
   VirtualHorizon = 'VirtualHorizon',
+  RadCamManager = 'RadCamManager',
 }
 
 /**
@@ -830,6 +831,7 @@ export const isWidgetConfigurable: Record<WidgetType, boolean> = {
   [WidgetType.URLVideoPlayer]: true,
   [WidgetType.VideoPlayer]: true,
   [WidgetType.VirtualHorizon]: false,
+  [WidgetType.RadCamManager]: true,
 }
 
 export const isMiniWidgetConfigurable: Record<MiniWidgetType, boolean> = {
@@ -870,6 +872,7 @@ export const widgetHasOwnContextMenu: Record<WidgetType, boolean> = {
   [WidgetType.URLVideoPlayer]: false,
   [WidgetType.VideoPlayer]: false,
   [WidgetType.VirtualHorizon]: false,
+  [WidgetType.RadCamManager]: false,
 }
 
 export const validateWidget = (maybeWidget: Widget): maybeWidget is Widget => {
