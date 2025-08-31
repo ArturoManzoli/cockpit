@@ -229,7 +229,23 @@
         </div>
 
         <div>
-          <div class="flex justify-end mt-2 mb-2">
+          <div class="flex w-full justify-between mt-2 mb-2">
+            <v-tooltip
+              location="top"
+              :text="isMissionStatisticsVisible ? 'Hide mission statistics' : 'Show mission statistics'"
+            >
+              <template v-if="missionStore.currentPlanningWaypoints.length > 0" #activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  icon="mdi-chart-bar-stacked"
+                  variant="text"
+                  size="24"
+                  class="text-[12px] mx-3 mt-[2px] mb-[1px]"
+                  @click="toggleMissionStatistics"
+                />
+              </template>
+            </v-tooltip>
+            <v-divider vertical />
             <v-tooltip location="top" text="Save mission to file">
               <template v-if="missionStore.currentPlanningWaypoints.length > 0" #activator="{ props }">
                 <v-btn
@@ -385,7 +401,29 @@
   </SideConfigPanel>
   <HomePositionSettingHelp v-model="showHomePositionNotSetDialog" />
   <PoiManager ref="poiManagerRef" />
-
+  <!-- <template v-if="isMissionStatisticsVisible">
+    <div
+      class="absolute right-4 bottom-28 z-[210] rounded-[10px] px-3 py-2"
+      :style="[interfaceStore.globalGlassMenuStyles, { width: '250px' }]"
+    >
+      <p class="text-sm font-semibold mb-1">Mission statistics</p>
+      <div class="text-xs leading-6">
+        <div class="flex justify-between">
+          <span>Length</span><span>{{ formattedMissionLength }}</span>
+        </div>
+        <div class="flex justify-between">
+          <span>ETA</span><span>{{ formattedETA }}</span>
+        </div>
+        <div class="flex justify-between">
+          <span>Energy</span><span>{{ formattedEnergy }}</span>
+        </div>
+        <div class="flex justify-between">
+          <span>Coverage</span><span>{{ formattedArea }}</span>
+        </div>
+      </div>
+    </div>
+  </template> -->
+  <MissionStatisticsPanel v-model="isMissionStatisticsVisible" />
   <v-progress-linear
     v-if="fetchingMission"
     :model-value="missionFetchProgress"
@@ -419,6 +457,7 @@ import brov2MarkerImage from '@/assets/brov2-marker.png'
 import genericVehicleMarkerImage from '@/assets/generic-vehicle-marker.png'
 import ContextMenu from '@/components/mission-planning/ContextMenu.vue'
 import HomePositionSettingHelp from '@/components/mission-planning/HomePositionSettingHelp.vue'
+import MissionStatisticsPanel from '@/components/mission-planning/MissionStatistics.vue'
 import ScanDirectionDial from '@/components/mission-planning/ScanDirectionDial.vue'
 import WaypointConfigPanel from '@/components/mission-planning/WaypointConfigPanel.vue'
 import PoiManager from '@/components/poi/PoiManager.vue'
@@ -633,8 +672,276 @@ const loading = ref(false)
 const showMissionCreationTips = ref(missionStore.showMissionCreationTips)
 const countdownToHideTips = ref<number | undefined>(undefined)
 const isSettingHomeWaypoint = ref(false)
+const liveCursorLatLng = ref<L.LatLng | null>(null)
+const liveSegmentLabel = ref<L.Marker | null>(null)
+const staticSegmentLabels = ref<L.Marker[]>([])
+const surveyEdgeLabels = ref<L.Marker[]>([])
+const liveSurveyEdgeLabel = ref<L.Marker | null>(null)
+const liveSurveyEdgeLine = ref<L.Polyline | null>(null)
+const livePathEdgeLine = ref<L.Polyline | null>(null)
+const isMissionStatisticsVisible = ref(true)
+const measureOverlay = ref<L.LayerGroup | null>(null)
+
+const addMeasure = <T extends L.Layer>(layer: T): T => {
+  if (measureOverlay.value) measureOverlay.value.addLayer(layer)
+  return layer
+}
+
+const isSurveyClosed = computed(() => {
+  const pts = surveyPolygonVertexesPositions.value
+  if (!planningMap.value || pts.length < 3) return false
+  const first = pts[0]
+  const last = pts[pts.length - 1]
+  const d = planningMap.value.distance(first, last)
+  return d <= 3 // meters (tweak if you want a larger snap tolerance)
+})
+
+const toggleMissionStatistics = (): void => {
+  isMissionStatisticsVisible.value = !isMissionStatisticsVisible.value
+}
 
 let setHomeOnFirstClick: ((e: L.LeafletMouseEvent) => void) | null = null
+
+const getPathColor = (): string => {
+  // Use the mission polyline color if set, else Leaflet's default blue
+  return (missionWaypointsPolyline.value?.options.color as string) || '#3388ff'
+}
+
+const getPolygonColor = (): string => {
+  return (surveyPolygonLayer.value?.options.color as string) || '#3B82F6'
+}
+
+const formatMeters = (m: number): string => {
+  if (m < 1) return `${(m * 1000).toFixed(0)} mm`
+  if (m < 1000) return `${m.toFixed(0)} m`
+  return `${(m / 1000).toFixed(2)} km`
+}
+
+const makeTagIcon = (text: string, bg: string, angleDeg: number): L.DivIcon => {
+  const html = `
+    <div class="measure-tag"
+         style="background:${bg};
+                transform: translate(-50%, -50%) rotate(${angleDeg}deg);">
+      ${text}
+    </div>
+  `
+  return L.divIcon({
+    html,
+    className: 'measure-tag-icon', // we’ll zero this box out in CSS
+    iconSize: [0, 0], // <- critical: container has no size
+    iconAnchor: [0, 0],
+  })
+}
+
+const placeOrUpdateMarker = (
+  marker: L.Marker | null,
+  latlng: L.LatLng,
+  text: string,
+  bg: string,
+  angleDeg: number
+): L.Marker => {
+  const icon = makeTagIcon(text, bg, angleDeg)
+  if (marker) {
+    marker.setLatLng(latlng)
+    marker.setIcon(icon)
+    return marker
+  }
+  // add to the overlay, not directly to the map
+  return addMeasure(
+    L.marker(latlng, {
+      icon,
+      pane: 'markerPane',
+      interactive: false,
+      zIndexOffset: 1000,
+    })
+  )
+}
+
+// CHANGED: now also manages a dashed line while creating a simple path
+const updateLiveSegmentLabel = (): void => {
+  if (!planningMap.value) return
+
+  // not creating a simple path → remove live label + line
+  if (!isCreatingSimplePath.value) {
+    // CHANGED
+    if (liveSegmentLabel.value) {
+      planningMap.value.removeLayer(liveSegmentLabel.value)
+      liveSegmentLabel.value = null
+    }
+    if (livePathEdgeLine.value) {
+      // ADDED
+      planningMap.value.removeLayer(livePathEdgeLine.value) // ADDED
+      livePathEdgeLine.value = null // ADDED
+    }
+    return
+  }
+
+  const wps = missionStore.currentPlanningWaypoints
+  if (!liveCursorLatLng.value || wps.length === 0) {
+    if (liveSegmentLabel.value) {
+      planningMap.value.removeLayer(liveSegmentLabel.value)
+      liveSegmentLabel.value = null
+    }
+    if (livePathEdgeLine.value) {
+      // ADDED
+      planningMap.value.removeLayer(livePathEdgeLine.value) // ADDED
+      livePathEdgeLine.value = null // ADDED
+    }
+    return
+  }
+
+  const last = wps[wps.length - 1].coordinates
+  const a = L.latLng(last[0], last[1])
+  const b = liveCursorLatLng.value
+  const mid = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
+  const dist = planningMap.value.distance(a, b)
+  const text = formatMeters(dist)
+  const color = getPathColor()
+  const angle = uprightAngle(segmentAngleDeg(a, b)) // stays heads‑up
+
+  // pill
+  liveSegmentLabel.value = placeOrUpdateMarker(liveSegmentLabel.value, mid, text, color, angle)
+
+  // ADDED: dashed live line
+  if (livePathEdgeLine.value) {
+    livePathEdgeLine.value.setLatLngs([a, b])
+    livePathEdgeLine.value.setStyle({ color, opacity: 0.9 })
+  } else {
+    livePathEdgeLine.value = L.polyline([a, b], {
+      color,
+      weight: 2,
+      opacity: 0.9,
+      dashArray: '8 8',
+      className: 'simplepath-live-edge',
+    }).addTo(planningMap.value!)
+  }
+}
+
+const clearStaticSegmentLabels = (): void => {
+  if (!planningMap.value) return
+  staticSegmentLabels.value.forEach((m) => planningMap.value!.removeLayer(m))
+  staticSegmentLabels.value = []
+}
+
+const rebuildStaticSegmentLabels = (): void => {
+  if (!planningMap.value) return
+  clearStaticSegmentLabels()
+  const wps = missionStore.currentPlanningWaypoints
+  if (wps.length < 2) return
+
+  const color = getPathColor()
+  for (let i = 0; i < wps.length - 1; i++) {
+    const a = L.latLng(wps[i].coordinates[0], wps[i].coordinates[1])
+    const b = L.latLng(wps[i + 1].coordinates[0], wps[i + 1].coordinates[1])
+    const mid = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
+    const dist = planningMap.value.distance(a, b)
+    const text = formatMeters(dist)
+    const angle = uprightAngle(segmentAngleDeg(a, b)) // was: const angle = segmentAngleDeg(a, b)
+    const marker = placeOrUpdateMarker(null, mid, text, color, angle)
+    staticSegmentLabels.value.push(marker)
+  }
+}
+
+const segmentAngleDeg = (a: L.LatLng, b: L.LatLng): number => {
+  if (!planningMap.value) return 0
+  const pa = planningMap.value.latLngToLayerPoint(a)
+  const pb = planningMap.value.latLngToLayerPoint(b)
+  return (Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180) / Math.PI
+}
+
+const uprightAngle = (deg: number): number => {
+  let a = ((deg % 360) + 360) % 360 // 0..359
+  if (a > 90 && a <= 270) a -= 180 // flip to keep within [-90, 90]
+  return a
+}
+
+const clearSurveyEdgeLabels = (): void => {
+  if (!planningMap.value) return
+  surveyEdgeLabels.value.forEach((m) => planningMap.value!.removeLayer(m))
+  surveyEdgeLabels.value = []
+}
+
+// ADDED: rebuild static edge labels for current polygon
+const rebuildSurveyEdgeLabels = (): void => {
+  if (!planningMap.value || surveyPolygonVertexesPositions.value.length < 2) {
+    clearSurveyEdgeLabels()
+    return
+  }
+  clearSurveyEdgeLabels()
+  const color = getPolygonColor()
+  const pts = surveyPolygonVertexesPositions.value
+  const n = pts.length
+  for (let i = 0; i < n; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % n]
+    const mid = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
+    const dist = planningMap.value.distance(a, b)
+    const text = formatMeters(dist)
+    const angle = uprightAngle(segmentAngleDeg(a, b))
+    const m = addMeasure(
+      L.marker(mid, {
+        icon: makeTagIcon(text, color, angle),
+        pane: 'markerPane',
+        interactive: false,
+        zIndexOffset: 1000,
+      })
+    )
+    surveyEdgeLabels.value.push(m)
+  }
+}
+
+// CHANGED: also draw/remove the live edge line; suppress when polygon is closed
+const updateLiveSurveyEdgeLabel = (): void => {
+  if (!planningMap.value || !isCreatingSurvey.value) return
+
+  const pts = surveyPolygonVertexesPositions.value
+  const hasCursor = !!liveCursorLatLng.value
+
+  // If polygon is closed or we don't have a cursor, remove both live label and line
+  if (isSurveyClosed.value || pts.length === 0 || !hasCursor) {
+    if (liveSurveyEdgeLabel.value) {
+      planningMap.value.removeLayer(liveSurveyEdgeLabel.value)
+      liveSurveyEdgeLabel.value = null
+    }
+    if (liveSurveyEdgeLine.value) {
+      planningMap.value.removeLayer(liveSurveyEdgeLine.value) // ADDED
+      liveSurveyEdgeLine.value = null // ADDED
+    }
+    return
+  }
+
+  const a = pts[pts.length - 1]
+  const b = liveCursorLatLng.value!
+  const mid = L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
+  const dist = planningMap.value.distance(a, b)
+  const text = formatMeters(dist)
+  const color = getPolygonColor()
+  const angle = uprightAngle(segmentAngleDeg(a, b))
+
+  const icon = makeTagIcon(text, color, angle)
+  if (liveSurveyEdgeLabel.value) {
+    liveSurveyEdgeLabel.value.setLatLng(mid)
+    liveSurveyEdgeLabel.value.setIcon(icon)
+  } else {
+    liveSurveyEdgeLabel.value = L.marker(mid, { icon, interactive: false, zIndexOffset: 1000 }).addTo(
+      planningMap.value!
+    )
+  }
+
+  // ADDED: live polyline from last vertex to cursor
+  if (liveSurveyEdgeLine.value) {
+    liveSurveyEdgeLine.value.setLatLngs([a, b])
+    liveSurveyEdgeLine.value.setStyle({ color, opacity: 0.9 })
+  } else {
+    liveSurveyEdgeLine.value = L.polyline([a, b], {
+      color,
+      weight: 2,
+      opacity: 0.9,
+      dashArray: '8 8',
+      className: 'survey-live-edge',
+    }).addTo(planningMap.value!)
+  }
+}
 
 watch(showMissionCreationTips, (newVal) => {
   if (!newVal) {
@@ -820,6 +1127,8 @@ const onPolygonMouseMove = (event: L.LeafletMouseEvent): void => {
   updateSurveyEdgeAddMarkers()
   createSurveyPath()
   updateConfirmButtonPosition()
+  rebuildSurveyEdgeLabels() // ADDED
+  updateLiveSurveyEdgeLabel() // ADDED
 
   L.DomEvent.stopPropagation(event.originalEvent)
   L.DomEvent.preventDefault(event.originalEvent)
@@ -874,6 +1183,16 @@ const setHomePosition = async (): Promise<void> => {
 const toggleSimplePath = (): void => {
   if (isCreatingSimplePath.value) {
     isCreatingSimplePath.value = false
+    // clear live pill
+    if (liveSegmentLabel.value && planningMap.value) {
+      planningMap.value.removeLayer(liveSegmentLabel.value)
+      liveSegmentLabel.value = null
+    }
+    // ADDED: clear live dashed line
+    if (livePathEdgeLine.value && planningMap.value) {
+      planningMap.value.removeLayer(livePathEdgeLine.value)
+      livePathEdgeLine.value = null
+    }
     return
   }
   isCreatingSimplePath.value = true
@@ -887,6 +1206,16 @@ const toggleSurvey = (): void => {
     isCreatingSurvey.value = false
     lastSurveyState.value = {}
     canUndo.value = {}
+    clearSurveyEdgeLabels() // ADDED
+    if (liveSurveyEdgeLabel.value && planningMap.value) {
+      planningMap.value.removeLayer(liveSurveyEdgeLabel.value)
+      liveSurveyEdgeLabel.value = null
+    }
+    if (liveSurveyEdgeLine.value && planningMap.value) {
+      // ADDED
+      planningMap.value.removeLayer(liveSurveyEdgeLine.value)
+      liveSurveyEdgeLine.value = null
+    }
     return
   }
   isCreatingSurvey.value = true
@@ -1200,6 +1529,14 @@ watch(zoom, (newZoom, oldZoom) => {
   planningMap.value?.setZoom(zoom.value)
 })
 
+watch(
+  surveys,
+  (list) => {
+    ;(missionStore as any).surveys = list // ADDED
+  },
+  { deep: true, immediate: true } // ADDED
+)
+
 const addWaypoint = (
   coordinates: WaypointCoordinates,
   altitude: number,
@@ -1379,6 +1716,17 @@ const clearSurveyPath = (): void => {
   surveyEdgeAddMarkers.forEach((marker) => marker.remove())
   surveyPolygonVertexesMarkers.value = []
   surveyPolygonVertexesPositions.value = []
+  clearSurveyEdgeLabels() // ADDED
+  if (liveSurveyEdgeLabel.value) {
+    // ADDED
+    planningMap.value?.removeLayer(liveSurveyEdgeLabel.value)
+    liveSurveyEdgeLabel.value = null
+  }
+  if (liveSurveyEdgeLine.value) {
+    // ADDED
+    planningMap.value?.removeLayer(liveSurveyEdgeLine.value)
+    liveSurveyEdgeLine.value = null
+  }
 }
 
 watch([isCreatingSurvey, isCreatingSimplePath], (isCreatingNow) => {
@@ -1445,10 +1793,11 @@ const updatePolygon = (): void => {
       weight: 3,
       className: 'survey-polygon',
     }).addTo(toRaw(planningMap.value)!)
-
     enablePolygonDragging()
   }
   updateSurveyMarkersPositions()
+  rebuildSurveyEdgeLabels() // ADDED
+  updateLiveSurveyEdgeLabel() // ADDED (so it re-anchors properly)
 }
 
 const checkAndRemoveSurveyPath = (): void => {
@@ -1565,6 +1914,8 @@ const addSurveyPoint = (latlng: L.LatLng, edgeIndex: number | undefined = undefi
     () => {
       updatePolygon()
       createSurveyPath()
+      rebuildSurveyEdgeLabels() // ADDED
+      updateLiveSurveyEdgeLabel() // ADDED
     }
   ).addTo(toRaw(planningMap.value)!)
 
@@ -2133,6 +2484,18 @@ onMounted(async () => {
   }).addTo(planningMap.value)
   planningMap.value.zoomControl.setPosition('bottomright')
 
+  planningMap.value.on('mousemove', (e: L.LeafletMouseEvent) => {
+    liveCursorLatLng.value = e.latlng
+    if (isCreatingSimplePath.value) updateLiveSegmentLabel()
+    if (isCreatingSurvey.value) updateLiveSurveyEdgeLabel()
+  })
+
+  planningMap.value.on('mouseout', () => {
+    liveCursorLatLng.value = null
+    updateLiveSegmentLabel()
+    updateLiveSurveyEdgeLabel()
+  })
+
   planningMap.value.on('moveend', () => {
     if (planningMap.value === undefined) return
     let { lat, lng } = planningMap.value.getCenter()
@@ -2163,12 +2526,17 @@ onMounted(async () => {
 
   const layerControl = L.control.layers(baseMaps)
   planningMap.value.addControl(layerControl)
-
+  measureOverlay.value = L.layerGroup().addTo(planningMap.value!)
   targetFollower.enableAutoUpdate()
   missionStore.clearMission()
 
   if (instanceOfCockpitMission(missionStore.draftMission)) {
     loadDraftMission(missionStore.draftMission)
+  }
+
+  if (planningMap.value) {
+    if (liveSegmentLabel.value) planningMap.value.removeLayer(liveSegmentLabel.value)
+    clearStaticSegmentLabels()
   }
 })
 
@@ -2290,6 +2658,8 @@ watch(missionStore.currentPlanningWaypoints, (newWaypoints) => {
     missionWaypointsPolyline.value = L.polyline(newWaypoints.map((w) => w.coordinates)).addTo(planningMap.value)
   }
   missionWaypointsPolyline.value.setLatLngs(newWaypoints.map((w) => w.coordinates))
+  rebuildStaticSegmentLabels()
+  updateLiveSegmentLabel()
 })
 
 // Try to update map center position based on browser geolocation
@@ -2340,6 +2710,12 @@ watch(
     planningMap.value.setView(newCenter as LatLngTuple, currentZoom, { animate: true })
   }
 )
+
+watch(isMissionStatisticsVisible, (show) => {
+  if (!planningMap.value || !measureOverlay.value) return
+  if (show) measureOverlay.value.addTo(planningMap.value)
+  else measureOverlay.value.removeFrom(planningMap.value)
+})
 
 const centerHomeButtonTooltipText = computed(() => {
   if (home.value === undefined) {
@@ -2528,6 +2904,26 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.leaflet-marker-icon.measure-tag-icon {
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent;
+  border: 0;
+}
+.measure-tag {
+  display: inline-block;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  transform-origin: 50% 50%; /* <- important when we rotate */
 }
 .marker-icon {
   background-color: #1e498f;
