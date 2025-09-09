@@ -620,7 +620,7 @@ watch(
       )
 
       const markerTooltip = L.tooltip({
-        content: idx.toString(),
+        content: (idx + 1).toString(),
         permanent: true,
         direction: 'center',
         className: 'waypoint-tooltip',
