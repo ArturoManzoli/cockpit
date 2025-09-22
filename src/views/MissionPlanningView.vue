@@ -729,6 +729,12 @@ const nearMissionPathTolerance = 16 // in pixels
 let mapActionsOverlayEl: HTMLDivElement | null = null
 let mapActionsKnobEl: HTMLDivElement | null = null
 let mapActionsKnobSegmentIndex: number | null = null
+const isCtrlDown = ref(false)
+const isShiftDown = ref(false)
+const cursorLivePositionX = ref(0)
+const cursorLivePositionY = ref(0)
+const cursorSymbol = computed(() => (isCtrlDown.value ? '+' : isShiftDown.value ? '−' : ''))
+const showCursorDeco = computed(() => isCtrlDown.value || isShiftDown.value)
 
 const clearLiveMeasure = (): void => {
   destroyMeasureOverlay(planningMap.value || undefined)
@@ -846,6 +852,7 @@ const toggleMissionStatistics = (): void => {
   isMissionStatisticsVisible.value = !isMissionStatisticsVisible.value
 }
 
+let cursorDecoEl: HTMLDivElement | null = null
 let setHomeOnFirstClick: ((e: L.LeafletMouseEvent) => void) | null = null
 
 watch(showMissionCreationTips, (newVal) => {
@@ -1040,6 +1047,85 @@ const createSurveyAreaLabel = (surveyId: string, coords: [number, number][]): vo
   addAreaToMeasureLayer(marker)
   surveyAreaMarkers.value[surveyId] = marker
   setSurveyAreaSquareMeters(surveyId, m2)
+}
+
+const setMapCursor = (): void => {
+  const map = planningMap.value as any
+  const el: HTMLElement | null = map && typeof map.getContainer === 'function' ? map.getContainer() : null
+  if (!el) return
+
+  // when setting home, keep the special cursor
+  if (isSettingHomeWaypoint.value) return
+
+  if (isCtrlDown.value || isShiftDown.value) {
+    el.style.cursor = 'pointer'
+    return
+  }
+  if (isCreatingSurvey.value || isCreatingSimplePath.value) {
+    el.style.cursor = 'crosshair'
+  } else {
+    el.style.cursor = ''
+  }
+}
+
+const ensureCursorDeco = (): void => {
+  if (!planningMap.value) return
+  ensureMapActionsOverlay(planningMap.value)
+  if (cursorDecoEl) return
+
+  cursorDecoEl = document.createElement('div')
+  cursorDecoEl.style.position = 'absolute'
+  cursorDecoEl.style.transform = 'translate(15px, 15px)'
+  cursorDecoEl.style.pointerEvents = 'none'
+  cursorDecoEl.style.zIndex = '650'
+  cursorDecoEl.style.fontSize = '18px'
+  cursorDecoEl.style.fontWeight = '700'
+  cursorDecoEl.style.color = 'white'
+  cursorDecoEl.style.textShadow = '0 0 3px white'
+  cursorDecoEl.style.display = 'none'
+  mapActionsOverlayEl!.appendChild(cursorDecoEl)
+}
+
+const updateCursorDeco = (): void => {
+  if (!planningMap.value) return
+  ensureCursorDeco()
+  if (!cursorDecoEl) return
+
+  if (showCursorDeco.value) {
+    cursorDecoEl.textContent = cursorSymbol.value
+    cursorDecoEl.style.left = `${cursorLivePositionX.value}px`
+    cursorDecoEl.style.top = `${cursorLivePositionY.value}px`
+    cursorDecoEl.style.display = 'block'
+  } else {
+    cursorDecoEl.style.display = 'none'
+  }
+}
+
+// global key/mouse handlers
+const onGlobalKeyDown = (e: KeyboardEvent): void => {
+  if (e.ctrlKey || e.metaKey) isCtrlDown.value = true
+  if (e.shiftKey) isShiftDown.value = true
+  setMapCursor()
+  updateCursorDeco()
+}
+const onGlobalKeyUp = (e: KeyboardEvent): void => {
+  if (e.key.toLowerCase() === 'control' || e.key === 'Meta') isCtrlDown.value = e.ctrlKey || e.metaKey
+  if (e.key === 'Shift') isShiftDown.value = e.shiftKey
+  if (!e.ctrlKey && !e.metaKey) isCtrlDown.value = false
+  if (!e.shiftKey) isShiftDown.value = false
+  setMapCursor()
+  updateCursorDeco()
+}
+const onWindowBlur = (): void => {
+  isCtrlDown.value = false
+  isShiftDown.value = false
+  setMapCursor()
+  updateCursorDeco()
+}
+const onWindowMouseMove = (e: MouseEvent): void => {
+  cursorLivePositionX.value = e.clientX
+  cursorLivePositionY.value = e.clientY
+  updateCursorDeco()
 }
 
 const ensureMapActionsOverlay = (map: L.Map): void => {
@@ -2455,6 +2541,15 @@ const addWaypointMarker = (waypoint: Waypoint): void => {
   newMarker.on('click', (event: LeafletMouseEvent) => {
     L.DomEvent.stopPropagation(event)
     L.DomEvent.preventDefault(event)
+
+    const mouse = event.originalEvent as MouseEvent
+    if (mouse.shiftKey) {
+      selectedWaypoint.value = waypoint
+      removeSelectedWaypoint()
+      return
+    }
+
+    // Default: open config panel
     selectedWaypoint.value = waypoint
     selectedSurveyId.value = ''
     hideContextMenu()
@@ -2587,6 +2682,32 @@ const onMapClick = (e: L.LeafletMouseEvent): void => {
   if (ignoreNextClick) {
     ignoreNextClick = false
     return
+  }
+
+  const mouse = e.originalEvent as MouseEvent
+  if (!isCreatingSurvey.value && (mouse.ctrlKey || mouse.metaKey)) {
+    addWaypointFromClick(e.latlng)
+    return
+  }
+
+  if (mouse.shiftKey && planningMap.value) {
+    const clickPoint = planningMap.value.latLngToContainerPoint(e.latlng)
+    let targetWpId: string | null = null
+    for (const [id, marker] of Object.entries(waypointMarkers.value)) {
+      const markerPoint = planningMap.value.latLngToContainerPoint(marker.getLatLng())
+      if (clickPoint.distanceTo(markerPoint) <= nearMissionPathTolerance) {
+        targetWpId = id
+        break
+      }
+    }
+    if (targetWpId) {
+      const wp = missionStore.currentPlanningWaypoints.find((w) => w.id === targetWpId)
+      if (wp) {
+        selectedWaypoint.value = wp
+        removeSelectedWaypoint()
+      }
+      return
+    }
   }
 
   if (isCreatingSurvey.value) {
@@ -2784,6 +2905,10 @@ onMounted(async () => {
   await nextTick()
 
   planningMap.value.on('mousemove', handleMapMouseMoveNearMissionPath)
+  window.addEventListener('keydown', onGlobalKeyDown)
+  window.addEventListener('keyup', onGlobalKeyUp)
+  window.addEventListener('blur', onWindowBlur)
+  window.addEventListener('mousemove', onWindowMouseMove)
 
   planningMap.value.on('contextmenu', (e: LeafletMouseEvent) => {
     if (isCreatingSurvey.value) return
@@ -2817,6 +2942,10 @@ onUnmounted(() => {
   clearLiveMeasure()
   if (planningMap.value) {
     planningMap.value.off('mousemove', handleMapMouseMoveNearMissionPath)
+    window.removeEventListener('keydown', onGlobalKeyDown)
+    window.removeEventListener('keyup', onGlobalKeyUp)
+    window.removeEventListener('blur', onWindowBlur)
+    window.removeEventListener('mousemove', onWindowMouseMove)
   }
 })
 
@@ -2952,6 +3081,9 @@ watch(
   },
   { immediate: true, deep: true }
 )
+
+watch([isCtrlDown, isShiftDown, isCreatingSurvey, isCreatingSimplePath, isSettingHomeWaypoint], () => setMapCursor())
+watch(planningMap, () => setMapCursor())
 
 // Try to update map center position based on browser geolocation
 navigator?.geolocation?.watchPosition(
