@@ -76,9 +76,54 @@
           />
         </template>
       </v-tooltip>
+      <div
+        v-if="showButtons"
+        class="absolute bottom-button right-[208px] m-3 z-[1002] flex items-center gap-0 bg-slate-50/90 shadow-sm overflow-hidden"
+        :class="!vehicleStore.isVehicleOnline ? 'active-events-on-disabled' : ''"
+        style="border-radius: 3px"
+      >
+        <v-tooltip location="top" text="Skip to previous waypoint">
+          <template #activator="{ props: skipPrevProps }">
+            <v-btn
+              v-bind="skipPrevProps"
+              size="x-small"
+              icon="mdi-skip-previous"
+              variant="text"
+              class="text-[14px]"
+              :disabled="!canSkipPrev"
+              @click.stop="onSkip(-1)"
+            />
+          </template>
+        </v-tooltip>
+        <v-tooltip :text="playPauseTooltip">
+          <template #activator="{ props: playPauseProps }">
+            <v-btn
+              v-bind="playPauseProps"
+              size="x-small"
+              :icon="isMissionRunning ? 'mdi-pause' : 'mdi-play'"
+              variant="text"
+              class="text-[14px] border-x"
+              :disabled="!vehicleStore.isVehicleOnline"
+              @click.stop="onPlayPause"
+            />
+          </template>
+        </v-tooltip>
+        <v-tooltip location="top" text="Skip to next waypoint">
+          <template #activator="{ props: skipNextProps }">
+            <v-btn
+              v-bind="skipNextProps"
+              size="x-small"
+              icon="mdi-skip-next"
+              variant="text"
+              class="text-[14px]"
+              :disabled="!canSkipNext"
+              @click.stop="onSkip(1)"
+            />
+          </template>
+        </v-tooltip>
+      </div>
     </div>
   </div>
-
   <ContextMenu
     ref="contextMenuRef"
     :visible="contextMenuVisible"
@@ -192,6 +237,92 @@ const isPinching = ref(false)
 const isMissionChecklistOpen = ref(false)
 
 let pinchTimeout: number | undefined
+
+const currentMissionSeq = computed(() => vehicleStore.currentMissionSeq)
+
+const currentWpIndex = computed<number>(() => {
+  return (vehicleStore as any).missionCurrentSeq ?? 1
+})
+
+const totalWpCount = computed<number>(() => {
+  const fromVehicle = (vehicleStore as any).missionCount as number | undefined
+  return typeof fromVehicle === 'number' ? fromVehicle : 1 + mapWaypoints.value.length
+})
+
+const isMissionRunning = computed<boolean>(() => {
+  return Boolean((vehicleStore as any).isAutoMode ?? (vehicleStore as any).mode === 'AUTO')
+})
+const isMissionPaused = computed<boolean>(() => {
+  return Boolean((vehicleStore as any).isMissionPaused ?? false)
+})
+
+const canSkipPrev = computed<boolean>(() => vehicleStore.isVehicleOnline && currentWpIndex.value > 1)
+const canSkipNext = computed<boolean>(() => vehicleStore.isVehicleOnline && currentWpIndex.value < totalWpCount.value)
+
+const playPauseTooltip = computed(() =>
+  !vehicleStore.isVehicleOnline
+    ? 'Cannot control mission (vehicle offline).'
+    : isMissionRunning.value
+    ? 'Pause mission'
+    : 'Start / resume mission'
+)
+
+const onSkip = async (delta: number): Promise<void> => {
+  if (!vehicleStore.isVehicleOnline) return
+  const nextIdx = Math.max(1, Math.min(totalWpCount.value, currentWpIndex.value + delta))
+  if (nextIdx === currentWpIndex.value) return
+
+  try {
+    if (typeof (vehicleStore as any).setCurrentMissionItem === 'function') {
+      await (vehicleStore as any).setCurrentMissionItem(nextIdx)
+    } else if (typeof (vehicleStore as any).missionSetCurrent === 'function') {
+      await (vehicleStore as any).missionSetCurrent(nextIdx)
+    } else {
+      console.warn('No setCurrentMissionItem() available in vehicleStore')
+      openSnackbar({ message: 'Skip not supported by current backend.', variant: 'error' })
+    }
+  } catch (err) {
+    openSnackbar({ message: `Failed to skip to WP ${nextIdx}: ${(err as Error).message}`, variant: 'error' })
+  }
+}
+
+// ADDED: Play/Pause handler. Starts mission if not running; toggles pause otherwise.
+const onPlayPause = async (): Promise<void> => {
+  if (!vehicleStore.isVehicleOnline) return
+
+  try {
+    if (!isMissionRunning.value) {
+      // If your checklist is enabled, reuse your existing logic
+      await tryToStartMission() // already defined in your file
+      return
+    }
+
+    // Toggle pause/resume when already running
+    // TODO: adapt to your store API
+    if (!isMissionPaused.value) {
+      if (typeof (vehicleStore as any).pauseMission === 'function') {
+        await (vehicleStore as any).pauseMission()
+      } else {
+        console.warn('pauseMission() not available; consider switching mode or custom pause')
+        openSnackbar({ message: 'Pause not supported by current backend.', variant: 'warning' })
+      }
+    } else {
+      if (typeof (vehicleStore as any).resumeMission === 'function') {
+        await (vehicleStore as any).resumeMission()
+      } else {
+        // Fallback: re-enter AUTO if that resumes
+        if (typeof (vehicleStore as any).enterAutoMode === 'function') {
+          await (vehicleStore as any).enterAutoMode()
+        } else {
+          console.warn('resumeMission()/enterAutoMode() not available')
+          openSnackbar({ message: 'Resume not supported by current backend.', variant: 'warning' })
+        }
+      }
+    }
+  } catch (err) {
+    openSnackbar({ message: `Mission control failed: ${(err as Error).message}`, variant: 'error' })
+  }
+}
 
 const onTouchStart = (e: TouchEvent): void => {
   if (e.touches.length > 1) {
@@ -613,7 +744,7 @@ watch(
 
       marker.setIcon(
         L.divIcon({
-          className: 'marker-icon',
+          className: `${currentMissionSeq.value === idx ? 'marker-icon-active' : 'marker-icon'}`,
           iconSize: [16, 16],
           iconAnchor: [8, 8],
         })
@@ -1075,6 +1206,12 @@ watch(
 .marker-icon {
   background-color: #1e498f;
   border: 1px solid #ffffff55;
+  border-radius: 50%;
+}
+
+.marker-icon-active {
+  background-color: #898b03;
+  border: 2px solid #ffffffaa;
   border-radius: 50%;
 }
 

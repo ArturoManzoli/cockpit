@@ -85,14 +85,15 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
   _statusText = new StatusText()
   _statusGPS = new StatusGPS()
   _vehicleSpecificErrors = [0, 0, 0, 0]
-
   _messages: MAVLinkMessageDictionary = new Map()
+  _currentMissionSeq: number | undefined = undefined
 
   onIncomingMAVLinkMessage = new SignalTyped()
   onOutgoingMAVLinkMessage = new SignalTyped()
   _flying = false
 
   protected currentSystemId = 1
+  onMissionCurrent = new SignalTyped()
 
   /**
    * Create MAVLink vehicle
@@ -489,6 +490,13 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
         this._statusText.text = statusText.text.filter((char) => char.toString() !== '\u0000').join('')
         this._statusText.severity = alertLevelFromMavSeverity[statusText.severity.type]
         this.onStatusText.emit()
+        break
+      }
+
+      case MAVLinkType.MISSION_CURRENT: {
+        const msg = mavlink_message.message as Message.MissionCurrent
+        this._currentMissionSeq = msg.seq
+        this.onMissionCurrent.emit_value(MAVLinkType.MISSION_CURRENT, msg.seq)
         break
       }
 
@@ -1343,5 +1351,21 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
         createDataLakeVariable({ ...variable, persistent: false, persistValue: false })
       }
     })
+  }
+
+  /**
+   * Set mission current (jump/skip to waypoint)
+   * @param {number} seq - Mission item index to set as current
+   */
+  async setMissionCurrent(seq: number): Promise<void> {
+    await this.sendCommandLong(MavCmd.MAV_CMD_DO_SET_MISSION_CURRENT, seq)
+  }
+
+  /**
+   * Getter for current mission seq
+   * @returns {number | undefined} Current mission seq, or undefined if n/a
+   */
+  currentMissionSeq(): number | undefined {
+    return this._currentMissionSeq
   }
 }

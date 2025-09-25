@@ -134,6 +134,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const statusGPS: StatusGPS = reactive({} as StatusGPS)
   const vehicleArmingTime = ref<Date | undefined>(undefined)
   const currentVehicleName = ref<string | undefined>(undefined)
+  const currentMissionSeq = ref<number | undefined>(undefined)
 
   const mode = ref<string | undefined>(undefined)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -474,6 +475,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     icon.value = mainVehicle.value.icon()
     configurationPages.value = mainVehicle.value.configurationPages()
 
+    mainVehicle.value.onMissionCurrent.add(MAVLinkType.MISSION_CURRENT, (seq: number) => {
+      currentMissionSeq.value = seq
+    })
     mainVehicle.value.onAltitude.add((newAltitude: Altitude) => {
       Object.assign(altitude, newAltitude)
     })
@@ -848,6 +852,15 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.requestDefaultMessages()
   }
 
+  /**
+   * Sets the current mission item as active on the vehicle
+   * @param seq
+   */
+  async function setMissionCurrent(seq: number): Promise<void> {
+    if (!mainVehicle.value) throw new Error('No vehicle available to set mission current.')
+    await mainVehicle.value.setMissionCurrent(seq)
+  }
+
   return {
     arm,
     takeoff,
@@ -901,5 +914,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     resetMessageIntervalsToCockpitDefault,
     fetchHomeWaypoint,
     setHomeWaypoint,
+    setMissionCurrent,
+    currentMissionSeq,
   }
 })
