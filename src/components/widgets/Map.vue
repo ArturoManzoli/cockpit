@@ -126,6 +126,7 @@
   </div>
   <ContextMenu
     ref="contextMenuRef"
+    :key="contextMenuVersion"
     :visible="contextMenuVisible"
     :width="'260px'"
     :menu-items="menuItems"
@@ -235,6 +236,8 @@ const contextMenuRef = ref()
 const isDragging = ref(false)
 const isPinching = ref(false)
 const isMissionChecklistOpen = ref(false)
+const contextMenuSelectedWpIndex = ref<number | null>(null)
+const contextMenuVersion = ref(0)
 
 let pinchTimeout: number | undefined
 
@@ -487,7 +490,7 @@ onMounted(async () => {
 })
 
 const handleContextMenu = {
-  open: (event: MouseEvent): void => {
+  open: async (event: MouseEvent): Promise<void> => {
     if (!map.value || isPinching.value || isDragging.value) return
     event.preventDefault()
     event.stopPropagation()
@@ -496,12 +499,9 @@ const handleContextMenu = {
     const ll = map.value.containerPointToLatLng(pt)
     clickedLocation.value = [ll.lat, ll.lng]
 
-    contextMenuRef.value.openAt(event)
-    contextMenuVisible.value = true
+    await openContextMenuAt(event, null)
   },
-  close: () => {
-    hideContextMenuAndMarker()
-  },
+  close: () => hideContextMenuAndMarker(),
 }
 
 const clearMapDrawing = (): void => {
@@ -756,10 +756,39 @@ watch(
         direction: 'center',
         className: 'waypoint-tooltip',
         opacity: 1,
+        interactive: true,
       })
 
       marker.bindTooltip(markerTooltip)
       map.value?.addLayer(marker)
+
+      marker.on('contextmenu', async (e: L.LeafletMouseEvent) => {
+        if (!map.value) return
+
+        if (e.originalEvent) {
+          L.DomEvent.preventDefault(e.originalEvent)
+          L.DomEvent.stopPropagation(e.originalEvent)
+        }
+
+        clickedLocation.value = [e.latlng.lat, e.latlng.lng]
+        await openContextMenuAt(e.originalEvent as MouseEvent, idx + 1)
+      })
+
+      marker.on('add', () => {
+        const tEl = marker.getTooltip()?.getElement()
+        if (tEl) {
+          L.DomEvent.on(tEl, 'contextmenu', async (ev: Event) => {
+            if (!map.value) return
+            L.DomEvent.preventDefault(ev)
+            L.DomEvent.stopPropagation(ev)
+
+            const mouseEv = ev as MouseEvent
+            const ll = marker.getLatLng()
+            clickedLocation.value = [ll.lat, ll.lng]
+            await openContextMenuAt(mouseEv, idx + 1)
+          })
+        }
+      })
     })
   },
   { deep: true }
@@ -801,6 +830,45 @@ const menuItems = reactive([
     icon: 'mdi-map-check',
   },
 ])
+
+const updateSkipToWpMenu = (): void => {
+  const want = contextMenuSelectedWpIndex.value !== null
+  const last = menuItems[menuItems.length - 1] as any
+  const lastIsSkip = !!last && last._isSkipToWp === true
+
+  if (want && !lastIsSkip) {
+    menuItems.push({
+      item: `Skip mission to this WP (#${contextMenuSelectedWpIndex.value! - 1})`,
+      action: () => onMenuOptionSelect('skip-to-wp'),
+      icon: 'mdi-skip-next-circle',
+      _isSkipToWp: true,
+    } as any)
+  } else if (!want && lastIsSkip) {
+    menuItems.pop()
+  } else if (want && lastIsSkip) {
+    last.item = `Skip mission to this WP (#${contextMenuSelectedWpIndex.value! - 1})`
+  }
+}
+
+const openContextMenuAt = async (mouseEv: MouseEvent, wpIndex: number | null): Promise<void> => {
+  if (contextMenuVisible.value) {
+    contextMenuVisible.value = false
+    await nextTick()
+  }
+
+  contextMenuSelectedWpIndex.value = wpIndex
+  updateSkipToWpMenu()
+  contextMenuVersion.value++
+  contextMenuVisible.value = true
+  await nextTick()
+
+  if (contextMenuRef.value?.openAt) {
+    contextMenuRef.value.openAt(mouseEv)
+  } else {
+    await nextTick()
+    contextMenuRef.value?.openAt?.(mouseEv)
+  }
+}
 
 const gotoMarker = ref<L.Marker>()
 
@@ -924,6 +992,27 @@ const onMenuOptionSelect = async (option: string): Promise<void> => {
         setHomePosition(clickedLocation.value as [number, number])
       }
       break
+
+    case 'skip-to-wp': {
+      const idx = contextMenuSelectedWpIndex.value
+      if (!vehicleStore.isVehicleOnline || idx == null) {
+        openSnackbar({ message: 'Cannot skip (vehicle offline or invalid WP).', variant: 'error' })
+        break
+      }
+      try {
+        if (typeof (vehicleStore as any).setCurrentMissionItem === 'function') {
+          await (vehicleStore as any).setCurrentMissionItem(idx)
+        } else if (typeof (vehicleStore as any).missionSetCurrent === 'function') {
+          await (vehicleStore as any).missionSetCurrent(idx)
+        } else {
+          console.warn('No setCurrentMissionItem() available in vehicleStore')
+          openSnackbar({ message: 'Skip not supported by current backend.', variant: 'error' })
+        }
+      } catch (error) {
+        openSnackbar({ message: `Failed to skip to WP #${idx}: ${(error as Error).message}`, variant: 'error' })
+      }
+      break
+    }
     default:
       console.warn('Unknown menu option selected:', option)
   }
@@ -933,6 +1022,8 @@ const onMenuOptionSelect = async (option: string): Promise<void> => {
 
 const hideContextMenuAndMarker = (): void => {
   contextMenuVisible.value = false
+  contextMenuSelectedWpIndex.value = null
+  updateSkipToWpMenu()
   if (map.value !== undefined && contextMenuMarker.value !== undefined) {
     map.value.removeLayer(contextMenuMarker.value)
   }
