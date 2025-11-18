@@ -541,6 +541,12 @@ onMounted(async () => {
 
   mapReady.value = true
   await refreshMission()
+
+  // Register mission actions for map widget
+  missionStore.registerMapMissionActions({
+    downloadMissionFromVehicle,
+    clearMapDrawing,
+  })
 })
 
 const confirmDownloadDialog =
@@ -694,6 +700,12 @@ onBeforeUnmount(() => {
 
   mapBase.value?.removeEventListener('touchstart', onTouchStart)
   mapBase.value?.removeEventListener('touchend', onTouchEnd)
+
+  // Unregister mission actions for map widget
+  missionStore.registerMapMissionActions({
+    downloadMissionFromVehicle: async () => Promise.resolve(),
+    clearMapDrawing: async () => Promise.resolve(),
+  })
 })
 
 // Pan when variables change

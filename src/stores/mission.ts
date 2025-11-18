@@ -43,6 +43,8 @@ export const useMissionStore = defineStore('mission', () => {
   const showChecklistBeforeArm = useBlueOsStorage('cockpit-show-checklist-before-arm', true)
   const showGridOnMissionPlanning = useBlueOsStorage('cockpit-show-grid-on-mission-planning', false)
   const defaultCruiseSpeed = useBlueOsStorage<number>('cockpit-default-cruise-speed', 1)
+  const mapDownloadMissionFromVehicle = ref<(() => Promise<void>) | null>(null)
+  const mapClearMapDrawing = ref<(() => void) | null>(null)
 
   const { showDialog } = useInteractionDialog()
 
@@ -340,6 +342,30 @@ export const useMissionStore = defineStore('mission', () => {
     }
   }
 
+  const registerMapMissionActions = (payload: {
+    /**
+     *
+     */
+    downloadMissionFromVehicle: () => Promise<void>
+    /**
+     *
+     */
+    clearMapDrawing: () => void
+  }): void => {
+    mapDownloadMissionFromVehicle.value = payload.downloadMissionFromVehicle
+    mapClearMapDrawing.value = payload.clearMapDrawing
+  }
+
+  const callMapDownloadMissionFromVehicle = async (): Promise<void> => {
+    if (!mapDownloadMissionFromVehicle.value) return
+    await mapDownloadMissionFromVehicle.value()
+  }
+
+  const callMapClearMapDrawing = (): void => {
+    if (!mapClearMapDrawing.value) return
+    mapClearMapDrawing.value()
+  }
+
   watch(
     () => [...currentPlanningWaypoints],
     (wps) => persistDraft(wps),
@@ -390,5 +416,8 @@ export const useMissionStore = defineStore('mission', () => {
     canSkipToPrevWp,
     canSkipToNextWp,
     currentWaypointOnMission,
+    registerMapMissionActions,
+    callMapDownloadMissionFromVehicle,
+    callMapClearMapDrawing,
   }
 })
