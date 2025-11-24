@@ -2,8 +2,29 @@
   <BaseConfigurationView>
     <template #title>MAVLink configuration</template>
     <template #content>
-      <div class="max-h-[85vh] w-[710px] overflow-y-auto">
-        <ExpansiblePanel no-top-divider no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
+      <div class="max-h-[80vh] w-[710px] overflow-y-auto">
+        <ExpansiblePanel no-top-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
+          <template #title>DataLake variables creation</template>
+          <template #info>
+            <p class="max-w-[500px]">
+              Enable the creation of DataLake variables from MAVLink messages originating from systems/components other
+              than the main vehicle (System ID {{ mainVehicleStore.mainVehicle?.systemId }}, Component ID 1). When
+              enabled, variables from all MAVLink systems on the network will be available in the DataLake. When
+              disabled, only variables from the main vehicle will be created.
+            </p>
+          </template>
+          <template #content>
+            <div class="flex w-full px-2 mb-3">
+              <v-switch
+                v-model="mainVehicleStore.enableDatalakeVariablesFromOtherSystems"
+                color="white"
+                label="Enable DataLake variables from other systems"
+                hide-details
+              />
+            </div>
+          </template>
+        </ExpansiblePanel>
+        <ExpansiblePanel no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Message intervals</template>
           <template #info>
             <p class="max-w-[500px]">
@@ -197,7 +218,7 @@ import { computed, ref } from 'vue'
 
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import { MAVLinkType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
-import type { MessageIntervalOptions } from '@/libs/vehicle/ardupilot/types'
+import type { MessageIntervalOptions } from '@/libs/vehicle/mavlink/types'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 

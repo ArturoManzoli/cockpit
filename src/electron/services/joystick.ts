@@ -98,7 +98,11 @@ export const openController = (sdl: SDLModule, device: SDLControllerDevice): voi
         return
       }
 
-      checkControllerState(device.id)
+      try {
+        checkControllerState(device.id)
+      } catch (error) {
+        console.warn(`Could not check controller state for '${device.name}' with id '${device.id}'.`)
+      }
     }, stateCheckInterval)
   } catch (error) {
     console.error(`Error opening controller ${device.name}:`, error)
@@ -132,7 +136,11 @@ export const openJoystick = (sdl: SDLModule, device: SDLJoystickDevice): void =>
         return
       }
 
-      checkJoystickState(device.id)
+      try {
+        checkJoystickState(device.id)
+      } catch (error) {
+        console.warn(`Could not check joystick state for '${device.name}' with id '${device.id}'.`)
+      }
     }, stateCheckInterval)
   } catch (error) {
     console.error(`Error opening joystick ${device.name}:`, error)
@@ -195,8 +203,8 @@ export const checkControllerState = (deviceId: number): void => {
   }
 
   const state = { buttons: structuredClone(instance.buttons), axes: structuredClone(instance.axes) }
-  state.axes.leftTrigger = scale(state.axes.leftTrigger, 0.5, 1, 0, 1)
-  state.axes.rightTrigger = scale(state.axes.rightTrigger, 0.5, 1, 0, 1)
+  state.axes.leftTrigger = state.axes.leftTrigger > 0 ? scale(state.axes.leftTrigger, 0.5, 1, 0, 1) : 0
+  state.axes.rightTrigger = state.axes.rightTrigger > 0 ? scale(state.axes.rightTrigger, 0.5, 1, 0, 1) : 0
   state.buttons.extra = state.buttons[''] ?? false
   delete state.buttons['']
 
@@ -224,6 +232,30 @@ export const checkDeviceChanges = (sdl: SDLModule): void => {
         console.debug(`Opening controller '${device.name}' with id '${device.id}'...`)
         openController(sdl, device)
         console.log(`Controller '${device.name}' with id '${device.id}' opened.`)
+
+        // Log some information about the controller so we can track used controllers and easily add more to our database
+        try {
+          console.log(`Controller info:
+            name: '${device.name}'
+            id: '${device.id}'
+            vendor: '${decimalToHex(device.vendor)}'
+            product: '${decimalToHex(device.product)}'
+            version: '${device.version}'
+            player: '${device.player}'
+            path: '${device.path}'
+            mapping:
+               ${device.mapping.split(',').join('\n ' + ' '.repeat(14))}
+          `)
+          const controllerInstance = openedControllers.get(device.id) as OpenController
+          if (controllerInstance?.instance) {
+            console.log(`Controller inputs:
+              Axes: ${Object.keys(controllerInstance.instance.axes).join(', ')}
+              Buttons: ${Object.keys(controllerInstance.instance.buttons).join(', ')}
+            `)
+          }
+        } catch (error) {
+          console.error(`Error logging controller mapping for '${device.name}' with id '${device.id}':`, error)
+        }
       }
     })
   } catch (sdlError) {
@@ -247,6 +279,27 @@ export const checkDeviceChanges = (sdl: SDLModule): void => {
           console.debug(`Opening joystick '${device.name}' with id '${device.id}'...`)
           openJoystick(sdl, device)
           console.log(`Joystick '${device.name}' with id '${device.id}' opened.`)
+
+          // Log some information about the joystick so we can track used joysticks and easily add more to our database
+          try {
+            console.log(`Joystick info:
+              name: '${device.name}'
+              id: '${device.id}'
+              type: '${device.type}'
+              vendor: '${decimalToHex(device.vendor)}'
+              product: '${decimalToHex(device.product)}'
+            `)
+            const joystickInstance = openedJoysticks.get(device.id) as OpenJoystick
+            if (joystickInstance?.instance) {
+              console.log(`Joystick inputs:
+                Hats: ${joystickInstance.instance.hats.map((_, index) => index)}
+                Axes: ${Object.keys(joystickInstance.instance.axes).join(', ')}
+                Buttons: ${Object.keys(joystickInstance.instance.buttons).join(', ')}
+              `)
+            }
+          } catch (error) {
+            console.error(`Error logging joystick info for '${device.name}' with id '${device.id}':`, error)
+          }
         }
       })
   } catch (sdlError) {

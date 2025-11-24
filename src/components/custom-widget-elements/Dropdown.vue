@@ -21,10 +21,9 @@
         :min-width="miniWidget.options.layout?.width || 168"
         hide-details
         class="text-white"
-        :class="{ 'pointer-events-none': widgetStore.editingMode }"
+        :class="{ 'pointer-events-none': widgetStore.editingMode || !isInput }"
         @update:model-value="handleSelection"
       >
-        >
       </v-select>
     </div>
   </div>
@@ -33,7 +32,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 
-import { listenDataLakeVariable, setDataLakeVariableData, unlistenDataLakeVariable } from '@/libs/actions/data-lake'
+import {
+  getDataLakeVariableData,
+  listenDataLakeVariable,
+  setDataLakeVariableData,
+  unlistenDataLakeVariable,
+} from '@/libs/actions/data-lake'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import { CustomWidgetElementOptions, CustomWidgetElementType, SelectorOption } from '@/types/widgets'
 
@@ -94,23 +98,29 @@ const handleSelection = (value: string | number | boolean): void => {
   widgetStore.setMiniWidgetLastValue(miniWidget.value.hash, selected.value)
 }
 
+const isInput = computed(() => {
+  return miniWidget.value.options?.dataLakeVariable?.persistent === true
+})
+
 const startListeningDataLakeVariable = (): void => {
   if (miniWidget.value.options.dataLakeVariable) {
-    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
-      selectedValue.value = value as string
+    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.id, (value) => {
+      selectedValue.value = String(value)
     })
-    selectedValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as string
+    selectedValue.value = String(getDataLakeVariableData(miniWidget.value.options.dataLakeVariable.id))
   }
 }
 
 watch(
-  () => miniWidget.value.options.dataLakeVariable?.name,
-  (newVal) => {
-    if (newVal) {
+  () => miniWidget.value.options.dataLakeVariable?.id,
+  (newId, oldId) => {
+    if (oldId && listenerId) {
+      unlistenDataLakeVariable(oldId, listenerId)
+    }
+    if (newId) {
       startListeningDataLakeVariable()
     }
-  },
-  { immediate: true }
+  }
 )
 
 onMounted(() => {
@@ -128,17 +138,14 @@ onMounted(() => {
   }
   if (miniWidget.value.options.dataLakeVariable) {
     startListeningDataLakeVariable()
-  }
-  if (miniWidget.value.options.lastSelected?.name !== '') {
-    selectedOption.value = miniWidget.value.options.lastSelected
+  } else {
+    selectedOption.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as string
   }
 })
 
 onUnmounted(() => {
-  if (miniWidget.value.options.dataLakeVariable) {
-    if (listenerId) {
-      unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, listenerId)
-    }
+  if (miniWidget.value.options.dataLakeVariable && listenerId) {
+    unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.id, listenerId)
   }
 })
 </script>

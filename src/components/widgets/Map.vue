@@ -6,6 +6,27 @@
     :class="widgetStore.editingMode ? 'pointer-events-none' : 'pointer-events-auto'"
   >
     <div :id="mapId" ref="map" class="map">
+      <v-menu v-model="downloadMenuOpen" :close-on-content-click="false" location="top end">
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-show="showButtons"
+            v-bind="menuProps"
+            class="absolute right-[209px] m-3 bottom-button bg-slate-50 text-[14px]"
+            elevation="2"
+            size="x-small"
+            style="z-index: 1002; border-radius: 0px"
+            icon="mdi-download-multiple"
+          />
+        </template>
+
+        <v-list :style="interfaceStore.globalGlassMenuStyles" class="py-0 min-w-[220px] rounded-lg border-[1px]">
+          <v-list-item class="py-0" title="Save visible Esri tiles" @click="saveEsri" />
+          <v-divider />
+          <v-list-item class="py-0" title="Save visible OSM tiles" @click="saveOSM" />
+          <v-divider />
+          <v-list-item class="py-0" title="Save visible Seamarks tiles" @click="saveSeamarks" />
+        </v-list>
+      </v-menu>
       <v-tooltip location="top" :text="centerHomeButtonTooltipText">
         <template #activator="{ props: tooltipProps }">
           <v-btn
@@ -72,7 +93,7 @@
             style="z-index: 1002; border-radius: 0px"
             icon="mdi-play"
             size="x-small"
-            @click.stop="executeMissionOnVehicle"
+            @click.stop="tryToStartMission"
           />
         </template>
       </v-tooltip>
@@ -99,6 +120,13 @@
           :color="widget.options.showVehiclePath ? 'white' : undefined"
           hide-details
         />
+        <v-switch
+          v-model="widget.options.showCoordinateGrid"
+          class="my-1"
+          label="Show coordinate grid"
+          :color="widget.options.showCoordinateGrid ? 'white' : undefined"
+          hide-details
+        />
       </v-card-text>
     </v-card>
   </v-dialog>
@@ -121,15 +149,37 @@
   </p>
 
   <PoiManager ref="poiManagerMapWidgetRef" />
+  <MissionChecklist
+    :model-value="isMissionChecklistOpen"
+    @confirmed="executeMissionOnVehicle"
+    @update:model-value="isMissionChecklistOpen = $event"
+  />
+  <GlobalOriginDialog
+    v-model="showGlobalOriginDialog"
+    :vehicle="vehicleStore.mainVehicle as unknown as MAVLinkVehicle<string>"
+    :initial-latitude="globalOriginLatitude"
+    :initial-longitude="globalOriginLongitude"
+    @origin-set="onGlobalOriginSet"
+  />
+  <div
+    v-if="isSavingOfflineTiles"
+    class="absolute top-14 left-2 flex justify-start items-center text-white text-md py-2 px-4 rounded-lg"
+    :style="interfaceStore.globalGlassMenuStyles"
+  >
+    <p>
+      Saving offline map content
+      <span v-if="savingLayerName">({{ savingLayerName }})</span>:&nbsp;
+      {{ tilesTotal ? Math.round((tilesSaved / tilesTotal) * 100) : 0 }}%
+    </p>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { useElementHover, useRefHistory } from '@vueuse/core'
 import { formatDistanceToNow } from 'date-fns'
 import L, { type LatLngTuple, LeafletMouseEvent, Map } from 'leaflet'
+import { SaveStatus, savetiles, tileLayerOffline } from 'leaflet.offline'
 import {
-  type InstanceType,
-  type Ref,
   computed,
   nextTick,
   onBeforeMount,
@@ -137,24 +187,30 @@ import {
   onMounted,
   reactive,
   ref,
+  shallowRef,
   toRefs,
   watch,
 } from 'vue'
 
+import copterMarkerImage from '@/assets/arducopter-top-view.png'
 import blueboatMarkerImage from '@/assets/blueboat-marker.png'
 import brov2MarkerImage from '@/assets/brov2-marker.png'
 import genericVehicleMarkerImage from '@/assets/generic-vehicle-marker.png'
+import GlobalOriginDialog from '@/components/GlobalOriginDialog.vue'
+import MissionChecklist from '@/components/MissionChecklist.vue'
 import PoiManager from '@/components/poi/PoiManager.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { openSnackbar } from '@/composables/snackbar'
 import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { datalogger, DatalogVariable } from '@/libs/sensors-logging'
 import { degrees } from '@/libs/utils'
-import { TargetFollower, WhoToFollow } from '@/libs/utils-map'
+import { createGridOverlay, TargetFollower, WhoToFollow } from '@/libs/utils-map'
+import type { MAVLinkVehicle } from '@/libs/vehicle/mavlink/vehicle'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useMissionStore } from '@/stores/mission'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
+import { DialogActions } from '@/types/general'
 import type { PointOfInterest, Waypoint, WaypointCoordinates } from '@/types/mission'
 import type { Widget } from '@/types/widgets'
 
@@ -165,24 +221,46 @@ import ContextMenu from '../ContextMenu.vue'
 const props = defineProps<{ widget: Widget }>()
 const widget = toRefs(props).widget
 const interfaceStore = useAppInterfaceStore()
-const { showDialog } = useInteractionDialog()
-
+const { showDialog, closeDialog } = useInteractionDialog()
 // Instantiate the necessary stores
 const vehicleStore = useMainVehicleStore()
 const missionStore = useMissionStore()
 
 // Declare the general variables
-const map: Ref<Map | undefined> = ref()
+const map = shallowRef<Map | undefined>()
 const zoom = ref(missionStore.defaultMapZoom)
 const mapCenter = ref<WaypointCoordinates>(missionStore.defaultMapCenter)
 const home = ref()
 const mapId = computed(() => `map-${widget.value.hash}`)
-const showButtons = ref(false)
+const showButtons = computed(() => isMouseOver.value || downloadMenuOpen.value)
 const mapReady = ref(false)
 const mapWaypoints = ref<Waypoint[]>([])
 const contextMenuRef = ref()
 const isDragging = ref(false)
 const isPinching = ref(false)
+const isMissionChecklistOpen = ref(false)
+const isSavingOfflineTiles = ref(false)
+const tilesSaved = ref(0)
+const tilesTotal = ref(0)
+const savingLayerName = ref<string>('')
+let esriSaveBtn: HTMLAnchorElement | undefined
+let osmSaveBtn: HTMLAnchorElement | undefined
+let seamarksSaveBtn: HTMLAnchorElement | undefined
+const downloadMenuOpen = ref(false)
+
+const saveEsri = (): void => {
+  esriSaveBtn?.click()
+  downloadMenuOpen.value = false
+}
+const saveOSM = (): void => {
+  osmSaveBtn?.click()
+  downloadMenuOpen.value = false
+}
+const saveSeamarks = (): void => {
+  seamarksSaveBtn?.click()
+  downloadMenuOpen.value = false
+}
+
 let pinchTimeout: number | undefined
 
 const onTouchStart = (e: TouchEvent): void => {
@@ -199,8 +277,8 @@ const onTouchEnd = (e: TouchEvent): void => {
   }
 }
 
-const poiManagerMapWidgetRef = ref<InstanceType<typeof PoiManager> | null>(null)
-const mapWidgetPoiMarkers = ref<{ [id: string]: L.Marker }>({})
+const poiManagerMapWidgetRef = ref<typeof PoiManager | null>(null)
+const mapWidgetPoiMarkers = shallowRef<{ [id: string]: L.Marker }>({})
 
 // Register the usage of the coordinate variables for logging
 datalogger.registerUsage(DatalogVariable.latitude)
@@ -213,19 +291,24 @@ onBeforeMount(() => {
   if (Object.keys(widget.value.options).length === 0) {
     widget.value.options = {
       showVehiclePath: true,
+      showCoordinateGrid: false,
     }
+  }
+  // Ensure new options exist for existing widgets
+  if (widget.value.options.showCoordinateGrid === undefined) {
+    widget.value.options.showCoordinateGrid = false
   }
   targetFollower.enableAutoUpdate()
 })
 
 // Configure the available map tile providers
-const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const osm = tileLayerOffline('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 23,
   maxNativeZoom: 19,
   attribution: '© OpenStreetMap',
 })
 
-const esri = L.tileLayer(
+const esri = tileLayerOffline(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   {
     maxZoom: 23,
@@ -235,7 +318,7 @@ const esri = L.tileLayer(
 )
 
 // Overlays
-const seamarks = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+const seamarks = tileLayerOffline('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
   maxZoom: 18,
   attribution: '© OpenSeaMap contributors',
 })
@@ -266,21 +349,93 @@ const isMouseOver = useElementHover(mapBase)
 
 const zoomControl = L.control.zoom({ position: 'bottomright' })
 const layerControl = L.control.layers(baseMaps, overlays)
+const gridLayer = shallowRef<L.LayerGroup | undefined>(undefined)
 
 watch(showButtons, () => {
   if (map.value === undefined) return
   if (showButtons.value) {
     map.value.addControl(zoomControl)
     map.value.addControl(layerControl)
+    createScaleControl()
   } else {
     map.value.removeControl(zoomControl)
     map.value.removeControl(layerControl)
+    removeScaleControl()
   }
 })
 
 watch(isMouseOver, () => {
   showButtons.value = isMouseOver.value
 })
+
+// Watch for grid overlay option changes
+watch(
+  () => widget.value.options.showCoordinateGrid,
+  (show) => {
+    if (map.value === undefined) return
+    if (show) {
+      createGridOverlayLocal()
+    } else {
+      removeGridOverlayLocal()
+    }
+  }
+)
+
+// Watch for zoom/move changes to update grid and scale
+watch([zoom, mapCenter], () => {
+  if (widget.value.options.showCoordinateGrid && map.value) {
+    createGridOverlayLocal()
+  }
+  if (showButtons.value && map.value) {
+    createScaleControl()
+  }
+})
+
+// Grid overlay functions using centralized utilities
+const createGridOverlayLocal = (): void => {
+  if (!map.value) return
+
+  try {
+    gridLayer.value = createGridOverlay(map.value, gridLayer.value as L.LayerGroup)
+  } catch (error) {
+    console.error('Failed to create grid overlay:', error)
+  }
+}
+
+const removeGridOverlayLocal = (): void => {
+  if (gridLayer.value && map.value) {
+    map.value.removeLayer(gridLayer.value as L.LayerGroup)
+    gridLayer.value = undefined
+  }
+}
+
+// Standard Leaflet scale control
+const scaleControl = L.control.scale({
+  position: 'bottomright',
+  metric: true,
+  imperial: false,
+  maxWidth: 100,
+})
+
+const createScaleControl = (): void => {
+  if (!map.value) return
+
+  // Remove existing scale control
+  removeScaleControl()
+
+  // Add standard Leaflet scale control
+  scaleControl.addTo(map.value)
+}
+
+const removeScaleControl = (): void => {
+  if (map.value) {
+    try {
+      map.value.removeControl(scaleControl)
+    } catch (e) {
+      // Control might not be added yet, ignore error
+    }
+  }
+}
 
 onMounted(async () => {
   mapBase.value?.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -307,6 +462,48 @@ onMounted(async () => {
       mapCenter.value = [lat, lng]
     }
   })
+
+  // Builds map layers offline content controls
+  const saveCtlEsri = downloadOfflineMapTiles(esri, 'Esri', 19)
+  const saveCtlOSM = downloadOfflineMapTiles(osm, 'OSM', 19)
+  const saveCtlSeamarks = downloadOfflineMapTiles(seamarks, 'Seamarks', 18)
+
+  if (map.value) {
+    saveCtlEsri.addTo(map.value)
+    saveCtlOSM.addTo(map.value)
+    saveCtlSeamarks.addTo(map.value)
+  }
+
+  // Hide native UI for offline map download controls
+  const hideCtl = (ctl: any): void => {
+    const el = (ctl.getContainer?.() ?? ctl._container) as HTMLElement | undefined
+    if (!el) return
+    el.classList.add('hidden-savetiles')
+    el.style.display = 'none'
+  }
+
+  hideCtl(saveCtlEsri)
+  hideCtl(saveCtlOSM)
+  hideCtl(saveCtlSeamarks)
+
+  await nextTick()
+
+  const getBtns = (ctl: any): HTMLAnchorElement[] => {
+    const container = (ctl.getContainer?.() ?? ctl._container) as HTMLElement | undefined
+    return Array.from(container?.querySelectorAll('a') ?? []) as HTMLAnchorElement[]
+  }
+
+  const [esriSave] = getBtns(saveCtlEsri)
+  const [osmSave] = getBtns(saveCtlOSM)
+  const [seaSave] = getBtns(saveCtlSeamarks)
+
+  esriSaveBtn = esriSave
+  osmSaveBtn = osmSave
+  seamarksSaveBtn = seaSave
+
+  attachOfflineProgress(esri, 'Esri')
+  attachOfflineProgress(osm, 'OSM')
+  attachOfflineProgress(seamarks, 'Seamarks')
 
   map.value.on('dragstart', () => {
     isDragging.value = true
@@ -343,9 +540,94 @@ onMounted(async () => {
     drawMission(missionStore.vehicleMission)
   }
 
+  // Initialize grid overlay if enabled
+  if (widget.value.options.showCoordinateGrid) {
+    createGridOverlayLocal()
+  }
+
   mapReady.value = true
   await refreshMission()
 })
+
+const confirmDownloadDialog =
+  (layerLabel: string) =>
+  (status: SaveStatus, ok: () => void): void => {
+    showDialog({
+      variant: 'info',
+      message: `Save ${status._tilesforSave.length} ${layerLabel} tiles for offline use?`,
+      persistent: false,
+      maxWidth: '450px',
+      actions: [
+        { text: 'Cancel', color: 'white', action: closeDialog },
+        {
+          text: 'Save tiles',
+          color: 'white',
+          action: () => {
+            ok()
+            closeDialog()
+          },
+        },
+      ] as DialogActions[],
+    })
+  }
+
+const deleteDownloadedTilesDialog =
+  (layerLabel: string) =>
+  (_status: SaveStatus, ok: () => void): void => {
+    showDialog({
+      variant: 'warning',
+      message: `Remove all saved ${layerLabel} tiles for this layer?`,
+      persistent: false,
+      maxWidth: '450px',
+      actions: [
+        { text: 'Cancel', color: 'white', action: closeDialog },
+        {
+          text: 'Remove tiles',
+          color: 'white',
+          action: () => {
+            ok()
+            closeDialog()
+            openSnackbar({ message: `${layerLabel} offline tiles removed`, variant: 'info', duration: 3000 })
+          },
+        },
+      ] as DialogActions[],
+    })
+  }
+
+const downloadOfflineMapTiles = (layer: any, layerLabel: string, maxZoom: number): L.Control => {
+  return savetiles(layer, {
+    saveWhatYouSee: true,
+    maxZoom,
+    alwaysDownload: false,
+    position: 'topright',
+    parallel: 20,
+    confirm: confirmDownloadDialog(layerLabel),
+    confirmRemoval: deleteDownloadedTilesDialog(layerLabel),
+    saveText: `<i class="mdi mdi-download" title="Save ${layerLabel} tiles"></i>`,
+    rmText: `<i class="mdi mdi-trash-can" title="Remove ${layerLabel} tiles"></i>`,
+  })
+}
+
+const attachOfflineProgress = (layer: any, layerName: string): void => {
+  layer.on('savestart', (e: any) => {
+    tilesSaved.value = 0
+    tilesTotal.value = e?._tilesforSave?.length ?? 0
+    savingLayerName.value = layerName
+    isSavingOfflineTiles.value = true
+    openSnackbar({ message: `Saving ${tilesTotal.value} ${layerName} tiles...`, variant: 'info', duration: 2000 })
+  })
+
+  layer.on('loadtileend', () => {
+    tilesSaved.value += 1
+    if (tilesTotal.value > 0 && tilesSaved.value >= tilesTotal.value) {
+      openSnackbar({ message: `${layerName} offline tiles saved!`, variant: 'success', duration: 3000 })
+      isSavingOfflineTiles.value = false
+      savingLayerName.value = ''
+      tilesSaved.value = 0
+      tilesTotal.value = 0
+    }
+  })
+}
 
 const handleContextMenu = {
   open: (event: MouseEvent): void => {
@@ -377,6 +659,7 @@ const clearMapDrawing = (): void => {
   missionWaypointsPolyline.value = undefined
   homeMarker.value = undefined
   gotoMarker.value = undefined
+  vehicleMarker.value = undefined
 }
 
 const refreshMission = async (): Promise<void> => {
@@ -496,7 +779,7 @@ watch([home, map], async () => {
 })
 
 // Create marker for the vehicle
-const vehicleMarker = ref<L.Marker>()
+const vehicleMarker = shallowRef<L.Marker>()
 watch(vehicleStore.coordinates, () => {
   if (!map.value || !vehiclePosition.value) return
 
@@ -507,6 +790,16 @@ watch(vehicleStore.coordinates, () => {
       vehicleIconUrl = blueboatMarkerImage
     } else if (vehicleStore.vehicleType === MavType.MAV_TYPE_SUBMARINE) {
       vehicleIconUrl = brov2MarkerImage
+    } else if (
+      [
+        MavType.MAV_TYPE_QUADROTOR,
+        MavType.MAV_TYPE_HEXAROTOR,
+        MavType.MAV_TYPE_OCTOROTOR,
+        MavType.MAV_TYPE_TRICOPTER,
+        MavType.MAV_TYPE_DODECAROTOR,
+      ].includes(vehicleStore.vehicleType)
+    ) {
+      vehicleIconUrl = copterMarkerImage
     }
 
     const vehicleMarkerIcon = L.divIcon({
@@ -555,7 +848,7 @@ watch([vehiclePosition, vehicleHeading, timeAgoSeenText, () => vehicleStore.isAr
 })
 
 // Create marker for the home position
-const homeMarker = ref<L.Marker>()
+const homeMarker = shallowRef<L.Marker>()
 watch(home, () => {
   if (map.value === undefined) return
 
@@ -587,7 +880,7 @@ watch(home, () => {
 })
 
 // Create polyline for the vehicle path
-const missionWaypointsPolyline = ref<L.Polyline>()
+const missionWaypointsPolyline = shallowRef<L.Polyline>()
 watch(
   mapWaypoints,
   (newWaypoints) => {
@@ -626,7 +919,7 @@ watch(
 )
 
 // Create polyline for the vehicle path
-const vehicleHistoryPolyline = ref<L.Polyline>()
+const vehicleHistoryPolyline = shallowRef<L.Polyline>()
 watch(vehiclePositionHistory, (newPoints) => {
   if (map.value === undefined || newPoints === undefined) return
 
@@ -641,13 +934,24 @@ watch(vehiclePositionHistory, (newPoints) => {
 // Handle context menu toggling and selection
 const contextMenuVisible = ref(false)
 const clickedLocation = ref<[number, number] | null>(null)
-const contextMenuMarker = ref<L.Marker>()
+const contextMenuMarker = shallowRef<L.Marker>()
+
+// Global origin dialog state
+const showGlobalOriginDialog = ref(false)
+const globalOriginLatitude = ref(0)
+const globalOriginLongitude = ref(0)
+const globalOriginMarker = shallowRef<L.Marker>()
 
 const menuItems = reactive([
   {
     item: 'Set home waypoint',
     action: () => onMenuOptionSelect('set-home-waypoint'),
     icon: 'mdi-home-map-marker',
+  },
+  {
+    item: 'Set Global Origin',
+    action: () => onMenuOptionSelect('set-global-origin'),
+    icon: 'mdi-crosshairs-question',
   },
   {
     item: 'Place Point of Interest',
@@ -662,7 +966,7 @@ const menuItems = reactive([
   },
 ])
 
-const gotoMarker = ref<L.Marker>()
+const gotoMarker = shallowRef<L.Marker>()
 
 const setDefaultMapPosition = async (): Promise<void> => {
   if (!map.value || !clickedLocation.value) return
@@ -784,6 +1088,15 @@ const onMenuOptionSelect = async (option: string): Promise<void> => {
         setHomePosition(clickedLocation.value as [number, number])
       }
       break
+
+    case 'set-global-origin':
+      if (clickedLocation.value) {
+        globalOriginLatitude.value = clickedLocation.value[0]
+        globalOriginLongitude.value = clickedLocation.value[1]
+        showGlobalOriginDialog.value = true
+      }
+      break
+
     default:
       console.warn('Unknown menu option selected:', option)
   }
@@ -796,6 +1109,30 @@ const hideContextMenuAndMarker = (): void => {
   if (map.value !== undefined && contextMenuMarker.value !== undefined) {
     map.value.removeLayer(contextMenuMarker.value)
   }
+}
+
+const onGlobalOriginSet = (latitude: number, longitude: number): void => {
+  if (!map.value) return
+
+  // Remove existing marker if present
+  if (globalOriginMarker.value) {
+    map.value.removeLayer(globalOriginMarker.value)
+  }
+
+  // Create a new marker with the axis-arrow icon
+  const icon = L.divIcon({ className: 'marker-icon', iconSize: [24, 24], iconAnchor: [12, 12] })
+  const marker = L.marker([latitude, longitude] as LatLngTuple, { icon }).addTo(map.value)
+
+  const globalOriginTooltip = L.tooltip({
+    content: '<i class="mdi mdi-axis-arrow text-[18px]"></i>',
+    permanent: true,
+    direction: 'center',
+    className: 'waypoint-tooltip',
+    opacity: 1,
+  })
+
+  marker.bindTooltip(globalOriginTooltip)
+  globalOriginMarker.value = marker
 }
 
 const onKeydown = (event: KeyboardEvent): void => {
@@ -857,6 +1194,15 @@ const executeMissionOnVehicle = async (): Promise<void> => {
   } catch (error) {
     openSnackbar({ message: 'Failed to start mission.', variant: 'error' })
   }
+  return
+}
+
+const tryToStartMission = async (): Promise<void> => {
+  if (missionStore.showChecklistBeforeArm) {
+    isMissionChecklistOpen.value = true
+    return
+  }
+  executeMissionOnVehicle()
 }
 
 // Set dynamic styles for correct displacement of the bottom buttons when the widget is below the bottom bar
@@ -1066,10 +1412,11 @@ watch(
   border: 1rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   color: black;
+  z-index: 100;
 }
 
-.leaflet-control-zoom {
-  bottom: v-bind('bottomButtonsDisplacement');
+.vehicle-marker {
+  z-index: 200 !important;
 }
 
 .context-menu {
@@ -1141,5 +1488,27 @@ watch(
   border: none;
   border-radius: 4px;
   padding: 5px 8px;
+}
+
+:deep(.leaflet-control-savetiles),
+:deep(.hidden-savetiles) {
+  display: none !important;
+}
+
+/* Style the standard Leaflet scale control */
+:deep(.leaflet-control-scale) {
+  position: absolute;
+  bottom: v-bind('bottomButtonsDisplacement');
+  right: 260px; /* Position to the left of the buttons */
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 1px;
+  padding: 8px 8px;
+  margin-bottom: 12px;
+  box-shadow: 0px 3px 1px -2px rgba(0, 0, 0, 0.2), 0px 2px 2px 0px rgba(0, 0, 0, 0.14),
+    0px 1px 5px 0px rgba(0, 0, 0, 0.12);
+}
+
+:deep(.leaflet-control-zoom) {
+  bottom: v-bind('bottomButtonsDisplacement');
 }
 </style>

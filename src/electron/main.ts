@@ -5,10 +5,13 @@ import { setupAutoUpdater } from './services/auto-update'
 import store from './services/config-store'
 import { setupElectronLogService } from './services/electron-log'
 import { setupJoystickMonitoring } from './services/joystick'
+import { linkService } from './services/link'
 import { setupNetworkService } from './services/network'
 import { setupResourceMonitoringService } from './services/resource-monitoring'
-import { serialService } from './services/serial'
 import { setupFilesystemStorage } from './services/storage'
+import { setupSystemInfoService } from './services/system-info'
+import { setupUserAgentService } from './services/user-agent'
+import { setupVideoRecordingService } from './services/video-recording'
 import { setupWorkspaceService } from './services/workspace'
 
 // Setup the logger service as soon as possible to avoid different behaviors across runtime
@@ -38,7 +41,7 @@ function createWindow(): void {
     y: store.get('windowBounds')?.y ?? screen.getPrimaryDisplay().bounds.y,
   })
 
-  serialService.setMainWindow(mainWindow)
+  linkService.setMainWindow(mainWindow)
 
   mainWindow.on('move', () => {
     const windowBounds = mainWindow!.getBounds()
@@ -80,8 +83,11 @@ protocol.registerSchemesAsPrivileged([
 setupFilesystemStorage()
 setupNetworkService()
 setupResourceMonitoringService()
+setupSystemInfoService()
+setupUserAgentService()
 setupWorkspaceService()
 setupJoystickMonitoring()
+setupVideoRecordingService()
 
 app.whenReady().then(async () => {
   console.log('Electron app is ready.')

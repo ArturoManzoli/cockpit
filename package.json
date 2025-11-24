@@ -18,15 +18,16 @@
     "deploy:electron:windows": "powershell -Command \"$v = ((git describe --tags --abbrev=0) -replace '^v','').Trim(); electron-builder --win --publish=never --config.extraMetadata.version=$v\"",
     "deploy:flatpak": "ELECTRON=true electron-builder --linux flatpak --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
     "dev": "vite --host",
-    "dev:electron": "ELECTRON=true vite --host",
+    "dev:electron": "cross-env ELECTRON=true vite --host",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
     "lint:fix": "eslint --fix . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
+    "postinstall": "node scripts/download-ffmpeg.js",
     "preview": "vite preview --port 5050",
     "serve": "vite preview",
     "test:ci": "vitest --coverage --run",
     "test:unit": "vitest",
     "typecheck": "vue-tsc --noEmit -p tsconfig.vitest.json --composite false",
-    "build:lib": "BUILD_MODE=library vite build"
+    "build:lib": "cross-env BUILD_MODE=library vite build"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^6.4.0",
@@ -42,6 +43,8 @@
     "@serialport/bindings-cpp": "13.0.0",
     "@turf/turf": "^7.1.0",
     "@types/hammerjs": "^2.0.45",
+    "@types/yauzl": "^2.10.3",
+    "@types/yazl": "^3.3.0",
     "@vueuse/core": "9.8.1",
     "@vueuse/math": "^10.1.2",
     "@zip.js/zip.js": "^2.7.34",
@@ -61,6 +64,7 @@
     "haversine-distance": "^1.2.1",
     "ky": "^1.2.0",
     "leaflet": "1.9.3",
+    "leaflet.offline": "^3.1.0",
     "localforage": "^1.10.0",
     "mathjs": "^13.0.3",
     "mavlink2rest-wasm": "patrickelectric/mavlink2rest-wasm#dbeaf75fbf120a49d8cc4f0b2f7ee67199fc5b28",
@@ -72,6 +76,7 @@
     "semver": "^7.5.4",
     "serialport": "^13.0.0",
     "slugify": "^1.6.6",
+    "strip-ansi": "^6.0.1",
     "sweetalert2": "^11.7.1",
     "tailwind-scrollbar-hide": "^1.1.7",
     "uuid": "^8.3.2",
@@ -83,8 +88,9 @@
     "vue3-slider": "^1.9.0",
     "vuetify": "3.7.0",
     "webfontloader": "^1.0.0",
-    "webm-duration-fix": "^1.0.4",
-    "webrtc-adapter": "^8.2.0"
+    "webrtc-adapter": "^8.2.0",
+    "yauzl": "^3.2.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.1",
@@ -105,6 +111,7 @@
     "@vue/tsconfig": "^0.1.3",
     "autoprefixer": "^10.4.13",
     "c8": "^7.11.3",
+    "cross-env": "^10.1.0",
     "dotenv": "^16.5.0",
     "electron": "^29.2.0",
     "electron-builder": "^25.1.8",
@@ -128,6 +135,9 @@
     "vue-tsc": "2.0.10",
     "vuetify-loader": "^2.0.0-alpha.0"
   },
+  "resolutions": {
+    "strip-ansi": "6.0.1"
+  },
   "prettier": {
     "semi": false,
     "singleQuote": true,
@@ -137,6 +147,15 @@
   "build": {
     "files": [
       "dist"
+    ],
+    "extraResources": [
+      {
+        "from": "binaries/ffmpeg/",
+        "to": "ffmpeg/",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "appId": "org.bluerobotics.cockpit",
     "productName": "Cockpit",

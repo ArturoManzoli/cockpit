@@ -1,9 +1,81 @@
+import { MavCmd, MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
+import { BatteryChemistry } from '@/libs/vehicle/types'
+
 /**
- * Possible types for waypoints. Usually used to decide what function should the waypoint perform.
+ * Possible types for mission commands.
  */
-export enum WaypointType {
-  PASS_BY = 'Pass by',
+export enum MissionCommandType {
+  MAVLINK_NAV_COMMAND = 'MAVLINK_NAV_COMMAND',
+  MAVLINK_NON_NAV_COMMAND = 'MAVLINK_NON_NAV_COMMAND',
 }
+
+export type MavlinkNavCommand = {
+  /**
+   * MAVLink navigation command type.
+   */
+  type: MissionCommandType.MAVLINK_NAV_COMMAND
+  /**
+   * The command to be executed by the mission.
+   */
+  command: MavCmd
+  /**
+   * The first parameter of the mission command.
+   */
+  param1: number
+  /**
+   * The second parameter of the mission command.
+   */
+  param2: number
+  /**
+   * The third parameter of the mission command.
+   */
+  param3: number
+  /**
+   * The fourth parameter of the mission command.
+   */
+  param4: number
+}
+
+export type MavlinkNonNavCommand = {
+  /**
+   * MAVLink non-navigation command type.
+   */
+  type: MissionCommandType.MAVLINK_NON_NAV_COMMAND
+  /**
+   * MAVLink non-navigation command.
+   */
+  command: MavCmd
+  /**
+   * The first parameter of the non-navigation command.
+   */
+  param1: number
+  /**
+   * The second parameter of the non-navigation command.
+   */
+  param2: number
+  /**
+   * The third parameter of the non-navigation command.
+   */
+  param3: number
+  /**
+   * The fourth parameter of the non-navigation command.
+   */
+  param4: number
+  /**
+   * The x parameter of the non-navigation command.
+   */
+  x: number
+  /**
+   * The y parameter of the non-navigation command.
+   */
+  y: number
+  /**
+   * The z parameter of the non-navigation command.
+   */
+  z: number
+}
+
+export type MissionCommand = MavlinkNavCommand | MavlinkNonNavCommand
 
 /**
  * Possible types for waypoints. Usually used to decide what function should the waypoint perform.
@@ -36,9 +108,9 @@ export type Waypoint = {
    */
   altitudeReferenceType: AltitudeReferenceType
   /**
-   * The type of the waypoint. Usually used to decide what function should the waypoint perform.
+   * The commands to be executed by the waypoint, in sequence.
    */
-  type: WaypointType
+  commands: MissionCommand[]
 }
 
 export type CockpitMission = {
@@ -58,10 +130,6 @@ export type CockpitMission = {
      * The zoom of the map when the user saved the file
      */
     zoom: number
-    /**
-     * The type to be used for the next placed waypoint
-     */
-    currentWaypointType: WaypointType
     /**
      * The altitude to be used for the next placed waypoint
      */
@@ -117,11 +185,14 @@ export type SurveyPolygon = {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const instanceOfCockpitMission = (maybeMission: any): maybeMission is CockpitMission => {
+  if (!maybeMission || typeof maybeMission !== 'object') {
+    return false
+  }
+
   const requiredKeys = ['version', 'settings', 'waypoints']
   const requiredSettingsKeys = [
     'mapCenter',
     'zoom',
-    'currentWaypointType',
     'currentWaypointAltitude',
     'currentWaypointAltitudeRefType',
     'defaultCruiseSpeed',
@@ -185,4 +256,81 @@ export interface PointOfInterest {
   color: PointOfInterestColor
   /** Timestamp of creation or last update */
   timestamp: number
+}
+
+export type ClosestSegmentInfo = {
+  /**
+   * Index of the segment in the polyline.
+   */
+  segmentIndex: number
+  /**
+   * Closest point on the segment to the mouse cursor.
+   */
+  closestPointOnSegment: L.Point
+  /**
+   * Distance from the mouse cursor to the closest point on the segment.
+   */
+  distanceInPixels: number
+}
+
+/**
+ * Interface representing a leg of a mission (a segment between two waypoints).
+ */
+export type MissionLeg = {
+  /**
+   * Distance of the leg in meters.
+   */
+  distanceMeters: number
+  /**
+   * Speed of the leg in meters per second.
+   */
+  speedMps: number
+}
+
+/**
+ * Configuration for mission estimates.
+ */
+export interface MissionEstimatesByVehicleConfig {
+  /**
+   * Vehicle type as defined in MAVLink
+   */
+  vehicleType: MavType
+  /**
+   * The legs of the mission including speed and distance between waypoints.
+   */
+  legs: MissionLeg[]
+  /**
+   * The waypoints of the mission.
+   */
+  waypoints: Waypoint[]
+  /**
+   * Indicates if the vehicle has a high drag sensor.
+   */
+  hasHighDragSensor?: boolean
+  /**
+   * The extra payload weight in kilograms.
+   */
+  extraPayloadKg?: number
+  /**
+   * The battery capacity in watt-hours.
+   */
+  batteryCapacityWh?: number
+  /**
+   * The original battery mass in kilograms.
+   */
+  batteryChemistry?: BatteryChemistry
+}
+
+/**
+ * Vehicle-specific mission estimates.
+ */
+export interface VehicleMissionEstimate {
+  /**
+   * Calculates the estimated time to complete the mission in seconds.
+   */
+  timeToCompleteMission: (inputs: MissionEstimatesByVehicleConfig) => number
+  /**
+   * Calculates the total energy consumption for the mission in watt-hours.
+   */
+  totalEnergy: (inputs: MissionEstimatesByVehicleConfig) => number
 }

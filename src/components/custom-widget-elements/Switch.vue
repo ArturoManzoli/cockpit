@@ -12,7 +12,7 @@
       v-model="switchValue"
       hide-details
       :color="miniWidget.options.layout?.color || '#FFFFFF'"
-      :class="{ 'pointer-events-none': widgetStore.editingMode }"
+      :class="{ 'pointer-events-none': widgetStore.editingMode || !isInput }"
       class="min-w-[35px]"
       @change="handleToggleAction"
     />
@@ -23,9 +23,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue'
 
 import {
+  getDataLakeVariableData,
   listenDataLakeVariable,
   setDataLakeVariableData,
   unlistenDataLakeVariable,
@@ -60,30 +61,36 @@ watch(
   { immediate: true, deep: true }
 )
 
+const isInput = computed(() => {
+  return miniWidget.value.options?.dataLakeVariable?.persistent === true
+})
+
 const startListeningDataLakeVariable = (): void => {
   if (miniWidget.value.options.dataLakeVariable) {
-    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, (value) => {
-      switchValue.value = value as boolean
+    listenerId = listenDataLakeVariable(miniWidget.value.options.dataLakeVariable.id, (value) => {
+      switchValue.value = Boolean(value)
     })
-    switchValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as boolean
+    switchValue.value = Boolean(getDataLakeVariableData(miniWidget.value.options.dataLakeVariable.id))
   }
 }
 
 watch(
-  () => miniWidget.value.options.dataLakeVariable?.name,
-  (newVal) => {
-    if (newVal) {
+  () => miniWidget.value.options.dataLakeVariable?.id,
+  (newId, oldId) => {
+    if (oldId && listenerId) {
+      unlistenDataLakeVariable(oldId, listenerId)
+    }
+    if (newId) {
       startListeningDataLakeVariable()
     }
-  },
-  { immediate: true }
+  }
 )
 
 const handleToggleAction = (): void => {
   if (widgetStore.editingMode) return
   if (miniWidget.value.options.dataLakeVariable) {
     widgetStore.setMiniWidgetLastValue(miniWidget.value.hash, switchValue.value)
-    setDataLakeVariableData(miniWidget.value.options.dataLakeVariable.name, switchValue.value)
+    setDataLakeVariableData(miniWidget.value.options.dataLakeVariable.id, switchValue.value)
   }
 }
 
@@ -104,18 +111,19 @@ onMounted(() => {
     switchValue.value = true
   }
 
-  if (miniWidget.value.options.dataLakeVariable && !miniWidget.value.options.dataLakeVariable.allowUserToChangeValue) {
-    updateDataLakeVariableInfo({ ...miniWidget.value.options.dataLakeVariable, allowUserToChangeValue: true })
+  if (miniWidget.value.options.dataLakeVariable) {
+    if (!miniWidget.value.options.dataLakeVariable.allowUserToChangeValue) {
+      updateDataLakeVariableInfo({ ...miniWidget.value.options.dataLakeVariable, allowUserToChangeValue: true })
+    }
+    startListeningDataLakeVariable()
+  } else {
+    switchValue.value = widgetStore.getMiniWidgetLastValue(miniWidget.value.hash) as boolean
   }
-
-  startListeningDataLakeVariable()
 })
 
 onUnmounted(() => {
-  if (miniWidget.value.options.dataLakeVariable) {
-    if (listenerId) {
-      unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.name, listenerId)
-    }
+  if (miniWidget.value.options.dataLakeVariable && listenerId) {
+    unlistenDataLakeVariable(miniWidget.value.options.dataLakeVariable.id, listenerId)
   }
 })
 </script>

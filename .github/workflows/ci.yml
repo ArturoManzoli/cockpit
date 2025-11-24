@@ -78,7 +78,7 @@ jobs:
           suffix: mac
           arch: arm64
           extension: dmg
-          latestMetadataName: latest-mac.yml
+          latestMetadataName: latest-mac-arm64.yml
           deployCommand: deploy:electron:mac:arm64
 
         - os: ubuntu-latest
@@ -204,26 +204,18 @@ jobs:
         run: |
           yarn ${{ matrix.deployCommand }}
 
+      - name: Rename macOS arm64 latest metadata
+        if: matrix.os == 'macos-14'
+        run: |
+          # In some environments the file may already be generated with the arm64 suffix.
+          # Only rename if the generic name exists.
+          if [ -f dist/latest-mac.yml ]; then mv dist/latest-mac.yml dist/latest-mac-arm64.yml; fi
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
           path: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
-          if-no-files-found: error
-
-      - name: Upload diff artifact (mac-only)
-        if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.zip
-          path: dist/Cockpit*.zip
-          if-no-files-found: error
-
-      - name: Upload latest metadata artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.latestMetadataName }}-${{ matrix.arch }}
-          path: dist/latest*.yml
           if-no-files-found: error
 
       - name: Upload binary release

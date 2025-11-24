@@ -2,9 +2,12 @@ coverage/
 dist/
 node_modules/
 dev-dist/
+binaries/
 
 cypress/fixtures/
 cypress/videos/
 cypress/screenshots/
 
 *.log
+
+.DS_Store

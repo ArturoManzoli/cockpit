@@ -1,7 +1,11 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <div class="main">
-    <div class="w-full h-full" v-html="compiledCode" />
+    <div
+      class="w-full h-full"
+      :style="widget.options.inheritCockpitStyles ? interfaceStore.globalGlassMenuStyles : {}"
+      v-html="compiledCode"
+    />
   </div>
   <v-dialog
     v-model="widgetStore.widgetManagerVars(widget.hash).configMenuOpen"
@@ -15,7 +19,7 @@
         <v-icon class="absolute top-[12px] right-[12px] cursor-pointer" @click="showHelp = !showHelp">
           mdi-help-circle-outline
         </v-icon>
-        <v-card-title class="w-full text-center mt-2 mb-2">DIY widget configuration</v-card-title>
+        <v-card-title class="w-full text-center mt-2">DIY widget configuration</v-card-title>
         <v-card-text class="mx-2 flex flex-col gap-y-3">
           <v-expand-transition>
             <div v-if="showHelp" class="help-panel mb-4 p-4 rounded bg-white/5">
@@ -38,26 +42,35 @@
 
           <v-expansion-panels v-model="expandedPanel" class="editors-container" multiple>
             <v-expansion-panel value="html">
-              <v-expansion-panel-title static height="36px" class="text-white/60"> HTML </v-expansion-panel-title>
+              <v-expansion-panel-title static height="30px" class="text-white/60"> HTML </v-expansion-panel-title>
               <v-expansion-panel-text eager>
                 <div ref="htmlEditorContainer" class="editor-container" :style="{ height: editorHeight }" />
               </v-expansion-panel-text>
             </v-expansion-panel>
 
             <v-expansion-panel value="js">
-              <v-expansion-panel-title static height="36px" class="text-white/60"> JS </v-expansion-panel-title>
+              <v-expansion-panel-title static height="30px" class="text-white/60"> JS </v-expansion-panel-title>
               <v-expansion-panel-text eager>
                 <div ref="jsEditorContainer" class="editor-container" :style="{ height: editorHeight }" />
               </v-expansion-panel-text>
             </v-expansion-panel>
 
             <v-expansion-panel value="css">
-              <v-expansion-panel-title static height="36px" class="text-white/60"> CSS </v-expansion-panel-title>
+              <v-expansion-panel-title static height="30px" class="text-white/60"> CSS </v-expansion-panel-title>
               <v-expansion-panel-text eager>
                 <div ref="cssEditorContainer" class="editor-container" :style="{ height: editorHeight }" />
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
+
+          <v-checkbox v-model="autoSave" label="Auto Save" density="compact" class="-mb-2" hide-details />
+          <v-checkbox
+            v-model="widget.options.inheritCockpitStyles"
+            label="Inherit Cockpit interface styles"
+            density="compact"
+            class="-mb-2"
+            hide-details
+          />
         </v-card-text>
         <v-card-actions>
           <div class="flex justify-between items-center px-4 w-full h-full">
@@ -90,9 +103,12 @@ import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, toRefs } from 'vue'
 
+import { useBlueOsStorage } from '@/composables/settingsSyncer'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import type { Widget } from '@/types/widgets'
+
+const autoSave = useBlueOsStorage('diy-widget-auto-save', false)
 
 self.MonacoEnvironment = {
   getWorker(_, label) {
@@ -143,7 +159,6 @@ const defaultOptions = {
   width: 100%;
   height: 100%;
   padding: 1rem;
-  background-color: white;
   border-radius: 10px;
   display: flex;
   align-items: center;
@@ -157,6 +172,7 @@ const defaultOptions = {
 document.addEventListener('DOMContentLoaded', () => {
   // Your code here
 });`,
+  inheritCockpitStyles: true,
 }
 
 /* eslint-disable no-useless-escape */
@@ -209,6 +225,45 @@ const addKeyboardShortcuts = (editor: monaco.editor.IStandaloneCodeEditor): void
   })
 }
 
+const addChangeListener = (editor: monaco.editor.IStandaloneCodeEditor): void => {
+  editor.onDidChangeModelContent(() => {
+    onAutoSave()
+  })
+}
+
+// Autocomplete provider for cockpit data lake variables
+monaco.languages.registerCompletionItemProvider('javascript', {
+  triggerCharacters: ['('],
+
+  provideCompletionItems: (model, position) => {
+    // Get current word and define replacement range
+    const word = model.getWordUntilPosition(position)
+    const range: monaco.IRange = {
+      startLineNumber: position.lineNumber,
+      startColumn: word.startColumn,
+      endLineNumber: position.lineNumber,
+      endColumn: word.endColumn,
+    }
+
+    // Create suggestions from cockpit data variables
+    const suggestions: monaco.languages.CompletionItem[] = Object.entries(
+      window.cockpit.getAllDataLakeVariablesInfo()
+    ).map(([key, value]) => {
+      return {
+        label: key,
+        kind: monaco.languages.CompletionItemKind.Variable,
+        documentation: `${key}: ${value} (${typeof value})`,
+        insertText: `window.cockpit.getDataLakeVariableData('${key}')`,
+        range: range,
+      }
+    })
+
+    return {
+      suggestions,
+    }
+  },
+})
+
 const initEditor = async (): Promise<void> => {
   if (htmlEditor || !htmlEditorContainer.value) return
   if (jsEditor || !jsEditorContainer.value) return
@@ -218,10 +273,24 @@ const initEditor = async (): Promise<void> => {
   jsEditor = createEditor(jsEditorContainer.value, 'javascript', widget.value.options.js || defaultOptions.js)
   cssEditor = createEditor(cssEditorContainer.value, 'css', widget.value.options.css || defaultOptions.css)
 
-  // Add keyboard shortcuts to all editors
-  if (htmlEditor) addKeyboardShortcuts(htmlEditor)
-  if (jsEditor) addKeyboardShortcuts(jsEditor)
-  if (cssEditor) addKeyboardShortcuts(cssEditor)
+  // Add keyboard shortcuts and change listener to all editors
+  if (htmlEditor) {
+    addKeyboardShortcuts(htmlEditor)
+    addChangeListener(htmlEditor)
+  }
+  if (jsEditor) {
+    addKeyboardShortcuts(jsEditor)
+    addChangeListener(jsEditor)
+  }
+  if (cssEditor) {
+    addKeyboardShortcuts(cssEditor)
+    addChangeListener(cssEditor)
+  }
+}
+
+const onAutoSave = (): void => {
+  if (!autoSave.value) return
+  applyChanges()
 }
 
 const handleDialogOpening = async (): Promise<void> => {
@@ -279,6 +348,7 @@ const finishEditor = (): void => {
 
 const closeDialog = (): void => {
   widgetStore.widgetManagerVars(widget.value.hash).configMenuOpen = false
+  if (autoSave.value) applyChanges()
   finishEditor()
 }
 
@@ -291,6 +361,7 @@ const exportConfig = (): void => {
     html: htmlEditor.getValue(),
     css: cssEditor.getValue(),
     js: jsEditor.getValue(),
+    inheritCockpitStyles: widget.value.options.inheritCockpitStyles || false,
   }
 
   // Create file content as JSON string
@@ -342,6 +413,9 @@ const importConfig = (): void => {
         if (htmlEditor) htmlEditor.setValue(config.html)
         if (cssEditor) cssEditor.setValue(config.css)
         if (jsEditor) jsEditor.setValue(config.js)
+
+        // Update the inheritCockpitStyles option if present (defaults to false for backwards compatibility)
+        widget.value.options.inheritCockpitStyles = config.inheritCockpitStyles || false
 
         // Apply changes
         applyChanges()

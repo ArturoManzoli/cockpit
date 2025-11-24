@@ -2,7 +2,7 @@
   <BaseConfigurationView>
     <template #title>Data Lake</template>
     <template #content>
-      <div class="flex-col overflow-y-auto ml-[10px] pr-3 -mr-[10px] -mb-[10px] max-h-[80vh]">
+      <div class="flex-col overflow-y-auto ml-[10px] pr-3 -mr-[10px] -mb-[10px] max-h-[80vh] w-[1200px]">
         <ExpansiblePanel no-top-divider no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Variables monitor</template>
           <template #info>
@@ -69,7 +69,14 @@
                           </div>
                         </button>
 
-                        <p class="w-[180px] whitespace-nowrap overflow-hidden text-ellipsis">{{ item.name }}</p>
+                        <v-tooltip location="top">
+                          <template #activator="{ props: tooltipProps }">
+                            <div v-bind="tooltipProps" class="w-[440px]">
+                              <ScrollingText :text="item.name" max-width="440px" align="left" :pause-on-hover="false" />
+                            </div>
+                          </template>
+                          <span>{{ item.name }}</span>
+                        </v-tooltip>
                       </div>
                     </td>
                     <td>
@@ -153,11 +160,12 @@
 </template>
 
 <script setup lang="ts">
-import Fuse from 'fuse.js'
+import { useThrottle } from '@vueuse/core'
 import { computed, onBeforeMount, onUnmounted, ref, watch } from 'vue'
 
 import DataLakeVariableDialog from '@/components/DataLakeVariableDialog.vue'
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
+import ScrollingText from '@/components/ScrollingText.vue'
 import TransformingFunctionDialog from '@/components/TransformingFunctionDialog.vue'
 import { openSnackbar } from '@/composables/snackbar'
 import {
@@ -287,9 +295,10 @@ const getVariableSource = (id: string): VariableSource => {
   return 'Cockpit internal'
 }
 
+const throttledSearchQuery = useThrottle(searchQuery, 300, true, true)
+
 /**
  * Computed property that returns filtered variables based on the search query
- * Uses Fuse.js for fuzzy search on variable names and descriptions
  */
 const filteredVariables = computed<DataLakeVariableWithSource[]>(() => {
   const variables = availableDataLakeVariables.value.map((v) => ({
@@ -297,13 +306,16 @@ const filteredVariables = computed<DataLakeVariableWithSource[]>(() => {
     source: getVariableSource(v.id),
   }))
 
-  if (!searchQuery.value) return variables
+  if (!throttledSearchQuery.value) return variables
 
-  const fuse = new Fuse<DataLakeVariableWithSource>(variables, {
-    keys: ['name', 'description', 'id', 'source'],
-    threshold: 0.3,
+  return variables.filter((v) => {
+    return (
+      v.name.toLowerCase().includes(throttledSearchQuery.value.toLowerCase()) ||
+      (v.description && v.description.toLowerCase().includes(throttledSearchQuery.value.toLowerCase())) ||
+      v.id.toLowerCase().includes(throttledSearchQuery.value.toLowerCase()) ||
+      v.source.toLowerCase().includes(throttledSearchQuery.value.toLowerCase())
+    )
   })
-  return fuse.search(searchQuery.value).map((result) => result.item)
 })
 
 // Do not listen to variables that are not in the list, so we don't use unnecessary CPU/Memory resources
@@ -382,7 +394,7 @@ const isCompoundVariable = (id: string): boolean => {
 }
 
 const isUserDefinedVariable = (id: string): boolean => {
-  return availableDataLakeVariables.value.find((v) => v.id === id)?.persistent ?? false
+  return availableDataLakeVariables.value.find((v) => v.id === id)?.persistent != null
 }
 
 const editCompoundVariable = (id: string): void => {

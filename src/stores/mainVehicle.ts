@@ -1,18 +1,21 @@
 import { useStorage, useTimestamp } from '@vueuse/core'
+import { useThrottleFn } from '@vueuse/core'
 import { differenceInSeconds } from 'date-fns'
 import { defineStore } from 'pinia'
 import { v4 as uuid } from 'uuid'
 import { computed, reactive, ref, watch } from 'vue'
 
-import { defaultGlobalAddress } from '@/assets/defaults'
+import { defaultGlobalAddress, defaultVehicleBatteryPack } from '@/assets/defaults'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
 import { useSnackbar } from '@/composables/snackbar'
 import { getAllDataLakeVariablesInfo, getDataLakeVariableInfo, setDataLakeVariableData } from '@/libs/actions/data-lake'
 import { createDataLakeVariable } from '@/libs/actions/data-lake'
 import { altitude_setpoint } from '@/libs/altitude-slider'
 import {
+  getCpusInfo,
   getCpuTempCelsius,
   getKeyDataFromCockpitVehicleStorage,
+  getNetworkInfo,
   getStatus,
   getVehicleName,
   setKeyDataOnCockpitVehicleStorage,
@@ -27,19 +30,21 @@ import { availableCockpitActions, registerActionCallback } from '@/libs/joystick
 import { MavlinkManualControlManager } from '@/libs/joystick/protocols/mavlink-manual-control'
 import { canByPassCategory, EventCategory, slideToConfirm } from '@/libs/slide-to-confirm'
 import type { ArduPilot } from '@/libs/vehicle/ardupilot/ardupilot'
-import { MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY } from '@/libs/vehicle/ardupilot/ardupilot'
 import { CustomMode } from '@/libs/vehicle/ardupilot/ardurover'
-import { defaultMessageIntervalsOptions } from '@/libs/vehicle/ardupilot/defaults'
-import type { ArduPilotParameterSetData, MessageIntervalOptions } from '@/libs/vehicle/ardupilot/types'
+import { defaultMessageIntervalsOptions } from '@/libs/vehicle/mavlink/defaults'
+import type { MAVLinkParameterSetData, MessageIntervalOptions } from '@/libs/vehicle/mavlink/types'
+import { MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY } from '@/libs/vehicle/mavlink/vehicle'
 import * as Protocol from '@/libs/vehicle/protocol/protocol'
 import type {
   Altitude,
   Attitude,
+  BatteryChemistry,
   PageDescription,
   PowerSupply,
   StatusGPS,
   StatusText,
   VehicleConfigurationSettings,
+  VehiclePayloadParameters,
   Velocity,
 } from '@/libs/vehicle/types'
 import { Coordinates } from '@/libs/vehicle/types'
@@ -132,6 +137,19 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const statusGPS: StatusGPS = reactive({} as StatusGPS)
   const vehicleArmingTime = ref<Date | undefined>(undefined)
   const currentVehicleName = ref<string | undefined>(undefined)
+  const vehiclePositionMaxSampleRate = useStorage('cockpit-vehicle-position-max-sampling-ms', 200) // Limits the frequency of vehicle position updates
+
+  const defaultVehiclePayload: VehiclePayloadParameters = {
+    extraPayloadKg: 0,
+    batteryCapacity: defaultVehicleBatteryPack[vehicleType.value || MavType.MAV_TYPE_GENERIC],
+    batteryChemistry: 'li-ion' as BatteryChemistry,
+    hasHighDragSensor: false,
+  }
+
+  const vehiclePayloadParameters = useBlueOsStorage<VehiclePayloadParameters>(
+    'cockpit-vehicle-payload',
+    defaultVehiclePayload
+  )
 
   const mode = ref<string | undefined>(undefined)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,6 +159,12 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const mavlinkMessageIntervalOptions = useBlueOsStorage(
     MAVLINK_MESSAGE_INTERVALS_STORAGE_KEY,
     defaultMessageIntervalsOptions
+  )
+
+  // Store setting to enable/disable creation of datalake variables from other MAVLink systems
+  const enableDatalakeVariablesFromOtherSystems = useBlueOsStorage(
+    'cockpit-enable-datalake-variables-from-other-systems',
+    false
   )
 
   const MAVLink2RestWebsocketURI = computed(() => {
@@ -154,7 +178,12 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const webRTCSignallingURI = computed(() => {
     const queryWebRTCSignallingURI = new URLSearchParams(window.location.search).get('webRTCSignallingURI')
     const customURI = customWebRTCSignallingURI.value.enabled ? customWebRTCSignallingURI.value.data : undefined
-    return new Connection.URI(queryWebRTCSignallingURI ?? customURI ?? defaultWebRTCSignallingURI.value)
+    try {
+      return new Connection.URI(queryWebRTCSignallingURI ?? customURI ?? defaultWebRTCSignallingURI.value)
+    } catch (error) {
+      console.error('Failed to create WebRTC Signalling URI.', error)
+      return undefined
+    }
   })
 
   /**
@@ -168,6 +197,11 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   watch(isVehicleOnline, (isOnline) => {
     if (isOnline) return
     currentlyConnectedVehicleId.value = undefined
+  })
+
+  watch(enableDatalakeVariablesFromOtherSystems, (newValue) => {
+    if (!mainVehicle.value) return
+    mainVehicle.value.shouldCreateDatalakeVariablesFromOtherSystems = newValue
   })
 
   watch(
@@ -351,7 +385,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
    */
   function configure(settings: VehicleConfigurationSettings): void {
     if (mainVehicle.value?.firmware() === Vehicle.Firmware.ArduPilot) {
-      mainVehicle.value?.setParameter(settings as ArduPilotParameterSetData)
+      mainVehicle.value?.setParameter(settings as MAVLinkParameterSetData)
     }
   }
 
@@ -456,6 +490,13 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
 
   ConnectionManager.addConnection(MAVLink2RestWebsocketURI.value, Protocol.Type.MAVLink)
 
+  let applyThrottledCoordinates = useThrottleFn(
+    (nc: Coordinates) => Object.assign(coordinates, nc),
+    vehiclePositionMaxSampleRate.value,
+    true,
+    true
+  )
+
   const getAutoPilot = (vehicles: WeakRef<Vehicle.Abstract>[]): ArduPilot => {
     const vehicle = vehicles?.last()?.deref()
     return (vehicle as ArduPilot) || undefined
@@ -466,6 +507,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     modes.value = mainVehicle.value.modesAvailable()
     icon.value = mainVehicle.value.icon()
     configurationPages.value = mainVehicle.value.configurationPages()
+
+    // Set callback to check if datalake variables from other systems should be created
+    mainVehicle.value.shouldCreateDatalakeVariablesFromOtherSystems = enableDatalakeVariablesFromOtherSystems.value
 
     mainVehicle.value.onAltitude.add((newAltitude: Altitude) => {
       Object.assign(altitude, newAltitude)
@@ -495,7 +539,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       cpuLoad.value = newCpuLoad
     })
     mainVehicle.value.onPosition.add((newCoordinates: Coordinates) => {
-      Object.assign(coordinates, newCoordinates)
+      applyThrottledCoordinates(newCoordinates)
     })
     mainVehicle.value.onVelocity.add((newVelocity: Velocity) => {
       Object.assign(velocity, newVelocity)
@@ -514,68 +558,6 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.onStatusGPS.add((newStatusGPS: StatusGPS) => {
       Object.assign(statusGPS, newStatusGPS)
     })
-
-    // Get the ID for the currently connected vehicle, or create one if it does not exist
-    // Try this every 5 seconds until we have an ID
-    const updateVehicleId = async (): Promise<void> => {
-      try {
-        const maybeId = await getKeyDataFromCockpitVehicleStorage(globalAddress.value, 'cockpit-vehicle-id')
-        if (typeof maybeId !== 'string') {
-          throw new Error('Vehicle ID is not a string.')
-        }
-        currentlyConnectedVehicleId.value = maybeId
-        localStorage.setItem('cockpit-last-connected-vehicle-id', currentlyConnectedVehicleId.value)
-      } catch (idFetchError) {
-        console.error(`Could not get vehicle ID from storage. ${(idFetchError as Error).message}`)
-
-        const newVehicleId = uuid()
-        console.log(`Setting new vehicle ID: ${newVehicleId}`)
-        try {
-          await setKeyDataOnCockpitVehicleStorage(globalAddress.value, 'cockpit-vehicle-id', newVehicleId)
-          currentlyConnectedVehicleId.value = newVehicleId
-          localStorage.setItem('cockpit-last-connected-vehicle-id', currentlyConnectedVehicleId.value)
-        } catch (idSetError) {
-          console.error(`Could not set vehicle ID in storage. ${(idSetError as Error).message}`)
-          console.log('Will try setting the vehicle ID again in 5 seconds...')
-          setTimeout(updateVehicleId, 5000)
-        }
-      }
-    }
-
-    updateVehicleId()
-
-    const blueOsVariables = {
-      cpuTemp: { id: 'blueos/cpu/tempC', name: 'CPU Temperature', type: 'number' },
-    }
-
-    // Register BlueOS variables in the data lake
-    Object.values(blueOsVariables).forEach((variable) => {
-      if (!Object.values(getAllDataLakeVariablesInfo()).find((v) => v.id === variable.id)) {
-        // @ts-ignore: The type is right, only being incorrectly inferred by TS
-        createDataLakeVariable({ ...variable, persistent: false, persistValue: false })
-      }
-    })
-
-    setInterval(async () => {
-      try {
-        const blueosStatus = await getStatus(globalAddress.value)
-        if (!blueosStatus) {
-          throw new Error('BlueOS is not available.')
-        }
-      } catch (error) {
-        console.error(error)
-        return
-      }
-
-      // Update CPU temperature in the data lake
-      try {
-        const temp = await getCpuTempCelsius(globalAddress.value)
-        setDataLakeVariableData(blueOsVariables.cpuTemp.id, temp)
-      } catch (error) {
-        console.error(`Failed to update CPU temperature in data lake: ${error}`)
-      }
-    }, 1000)
-
     mainVehicle.value.onIncomingMAVLinkMessage.add(MAVLinkType.HEARTBEAT, (pack: Package) => {
       if (pack.header.component_id != 1) {
         return
@@ -612,6 +594,203 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
         .map(([key]) => key)
         .first()
     })
+
+    // Get the ID for the currently connected vehicle, or create one if it does not exist
+    // Try this every 5 seconds until we have an ID
+    const updateVehicleId = async (): Promise<void> => {
+      try {
+        const maybeId = await getKeyDataFromCockpitVehicleStorage(globalAddress.value, 'cockpit-vehicle-id')
+        if (typeof maybeId !== 'string') {
+          throw new Error('Vehicle ID is not a string.')
+        }
+        currentlyConnectedVehicleId.value = maybeId
+        localStorage.setItem('cockpit-last-connected-vehicle-id', currentlyConnectedVehicleId.value)
+      } catch (idFetchError) {
+        console.error(`Could not get vehicle ID from storage. ${(idFetchError as Error).message}`)
+
+        const newVehicleId = uuid()
+        console.log(`Setting new vehicle ID: ${newVehicleId}`)
+        try {
+          await setKeyDataOnCockpitVehicleStorage(globalAddress.value, 'cockpit-vehicle-id', newVehicleId)
+          currentlyConnectedVehicleId.value = newVehicleId
+          localStorage.setItem('cockpit-last-connected-vehicle-id', currentlyConnectedVehicleId.value)
+        } catch (idSetError) {
+          console.error(`Could not set vehicle ID in storage. ${(idSetError as Error).message}`)
+          console.log('Will try setting the vehicle ID again in 5 seconds...')
+          setTimeout(updateVehicleId, 5000)
+        }
+      }
+    }
+
+    updateVehicleId()
+
+    // Register BlueOS variables in the data lake
+    const blueOsVariables = {
+      cpuTemp: { id: 'blueos/cpu/tempC', name: 'CPU Temperature', type: 'number' },
+      cpuUsageAverage: { id: 'blueos/cpu/usageAverage', name: 'BlueOS CPU Usage (average)', type: 'number' },
+      cpuFrequencyAverage: {
+        id: 'blueos/cpu/frequencyAverage',
+        name: 'BlueOS CPU Frequency (average)',
+        type: 'number',
+      },
+    }
+
+    const cpuUsageVariableId = (cpuName: string): string => `blueos/${cpuName}/usage`
+    const cpuFrequencyVariableId = (cpuName: string): string => `blueos/${cpuName}/frequency`
+
+    // Network variable ID functions
+    const networkTotalReceivedMBVariableId = (interfaceName: string): string =>
+      `blueos/network/${interfaceName}/totalReceivedMB`
+    const networkTotalTransmittedMBVariableId = (interfaceName: string): string =>
+      `blueos/network/${interfaceName}/totalTransmittedMB`
+    const networkUploadSpeedMbpsVariableId = (interfaceName: string): string =>
+      `blueos/network/${interfaceName}/uploadSpeedMbps`
+    const networkDownloadSpeedMbpsVariableId = (interfaceName: string): string =>
+      `blueos/network/${interfaceName}/downloadSpeedMbps`
+
+    // Store previous network readings for speed calculation
+
+    // eslint-disable-next-line jsdoc/require-jsdoc, prettier/prettier
+    const previousNetworkReadings: Map<string, { bytesReceived: number; bytesTransmitted: number; timestamp: number }> = new Map()
+
+    const cpusInfos = await getCpusInfo(globalAddress.value)
+    cpusInfos.forEach((cpu) => {
+      Object.assign(blueOsVariables, {
+        [`${cpu.name}_usage`]: {
+          id: cpuUsageVariableId(cpu.name),
+          name: `BlueOS CPU '${cpu.name}' usage`,
+          type: 'number',
+        },
+      })
+      Object.assign(blueOsVariables, {
+        [`${cpu.name}_frequency`]: {
+          id: cpuFrequencyVariableId(cpu.name),
+          name: `BlueOS CPU '${cpu.name}' frequency`,
+          type: 'number',
+        },
+      })
+    })
+
+    // Register network variables for each interface
+    const networkInfos = await getNetworkInfo(globalAddress.value)
+    networkInfos.forEach((networkInterface) => {
+      Object.assign(blueOsVariables, {
+        [`${networkInterface.name}_totalReceivedMB`]: {
+          id: networkTotalReceivedMBVariableId(networkInterface.name),
+          name: `BlueOS network '${networkInterface.name}' total received (MB)`,
+          type: 'number',
+        },
+        [`${networkInterface.name}_totalTransmittedMB`]: {
+          id: networkTotalTransmittedMBVariableId(networkInterface.name),
+          name: `BlueOS network '${networkInterface.name}' total transmitted (MB)`,
+          type: 'number',
+        },
+        [`${networkInterface.name}_uploadSpeedMbps`]: {
+          id: networkUploadSpeedMbpsVariableId(networkInterface.name),
+          name: `BlueOS network '${networkInterface.name}' upload speed (Mbps)`,
+          type: 'number',
+        },
+        [`${networkInterface.name}_downloadSpeedMbps`]: {
+          id: networkDownloadSpeedMbpsVariableId(networkInterface.name),
+          name: `BlueOS network '${networkInterface.name}' download speed (Mbps)`,
+          type: 'number',
+        },
+      })
+    })
+
+    Object.values(blueOsVariables).forEach((variable) => {
+      if (!Object.values(getAllDataLakeVariablesInfo()).find((v) => v.id === variable.id)) {
+        // @ts-ignore: The type is right, only being incorrectly inferred by TS
+        createDataLakeVariable({ ...variable, persistent: false, persistValue: false })
+      }
+    })
+
+    setInterval(async () => {
+      try {
+        const blueosStatus = await getStatus(globalAddress.value)
+        if (!blueosStatus) {
+          throw new Error('BlueOS is not available.')
+        }
+      } catch (error) {
+        console.error(error)
+        return
+      }
+
+      // Update CPU temperature in the data lake
+      try {
+        const temp = await getCpuTempCelsius(globalAddress.value)
+        setDataLakeVariableData(blueOsVariables.cpuTemp.id, temp)
+      } catch (error) {
+        console.error(`Failed to update CPU temperature in data lake: ${error}`)
+      }
+
+      // Update information about the CPU cores in the data lake
+      try {
+        const updatedCpusInfos = await getCpusInfo(globalAddress.value)
+        updatedCpusInfos.forEach((cpu) => {
+          setDataLakeVariableData(cpuUsageVariableId(cpu.name), cpu.usage)
+          setDataLakeVariableData(cpuFrequencyVariableId(cpu.name), cpu.frequency)
+        })
+        const averageUsage = updatedCpusInfos.reduce((acc, cpu) => acc + cpu.usage, 0) / updatedCpusInfos.length
+        const averageFrequency = updatedCpusInfos.reduce((acc, cpu) => acc + cpu.frequency, 0) / updatedCpusInfos.length
+        setDataLakeVariableData(blueOsVariables.cpuUsageAverage.id, averageUsage)
+        setDataLakeVariableData(blueOsVariables.cpuFrequencyAverage.id, averageFrequency)
+      } catch (error) {
+        console.error(`Failed to update CPU load in data lake: ${error}`)
+      }
+
+      // Update network information in the data lake
+      try {
+        const updatedNetworkInfos = await getNetworkInfo(globalAddress.value)
+        const currentTimestamp = Date.now()
+
+        updatedNetworkInfos.forEach((networkInterface) => {
+          // Convert total bytes to megabytes (MB)
+          const totalReceivedMB = networkInterface.total_received_B / (1024 * 1024)
+          const totalTransmittedMB = networkInterface.total_transmitted_B / (1024 * 1024)
+
+          // Update total values in MB
+          setDataLakeVariableData(networkTotalReceivedMBVariableId(networkInterface.name), totalReceivedMB)
+          setDataLakeVariableData(networkTotalTransmittedMBVariableId(networkInterface.name), totalTransmittedMB)
+
+          // Calculate and update speeds
+          const previousReading = previousNetworkReadings.get(networkInterface.name)
+          if (previousReading) {
+            const timeDeltaSeconds = (currentTimestamp - previousReading.timestamp) / 1000
+            if (timeDeltaSeconds > 0) {
+              // Calculate speed in bytes per second
+              const downloadSpeedBytesPerSec =
+                (networkInterface.total_received_B - previousReading.bytesReceived) / timeDeltaSeconds
+              const uploadSpeedBytesPerSec =
+                (networkInterface.total_transmitted_B - previousReading.bytesTransmitted) / timeDeltaSeconds
+
+              // Convert to megabits per second (Mbps): bytes/s * 8 bits/byte / (1024 * 1024) = Mbps
+              const downloadSpeedMbps = (downloadSpeedBytesPerSec * 8) / (1024 * 1024)
+              const uploadSpeedMbps = (uploadSpeedBytesPerSec * 8) / (1024 * 1024)
+
+              // Set speeds (ensure they're not negative due to counter resets)
+              setDataLakeVariableData(
+                networkDownloadSpeedMbpsVariableId(networkInterface.name),
+                Math.max(0, downloadSpeedMbps)
+              )
+              setDataLakeVariableData(
+                networkUploadSpeedMbpsVariableId(networkInterface.name),
+                Math.max(0, uploadSpeedMbps)
+              )
+            }
+          }
+
+          // Store current reading for next calculation
+          previousNetworkReadings.set(networkInterface.name, {
+            bytesReceived: networkInterface.total_received_B,
+            bytesTransmitted: networkInterface.total_transmitted_B,
+            timestamp: currentTimestamp,
+          })
+        })
+      } catch (error) {
+        console.error(`Failed to update network information in data lake: ${error}`)
+      }
+    }, 1000)
   })
 
   const listenToIncomingMessages = (messageType: string, callback: (pack: Package) => void): void => {
@@ -648,6 +827,11 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     registerActionCallback(availableCockpitActions.mavlink_disarm, disarm)
   })
 
+  // Updates throttling function when the vehicle's position max sample rate changes
+  watch(vehiclePositionMaxSampleRate, (ms) => {
+    applyThrottledCoordinates = useThrottleFn((nc: Coordinates) => Object.assign(coordinates, nc), ms, true, true)
+  })
+
   const mavlinkManualControlManager = new MavlinkManualControlManager()
   controllerStore.registerControllerUpdateCallback(mavlinkManualControlManager.updateControllerData)
 
@@ -664,6 +848,8 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     }
   }, 40)
   setInterval(() => sendGcsHeartbeat(), 1000)
+  setInterval(() => mainVehicle.value?.sendSystemTime(), 10000)
+  setInterval(() => mainVehicle.value?.measureLatency(), 5000)
 
   const getCurrentVehicleName = async (): Promise<string | undefined> => {
     if (currentVehicleName.value) return currentVehicleName.value
@@ -722,6 +908,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     clearMissions,
     startMission,
     getCurrentVehicleName,
+    mainVehicle,
     globalAddress,
     MAVLink2RestWebsocketURI,
     customMAVLink2RestWebsocketURI,
@@ -759,5 +946,8 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     resetMessageIntervalsToCockpitDefault,
     fetchHomeWaypoint,
     setHomeWaypoint,
+    vehiclePayloadParameters,
+    vehiclePositionMaxSampleRate,
+    enableDatalakeVariablesFromOtherSystems,
   }
 })

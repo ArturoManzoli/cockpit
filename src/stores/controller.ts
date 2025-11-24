@@ -21,7 +21,7 @@ import {
   JoysticksMap,
   JoystickStateEvent,
 } from '@/libs/joystick/manager'
-import { allAvailableAxes, allAvailableButtons } from '@/libs/joystick/protocols'
+import { allAvailableAxes, allAvailableButtons, performJoystickMappingMigrations } from '@/libs/joystick/protocols'
 import { CockpitActionsFunction, executeActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
 import { modifierKeyActions, otherAvailableActions } from '@/libs/joystick/protocols/other'
 import { isElectron } from '@/libs/utils'
@@ -173,8 +173,8 @@ export const useControllerStore = defineStore('controller', () => {
     // Add new joysticks
     for (const [index, joystick] of newMap) {
       if (joysticks.value.has(index)) continue
-      joystick.model = joystickManager.getModel(joystick.gamepad)
-      const { product_id, vendor_id } = joystickManager.getVidPid(joystick.gamepad)
+      joystick.model = joystickManager.getModel(joystick.gamepad.id)
+      const { product_id, vendor_id } = joystickManager.getVidPid(joystick.gamepad.id)
       joysticks.value.set(index, joystick)
       console.info(`Joystick ${index} connected. Model: ${joystick.model} // VID: ${vendor_id} // PID: ${product_id}`)
 
@@ -316,7 +316,7 @@ export const useControllerStore = defineStore('controller', () => {
 
     const activeActions = joystickState.buttons
       .map((btnState, idx) => ({ id: idx, value: btnState }))
-      .filter((btn) => btn.value ?? 0 > 0.5)
+      .filter((btn) => (btn.value ?? 0) > 0.5)
       .map((btn) => {
         const btnMapping = mapping.buttonsCorrespondencies[modifierKeyId as CockpitModifierKeyOption][btn.id]
         if (btnMapping && btnMapping.action) {
@@ -454,6 +454,7 @@ export const useControllerStore = defineStore('controller', () => {
     updatedMappings.push(defMapping)
   })
   protocolMappings.value = updatedMappings
+  protocolMappings.value = performJoystickMappingMigrations(updatedMappings)
 
   const loadDefaultProtocolMappingForVehicle = (vehicleType: MavType): void => {
     // @ts-ignore: We know that the value is a string
@@ -547,6 +548,7 @@ export const useControllerStore = defineStore('controller', () => {
     joysticks,
     protocolMapping,
     protocolMappings,
+    protocolMappingIndex,
     cockpitStdMappings,
     availableAxesActions,
     availableButtonActions,

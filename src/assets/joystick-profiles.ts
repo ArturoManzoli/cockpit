@@ -63,8 +63,8 @@ export const cockpitStandardToProtocols: JoystickProtocolActionsMapping[] = [
         [JoystickButton.B3]: { action: availableMavlinkManualControlButtonFunctions['Mode acro'] },
         [JoystickButton.B4]: { action: otherAvailableActions.no_function },
         [JoystickButton.B5]: { action: otherAvailableActions.no_function },
-        [JoystickButton.B6]: { action: availableMavlinkManualControlButtonFunctions['Servo 1 min'] },
-        [JoystickButton.B7]: { action: availableMavlinkManualControlButtonFunctions['Servo 1 max'] },
+        [JoystickButton.B6]: { action: availableMavlinkManualControlButtonFunctions['Actuator 1 min'] },
+        [JoystickButton.B7]: { action: availableMavlinkManualControlButtonFunctions['Actuator 1 max'] },
         [JoystickButton.B8]: { action: otherAvailableActions.no_function },
         [JoystickButton.B9]: { action: otherAvailableActions.no_function },
         [JoystickButton.B10]: { action: availableMavlinkManualControlButtonFunctions['Relay 1 toggle'] },
@@ -270,6 +270,19 @@ export const availableGamepadToCockpitMaps: { [key in JoystickModel]: GamepadToC
     name: 'Steam Deck OLED',
     axes: [0, 1, 2, 3],
     buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  },
+  [JoystickModel.EightBitDoUltimate2C]: {
+    name: '8BitDo Ultimate 2C',
+    axes: [0, 1, 2, 3, 4, 5],
+    buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+  },
+  [JoystickModel.ThrustmasterSimTaskFarmStick]: {
+    name: 'Thrustmaster SimTask FarmStick',
+    axes: [0, 1, 2, 3, 4, 5, 6, 7],
+    buttons: [
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+      31, 32,
+    ],
   },
   [JoystickModel.Unknown]: {
     name: 'Standard gamepad',

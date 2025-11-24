@@ -2,7 +2,7 @@ import { Signal } from '@/libs/signal'
 import * as Protocol from '@/libs/vehicle/protocol/protocol'
 
 import * as Connection from './connection'
-import { SerialConnection } from './serial-connection'
+import { ElectronConnection } from './electron-connection'
 import { WebSocketConnection } from './websocket-connection'
 
 /**
@@ -38,7 +38,12 @@ export class ConnectionManager {
         connection = new WebSocketConnection(uri, vehicleProtocol)
         break
       case Connection.Type.Serial:
-        connection = new SerialConnection(uri, vehicleProtocol)
+      case Connection.Type.TcpIn:
+      case Connection.Type.TcpOut:
+      case Connection.Type.UdpIn:
+      case Connection.Type.UdpOut:
+      case Connection.Type.UdpBroadcast:
+        connection = new ElectronConnection(uri, vehicleProtocol)
         connection.initialize()
         break
 

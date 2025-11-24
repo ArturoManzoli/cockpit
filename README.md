@@ -65,9 +65,12 @@ We have dedicated builds for every Desktop platform, so make sure you're using t
 - **Linux**: `.AppImage`
 - **Steam OS**: `.Flatpak`
 
-#### - Option 3: Install the BlueOS Extension
+#### - Option 3: Install the BlueOS Extension (Lite version!)
 If you're using BlueOS, you can install Cockpit [from the Extensions page](https://blueos.cloud/docs/stable/usage/advanced/#extensions).
 
+> ⚠️ Due to technical limitations of web browsers, the BlueOS Extension has limited functionality compared to the native app.
+>
+> [See below](#%EF%B8%8F-browser-vs-desktop-whats-the-difference) for details.
 
 #### - Option 4: Docker (for Developers)
 ```bash
@@ -282,11 +285,14 @@ cd cockpit
 # Install dependencies
 yarn install
 
-# Start development server
+# Start minimal development server (for testing the Lite version, in a browser)
 yarn dev --host
 
-# Start Electron development server
+# Start Electron development server (for testing the full application)
 yarn dev:electron --host
+
+# Fix style issues (before making a pull request)
+yarn run lint --fix
 ```
 
 The development server will start at `http://localhost:5173` with hot reloading enabled.

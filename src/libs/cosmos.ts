@@ -6,6 +6,7 @@ import type { ElectronSDLJoystickControllerStateEventData } from '@/types/joysti
 import { NetworkInfo } from '@/types/network'
 import { SDLStatus } from '@/types/sdl'
 import type { SerialData } from '@/types/serial'
+import type { FileDialogOptions, FileStats } from '@/types/storage'
 
 import {
   createDataLakeVariable,
@@ -274,33 +275,46 @@ declare global {
        */
       openVideoFolder: () => void
       /**
+       * Open a video file in the system's default video player
+       * @param fileName - The name of the video file to open
+       */
+      openVideoFile: (fileName: string) => void
+      /**
+       * Open temporary chunks folder
+       */
+      openVideoChunksFolder: () => void
+      /**
+       * Get file stats for a file
+       * @param pathOrKey - Either a full file path, or a key (filename) if subFolders is provided
+       * @param subFolders - Optional subfolders under cockpit folder (if provided, pathOrKey is treated as a key)
+       */
+      getFileStats: (pathOrKey: string, subFolders?: string[]) => Promise<FileStats>
+      /**
+       * Show file dialog to select a file
+       * @param options - Optional dialog configuration
+       * @returns The selected file path, or null if cancelled
+       */
+      getPathOfSelectedFile: (options?: FileDialogOptions) => Promise<string | null>
+      /**
        * Capture the workspace area of the application
        */
       captureWorkspace(rect?: Electron.Rectangle): Promise<Uint8Array>
       /**
-       * List available serial ports
+       * Open a link connection
        */
-      serialListPorts: () => Promise<any[]>
+      linkOpen: (path: string) => Promise<boolean>
       /**
-       * Open a serial port
+       * Write data to a link connection
        */
-      serialOpen: (path: string, baudRate?: number) => Promise<boolean>
+      linkWrite: (path: string, data: Uint8Array) => Promise<boolean>
       /**
-       * Write data to a serial port
+       * Close a link connection
        */
-      serialWrite: (path: string, data: Uint8Array) => Promise<boolean>
+      linkClose: (path: string) => Promise<boolean>
       /**
-       * Close a serial port
+       * Register callback for link data events
        */
-      serialClose: (path: string) => Promise<boolean>
-      /**
-       * Check if a serial port is open
-       */
-      serialIsOpen: (path: string) => Promise<boolean>
-      /**
-       * Register callback for serial data events
-       */
-      onSerialData: (callback: (data: SerialData) => void) => void
+      onLinkData: (callback: (data: SerialData) => void) => void
       /**
        * Send a log message to electron-log
        * @param level - The log level (error, warn, info, debug, trace, log)
@@ -325,6 +339,99 @@ declare global {
        * Delete old electron logs (older than 1 day)
        */
       deleteOldElectronLogs: () => Promise<string[]>
+      /**
+       * Set a custom User-Agent for HTTP requests
+       * @param userAgent - The custom User-Agent string
+       */
+      setUserAgent: (userAgent: string) => void
+      /**
+       * Restore the original User-Agent
+       */
+      restoreUserAgent: () => void
+      /**
+       * Get the current User-Agent
+       * @returns The current User-Agent string
+       */
+      getCurrentUserAgent: () => string
+      /**
+       * Get system information including platform and architecture
+       * @returns Promise containing system information
+       */
+      getSystemInfo: () => Promise<{
+        /**
+         * The platform of the system. Possibilities can be found in the Platform enum.
+         */
+        platform: string
+        /**
+         * The architecture of the system. Possibilities can be found in the Architecture enum.
+         */
+        arch: string
+        /**
+         * The architecture of the process. Possibilities can be found in the Architecture enum.
+         */
+        processArch: string
+      }>
+      /**
+       * Start live video streaming process with FFmpeg
+       * @param firstChunk - The first video chunk blob
+       * @param recordingHash - Unique identifier for this recording
+       * @param fileName - The name of the video file
+       * @param keepChunkBackup - Whether to keep raw chunks as backup (optional, default: true)
+       * @returns Promise resolving to process ID and output path
+       */
+      startVideoRecording: (
+        firstChunk: Blob,
+        recordingHash: string,
+        fileName: string,
+        keepChunkBackup?: boolean
+      ) => Promise<import('@/types/video').LiveConcatProcessResult>
+      /**
+       * Append chunk to live video stream (pipes to FFmpeg stdin)
+       * @param processId - The ID of the live streaming process
+       * @param chunk - The video chunk blob to append
+       * @param chunkNumber - Sequential number of this chunk
+       */
+      appendChunkToVideoRecording: (processId: string, chunk: Blob, chunkNumber: number) => Promise<void>
+      /**
+       * Delete chunk
+       * @param hash - The hash of the video chunk to delete
+       * @param chunkNumber - The number of the video chunk to delete
+       */
+      deleteChunk: (hash: string, chunkNumber: number) => Promise<void>
+      /**
+       * Finalize live video streaming by closing FFmpeg stdin
+       * @param processId - The ID of the streaming process
+       */
+      finalizeVideoRecording: (processId: string) => Promise<void>
+      /**
+       * Extract video chunks from ZIP file
+       * @param zipFilePath - Path to the ZIP file
+       * @returns Promise resolving to extraction result with chunk paths and metadata
+       */
+      extractVideoChunksZip: (zipFilePath: string) => Promise<import('@/types/video').ZipExtractionResult>
+      /**
+       * Read chunk file and return as Uint8Array
+       * @param chunkPath - Path to the chunk file
+       * @returns Promise resolving to chunk data
+       */
+      readChunkFile: (chunkPath: string) => Promise<Uint8Array>
+      /**
+       * Copy telemetry file to video output directory
+       * @param assFilePath - Path to the .ass telemetry file
+       * @param outputVideoPath - Path to the output video file
+       */
+      copyTelemetryFile: (assFilePath: string, outputVideoPath: string) => Promise<void>
+      /**
+       * Create a ZIP file containing video chunks and telemetry file
+       * @param hash - The hash identifier for the chunk group
+       * @returns Promise resolving to the path to the created ZIP file
+       */
+      createVideoChunksZip: (hash: string) => Promise<string>
+      /**
+       * Clean up temporary directory
+       * @param tempDir - Path to the temporary directory to remove
+       */
+      cleanupTempDir: (tempDir: string) => Promise<void>
     }
   }
 }

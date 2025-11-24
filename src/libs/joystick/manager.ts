@@ -41,6 +41,8 @@ export enum JoystickModel {
   IpegaPG9023 = 'Ipega PG-9023',
   SteamDeckLCD = 'Steam Deck LCD',
   SteamDeckOLED = 'Steam Deck OLED',
+  EightBitDoUltimate2C = '8BitDo Ultimate 2C',
+  ThrustmasterSimTaskFarmStick = 'Thrustmaster SimTask FarmStick',
   Unknown = 'Unknown',
 }
 
@@ -58,6 +60,8 @@ const JoystickMapVidPid: Map<string, JoystickModel> = new Map([
   ['1949:0402', JoystickModel.IpegaPG9023],
   ['28de:11ff', JoystickModel.SteamDeckLCD],
   ['28de:1205', JoystickModel.SteamDeckOLED],
+  ['2dc8:301b', JoystickModel.EightBitDoUltimate2C],
+  ['044f:0416', JoystickModel.ThrustmasterSimTaskFarmStick],
 ])
 
 // Necessary to add functions
@@ -289,28 +293,27 @@ class JoystickManager {
 
   /**
    * Get Vendor ID and Product ID from joystick
-   * @param {Gamepad} gamepad Object
+   * @param {string} gamepadId Id of the gamepad
    * @returns {'vendor_id: string | undefined, product_id: string | undefined'} VID and PID
    */
-  getVidPid(gamepad: Gamepad): {
+  getVidPid(gamepadId: string): {
     vendor_id: string | undefined // eslint-disable-line
     product_id: string | undefined // eslint-disable-line
   } {
-    const joystick_information = gamepad.id
     const vendor_regex = new RegExp('Vendor: (?<vendor_id>[0-9a-f]{4})')
     const product_regex = new RegExp('Product: (?<product_id>[0-9a-f]{4})')
-    const vendor_id = vendor_regex.exec(joystick_information)?.groups?.vendor_id
-    const product_id = product_regex.exec(joystick_information)?.groups?.product_id
+    const vendor_id = vendor_regex.exec(gamepadId)?.groups?.vendor_id
+    const product_id = product_regex.exec(gamepadId)?.groups?.product_id
     return { vendor_id, product_id }
   }
 
   /**
    * Get joystick model
-   * @param {Gamepad} gamepad Object
+   * @param {string} gamepadId Id of the gamepad
    * @returns {JoystickModel} Joystick model
    */
-  getModel(gamepad: Gamepad): JoystickModel {
-    const { vendor_id, product_id } = this.getVidPid(gamepad)
+  getModel(gamepadId: string): JoystickModel {
+    const { vendor_id, product_id } = this.getVidPid(gamepadId)
 
     if (vendor_id == undefined || product_id == undefined) {
       return JoystickModel.Unknown
@@ -368,6 +371,9 @@ class JoystickManager {
       return
     }
 
+    // Check calibration settings every second
+    this.updateCalibrationSettings()
+
     // Start checking SDL status
     this.startSDLStatusCheckRoutine()
 
@@ -384,16 +390,29 @@ class JoystickManager {
           ? convertSDLJoystickStateToGamepadState(data.state)
           : convertSDLControllerStateToGamepadState(data.state)
 
+      const gamepadId = `${data.deviceName} (SDL STANDARD JOYSTICK Vendor: ${data.vendorId} Product: ${data.productId})`
+      const gamepadModel = this.getModel(gamepadId)
+
+      const newState: JoystickState = {
+        axes: [...gamepadState.axes],
+        buttons: [...gamepadState.buttons],
+      }
+
+      gamepadState.axes.forEach((value, index) => {
+        const calibratedValue = this.applyCalibrationToValue('axis', index, value ?? 0, gamepadModel)
+        newState.axes[index] = calibratedValue
+      })
+
       const joystickEvent: JoystickStateEvent = {
         index: data.deviceId,
         gamepad: {
-          id: `${data.deviceName} (SDL STANDARD JOYSTICK Vendor: ${data.vendorId} Product: ${data.productId})`,
+          id: gamepadId,
           index: data.deviceId,
           connected: true,
           timestamp: Date.now(),
           mapping: 'standard',
-          axes: gamepadState.axes.map((value) => value ?? 0),
-          buttons: gamepadState.buttons.map((value) => ({
+          axes: newState.axes.map((value) => value ?? 0),
+          buttons: newState.buttons.map((value) => ({
             pressed: (value ?? 0) > 0.5,
             value: value ?? 0,
             touched: false,
@@ -462,6 +481,20 @@ class JoystickManager {
         this.enabledJoysticks.push(gamepad.index)
         console.log(`Joystick ${gamepad.index} connected.`)
         joystickConnectionsChanged = true
+
+        // Log some information about the joystick so we can track used joysticks and easily add more to our database
+        try {
+          console.log(`Joystick info:
+            name: '${gamepad.id}'
+            id: '${gamepad.index}'
+            vendor: '${this.getVidPid(gamepad.id).vendor_id}'
+            product: '${this.getVidPid(gamepad.id).product_id}'
+            axes: ${gamepad.axes.join(', ')}
+            buttons: ${gamepad.buttons.map((button) => button.value).join(', ')}
+          `)
+        } catch (error) {
+          console.error(`Error logging joystick info for '${gamepad.id}' with index '${gamepad.index}':`, error)
+        }
       }
     }
 
@@ -500,30 +533,20 @@ class JoystickManager {
   }
 
   /**
-   * Get calibration settings for a joystick model
-   * @param {JoystickModel} model The joystick model
-   * @returns {JoystickCalibration} The calibration settings
-   */
-  private getCalibrationSettings(model: JoystickModel): JoystickCalibration {
-    return this.calibrationOptions.get(model) ?? defaultJoystickCalibration
-  }
-
-  /**
    * Apply calibration to a joystick value
    * @param {string} inputType The type of input ('button' or 'axis')
    * @param {number} inputIndex The index of the input
    * @param {number} originalValue The original value of the input
-   * @param {Gamepad} gamepad The gamepad object
+   * @param {JoystickModel} joystickModel The joystick model
    * @returns {number} The calibrated value
    */
   private applyCalibrationToValue(
     inputType: 'button' | 'axis',
     inputIndex: number,
     originalValue: number,
-    gamepad: Gamepad
+    joystickModel: JoystickModel
   ): number {
-    const model = this.getModel(gamepad)
-    const calibration = this.getCalibrationSettings(model)
+    const calibration = this.calibrationOptions.get(joystickModel) ?? defaultJoystickCalibration
     return applyCalibration(inputType, inputIndex, originalValue, calibration)
   }
 
@@ -539,6 +562,8 @@ class JoystickManager {
     for (const gamepad of gamepads) {
       if (!gamepad) continue
 
+      const joystickModel = this.getModel(gamepad.id)
+
       const previousState = this.previousGamepadState.get(gamepad.index)
 
       const newState: JoystickState = {
@@ -552,7 +577,7 @@ class JoystickManager {
         // Check for axis changes
         gamepad.axes.forEach((value, index) => {
           if (previousState.axes[index] !== value) {
-            const calibratedValue = this.applyCalibrationToValue('axis', index, value, gamepad)
+            const calibratedValue = this.applyCalibrationToValue('axis', index, value, joystickModel)
             newState.axes[index] = calibratedValue
           }
           if (previousState.axes[index] !== value) {
@@ -592,7 +617,7 @@ class JoystickManager {
     if (!this.enabledJoysticks.includes(joystickEvent.index)) return
 
     // Get the joystick model to check if it's disabled
-    const model = this.getModel(joystickEvent.gamepad)
+    const model = this.getModel(joystickEvent.gamepad.id)
     const disabledJoystickModels = JSON.parse(localStorage.getItem('cockpit-disabled-joystick-models') || '[]')
     if (disabledJoystickModels.includes(model)) return
 

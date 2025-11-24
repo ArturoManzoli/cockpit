@@ -131,6 +131,7 @@
   <VehicleDiscoveryDialog v-model="showDiscoveryDialog" show-auto-search-option />
   <ActionDiscoveryModal auto-check-on-mount />
   <UpdateNotification v-if="isElectron()" />
+  <ArchitectureWarning v-if="isElectron()" />
   <SnackbarContainer />
   <SkullAnimation
     :is-visible="interfaceStore.showSkullAnimation"
@@ -150,6 +151,7 @@ import { useStorage, useWindowSize } from '@vueuse/core'
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import ActionDiscoveryModal from '@/components/ActionDiscoveryModal.vue'
+import ArchitectureWarning from '@/components/ArchitectureWarning.vue'
 import GlassModal from '@/components/GlassModal.vue'
 import SkullAnimation from '@/components/SkullAnimation.vue'
 import SnackbarContainer from '@/components/SnackbarContainer.vue'
@@ -180,11 +182,15 @@ import { useMainVehicleStore } from './stores/mainVehicle'
 import { useWidgetManagerStore } from './stores/widgetManager'
 import { SubMenuComponent } from './types/general'
 const { openSnackbar } = useSnackbar()
+import { useSnapshotStore } from './stores/snapshot'
 
 const widgetStore = useWidgetManagerStore()
 const vehicleStore = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
 const devStore = useDevelopmentStore()
+
+// Initialize the snapshot store to register action callbacks
+useSnapshotStore()
 
 const showAboutDialog = ref(false)
 const currentSubMenuComponent = ref<SubMenuComponent>(null)
@@ -197,8 +203,6 @@ const handleShowAboutDialog = (): void => {
 const isSlidingOut = ref(false)
 
 const { width: windowWidth } = useWindowSize()
-
-const isConfigModalVisible = computed(() => interfaceStore.isConfigModalVisible)
 
 // Check if the user data in browser storage is the same as on blueOS; if not, keep the splash screen open for a maximum of 20 seconds.
 onBeforeMount(async () => {
@@ -227,11 +231,14 @@ onBeforeMount(async () => {
   interfaceStore.showSplashScreen = false
 })
 
-watch(isConfigModalVisible, (newVal) => {
-  if (newVal === false) {
-    currentSubMenuComponent.value = null
+watch(
+  () => interfaceStore.isConfigModalVisible,
+  (isVisible) => {
+    if (!isVisible) {
+      currentSubMenuComponent.value = null
+    }
   }
-})
+)
 
 const topBottomBarScale = computed(() => {
   return windowWidth.value / originalBarWidth

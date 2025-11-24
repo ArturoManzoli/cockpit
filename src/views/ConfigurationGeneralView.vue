@@ -123,6 +123,7 @@
                 </v-text-field>
                 <v-btn
                   :size="interfaceStore.isOnSmallScreen ? 'small' : 'default'"
+                  :disabled="!globalAddressFormValid"
                   class="bg-transparent"
                   :class="interfaceStore.isOnSmallScreen ? 'ml-1' : 'ml-5'"
                   variant="text"
@@ -209,7 +210,7 @@
         </ExpansiblePanel>
         <ExpansiblePanel no-top-divider no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Video connection (WebRTC)</template>
-          <template #subtitle>Current address: {{ mainVehicleStore.webRTCSignallingURI.toString() }}</template>
+          <template #subtitle>Current address: {{ mainVehicleStore.webRTCSignallingURI?.toString() ?? '' }}</template>
           <template #content>
             <v-form
               ref="webRTCSignallingForm"
@@ -245,7 +246,7 @@
                 </div>
                 <v-btn
                   :size="interfaceStore.isOnSmallScreen ? 'small' : 'default'"
-                  :disabled="!mainVehicleStore.customWebRTCSignallingURI.enabled"
+                  :disabled="!mainVehicleStore.customWebRTCSignallingURI.enabled || !webRTCSignallingFormValid"
                   class="bg-transparent -mt-5 -ml-6"
                   variant="text"
                   type="submit"
@@ -511,8 +512,20 @@ const isValidConnectionURI = (value: string): boolean | string => {
 const isValidSocketConnectionURI = (value: string): boolean | string => {
   try {
     const conn = new Connection.URI(value)
-    if (conn.type() !== Connection.Type.WebSocket && conn.type() !== Connection.Type.Serial) {
+    if (!isElectron() && conn.type() !== Connection.Type.WebSocket && conn.type() !== Connection.Type.Serial) {
       throw new Error('URI should be of type WebSocket or Serial')
+    }
+    if (
+      isElectron() &&
+      conn.type() !== Connection.Type.WebSocket &&
+      conn.type() !== Connection.Type.Serial &&
+      conn.type() !== Connection.Type.UdpIn &&
+      conn.type() !== Connection.Type.UdpOut &&
+      conn.type() !== Connection.Type.UdpBroadcast &&
+      conn.type() !== Connection.Type.TcpIn &&
+      conn.type() !== Connection.Type.TcpOut
+    ) {
+      throw new Error('URI should be of type WebSocket, Serial, Udp or Tcp.')
     }
   } catch (error) {
     return `Invalid connection URI. ${error}.`
