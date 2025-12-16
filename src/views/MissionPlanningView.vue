@@ -1,5 +1,5 @@
 <template>
-  <div class="mission-planning">
+  <div class="mission-planning" :style="glassMenuCssVars">
     <div id="planningMap" ref="planningMap" class="relative" />
     <v-tooltip location="top" text="Generate waypoints">
       <template #activator="{ props }">
@@ -331,6 +331,22 @@
         </button>
       </div>
     </div>
+    <v-tooltip location="top" text="Switch to Flight mode">
+      <template #activator="{ props: tooltipProps }">
+        <v-btn
+          v-bind="tooltipProps"
+          class="absolute right-[180px] w-[140px] m-3 mb-[13px] bottom-12 bg-slate-50 text-[12px] font-bold"
+          elevation="8"
+          text="Flight mode"
+          append-icon="mdi-send"
+          style="z-index: 1002; border-radius: 0px"
+          :style="interfaceStore.globalGlassMenuStyles"
+          hide-details
+          size="small"
+          @click.stop="router.push('/')"
+        />
+      </template>
+    </v-tooltip>
     <v-tooltip location="top center" text="Download map tiles">
       <template #activator="{ props: tooltipProps }">
         <v-menu v-model="downloadMenuOpen" :close-on-content-click="false" location="top end">
@@ -338,6 +354,7 @@
             <v-btn
               v-bind="{ ...menuProps, ...tooltipProps }"
               class="absolute m-3 rounded-sm shadow-sm bottom-12 bg-slate-50 right-[133px] text-[14px]"
+              :style="interfaceStore.globalGlassMenuStyles"
               size="x-small"
               icon="mdi-download-multiple"
             />
@@ -355,6 +372,7 @@
       <template #activator="{ props: tooltipProps }">
         <v-btn
           class="absolute m-3 rounded-sm shadow-sm bottom-12 bg-slate-50 right-[88px] text-[14px]"
+          :style="[interfaceStore.globalGlassMenuStyles, !home ? { color: '#FFFFFF44' } : {}]"
           :class="[!home ? 'active-events-on-disabled' : '']"
           :color="followerTarget == WhoToFollow.HOME ? 'red' : ''"
           icon="mdi-home-search"
@@ -370,6 +388,7 @@
       <template #activator="{ props: tooltipProps }">
         <v-btn
           class="absolute m-3 rounded-sm shadow-sm bottom-12 bg-slate-50 right-[44px] text-[14px]"
+          :style="[interfaceStore.globalGlassMenuStyles, !vehiclePosition ? { color: '#FFFFFF44' } : {}]"
           :class="[!vehiclePosition ? 'active-events-on-disabled' : '']"
           :color="followerTarget == WhoToFollow.VEHICLE ? 'red' : ''"
           icon="mdi-airplane-marker"
@@ -463,7 +482,7 @@ import { useWindowSize } from '@vueuse/core'
 import { formatDistanceToNow } from 'date-fns'
 import { format } from 'date-fns'
 import { saveAs } from 'file-saver'
-import L, { type LatLngTuple, LeafletMouseEvent, Map, Marker, Polygon } from 'leaflet'
+import L, { type LatLngTuple, LayersControlEvent, LeafletMouseEvent, Map, Marker, Polygon } from 'leaflet'
 import { SaveStatus, savetiles, tileLayerOffline } from 'leaflet.offline'
 import { v4 as uuid } from 'uuid'
 import { type InstanceType, computed, nextTick, onMounted, onUnmounted, ref, shallowRef, toRaw, watch } from 'vue'
@@ -506,6 +525,7 @@ import {
   ClosestSegmentInfo,
   ContextMenuTypes,
   instanceOfCockpitMission,
+  MapTileProvider,
   MissionCommand,
   MissionCommandType,
   PointOfInterest,
@@ -564,7 +584,7 @@ const uploadMissionToVehicle = async (): Promise<void> => {
 
   uploadingMission.value = true
   missionUploadProgress.value = 0
-  const missionItemsToUpload: Waypoint[] = structuredClone(toRaw(missionStore.currentPlanningWaypoints))
+  const missionItemsToUpload: Waypoint[] = JSON.parse(JSON.stringify(missionStore.currentPlanningWaypoints))
 
   const loadingCallback = async (loadingPerc: number): Promise<void> => {
     missionUploadProgress.value = loadingPerc
@@ -693,7 +713,7 @@ const zoom = ref(missionStore.defaultMapZoom)
 const followerTarget = ref<WhoToFollow | undefined>(undefined)
 const currentWaypointAltitude = ref(0)
 const currentWaypointAltitudeRefType = ref<AltitudeReferenceType>(AltitudeReferenceType.RELATIVE_TO_HOME)
-const waypointMarkers = ref<{ [id: string]: Marker }>({})
+const waypointMarkers = shallowRef<{ [id: string]: Marker }>({})
 const isCreatingSimplePath = ref(false)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
@@ -741,6 +761,14 @@ let measureLineEl: SVGLineElement | null = null
 let measureTextEl: HTMLDivElement | null = null
 const surveyAreaMarkers = shallowRef<Record<string, L.Marker>>({})
 const liveSurveyAreaMarker = shallowRef<L.Marker | null>(null)
+
+const glassMenuCssVars = computed(() => ({
+  '--glass-background': interfaceStore.globalGlassMenuStyles.backgroundColor,
+  '--glass-filter': interfaceStore.globalGlassMenuStyles.backdropFilter,
+  '--glass-border': interfaceStore.globalGlassMenuStyles.border,
+  '--glass-color': interfaceStore.globalGlassMenuStyles.color,
+  '--glass-box-shadow': interfaceStore.globalGlassMenuStyles.boxShadow,
+}))
 
 const clearLiveMeasure = (): void => {
   destroyMeasureOverlay(planningMap.value || undefined)
@@ -991,7 +1019,7 @@ const clearCurrentMission = (): void => {
   waypointMarkers.value = {}
   if (missionWaypointsPolyline.value) {
     planningMap.value?.removeLayer(missionWaypointsPolyline.value)
-    missionWaypointsPolyline.value = undefined
+    missionWaypointsPolyline.value = null
   }
   clearSurveyPath()
   surveys.value = []
@@ -2001,6 +2029,21 @@ const saveMissionToFile = async (): Promise<void> => {
   saveAs(blob, `cockpit_mission_plan_${date}.cmp`)
 }
 
+const drawMissionOnTheMap = (waypoints: Waypoint[]): void => {
+  waypoints
+    .map((wp) => ({
+      ...wp,
+      id: wp.id ?? uuid(),
+      commands: cloneCommands(wp.commands),
+    }))
+    .forEach((wp) => {
+      missionStore.currentPlanningWaypoints.push(wp)
+      addWaypointMarker(wp)
+    })
+
+  reNumberWaypoints()
+}
+
 const loadMissionFromFile = async (e: Event): Promise<void> => {
   const reader = new FileReader()
   reader.onload = (event: Event) => {
@@ -2016,15 +2059,13 @@ const loadMissionFromFile = async (e: Event): Promise<void> => {
     currentWaypointAltitude.value = maybeMission['settings']['currentWaypointAltitude']
     currentWaypointAltitudeRefType.value = maybeMission['settings']['currentWaypointAltitudeRefType']
     missionStore.defaultCruiseSpeed = maybeMission['settings']['defaultCruiseSpeed']
-    maybeMission['waypoints'].forEach((w: Waypoint) => {
-      addWaypoint(w.coordinates, w.altitude, w.altitudeReferenceType, cloneCommands(w.commands))
-    })
+    drawMissionOnTheMap(maybeMission['waypoints'])
   }
   // @ts-ignore: We know the event type and need refactor of the event typing
   reader.readAsText(e.target.files[0])
 }
 
-const surveyPolygonVertexesMarkers = ref<L.Marker[]>([])
+const surveyPolygonVertexesMarkers = shallowRef<L.Marker[]>([])
 const rawDistanceBetweenSurveyLines = ref(10)
 const rawSurveyLinesAngle = ref(0)
 const existingWaypoints = ref<Waypoint[]>([])
@@ -2340,25 +2381,25 @@ const generateWaypointsFromSurvey = (): void => {
     surveyLinesAngle: surveyLinesAngle.value,
     waypoints: newSurveyWaypoints,
   }
+
   addSurvey(newSurvey)
   selectedSurveyId.value = newSurvey.id
-
   newSurveyWaypoints.forEach((waypoint) => addWaypointMarker(waypoint))
+  clearSurveyPath()
+  isCreatingSurvey.value = false
+  reNumberWaypoints()
 
   const firstWaypoint = newSurveyWaypoints[0]
   const lastWaypoint = newSurveyWaypoints[newSurveyWaypoints.length - 1]
   const firstMarker = waypointMarkers.value[firstWaypoint.id]
   const lastMarker = waypointMarkers.value[lastWaypoint.id]
+
   if (firstMarker) {
-    firstMarker.getElement()?.classList.add('green-marker')
+    firstMarker.getElement()?.querySelector('.waypoint-main-marker')?.classList.add('green-marker')
   }
   if (lastMarker && lastMarker !== firstMarker) {
-    lastMarker.getElement()?.classList.add('green-marker')
+    lastMarker.getElement()?.querySelector('.waypoint-main-marker')?.classList.add('green-marker')
   }
-
-  clearSurveyPath()
-  isCreatingSurvey.value = false
-  reNumberWaypoints()
 
   openSnackbar({ variant: 'success', message: 'Waypoints generated from survey path.', duration: 1000 })
 }
@@ -2434,7 +2475,7 @@ const regenerateSurveyWaypoints = (angle?: number): void => {
       coordinates: [latLng.lat, latLng.lng],
       altitude: currentWaypointAltitude.value,
       altitudeReferenceType: currentWaypointAltitudeRefType.value,
-      commands: [],
+      commands: makeDefaultNavCommands(),
     }))
 
     const firstOldWaypointIndex = missionStore.currentPlanningWaypoints.findIndex(
@@ -2457,19 +2498,18 @@ const regenerateSurveyWaypoints = (angle?: number): void => {
     updateSurvey(selectedSurveyId.value, { ...selectedSurvey.value })
 
     newWaypoints.forEach((waypoint) => addWaypointMarker(waypoint))
+    reNumberWaypoints()
 
     const firstWaypoint = newWaypoints[0]
     const lastWaypoint = newWaypoints[newWaypoints.length - 1]
     const firstMarker = waypointMarkers.value[firstWaypoint.id]
     const lastMarker = waypointMarkers.value[lastWaypoint.id]
     if (firstMarker) {
-      firstMarker.getElement()?.classList.add('green-marker')
+      firstMarker.getElement()?.querySelector('.waypoint-main-marker')?.classList.add('green-marker')
     }
     if (lastMarker && lastMarker !== firstMarker) {
-      lastMarker.getElement()?.classList.add('green-marker')
+      lastMarker.getElement()?.querySelector('.waypoint-main-marker')?.classList.add('green-marker')
     }
-
-    reNumberWaypoints()
   }
 }
 
@@ -2763,7 +2803,7 @@ const tryFetchHome = async (): Promise<void> => {
 }
 
 const loadDraftMission = async (mission: CockpitMission): Promise<void> => {
-  missionStore.clearMission()
+  clearCurrentMission()
 
   try {
     mapCenter.value = mission.settings.mapCenter
@@ -2772,9 +2812,7 @@ const loadDraftMission = async (mission: CockpitMission): Promise<void> => {
     currentWaypointAltitudeRefType.value = mission.settings.currentWaypointAltitudeRefType
     missionStore.defaultCruiseSpeed = mission.settings.defaultCruiseSpeed
 
-    mission.waypoints.forEach((wp) => {
-      addWaypoint(wp.coordinates, wp.altitude, wp.altitudeReferenceType, wp.commands)
-    })
+    drawMissionOnTheMap(mission.waypoints)
     if (!home.value) {
       await tryFetchHome()
       homeRetryTimer = setInterval(tryFetchHome, 1000)
@@ -2964,7 +3002,12 @@ onMounted(async () => {
     'Esri World Imagery': esri,
   }
 
-  planningMap.value = L.map('planningMap', { layers: [osm, esri] }).setView(mapCenter.value as LatLngTuple, zoom.value)
+  const initialBaseLayer = baseMaps[missionStore.userLastMapTileProvider] || esri
+
+  planningMap.value = L.map('planningMap', { layers: [initialBaseLayer] }).setView(
+    mapCenter.value as LatLngTuple,
+    zoom.value
+  )
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -2975,6 +3018,15 @@ onMounted(async () => {
   pane.style.zIndex = '640'
   pane.style.pointerEvents = 'none'
   measureLayer.value = L.layerGroup().addTo(planningMap.value!) as L.LayerGroup
+
+  // Listen for base layer changes to save user preference
+  planningMap.value.on('baselayerchange', (event: LayersControlEvent) => {
+    const name = event.name
+    if (!name.includes(name as MapTileProvider)) {
+      return
+    }
+    missionStore.userLastMapTileProvider = event.name as MapTileProvider
+  })
 
   planningMap.value.on('moveend', () => {
     if (planningMap.value === undefined) return
@@ -3513,7 +3565,9 @@ watch(
 }
 
 .green-marker {
-  background-color: #034103aa;
+  border-radius: 50%;
+  border: 2px solid #ffffff99;
+  background-color: #034103;
 }
 
 .command-count-indicator {
@@ -3727,16 +3781,68 @@ watch(
 /* Style the standard Leaflet scale control */
 :deep(.leaflet-control-scale) {
   position: absolute;
-  right: 180px; /* Position to the left of the buttons */
+  right: 337px; /* Position to the left of the buttons */
   bottom: 54px;
   background: rgba(255, 255, 255, 0.8);
   border-radius: 1px;
-  padding: 8px 8px;
-  box-shadow: 0px 3px 1px -2px rgba(0, 0, 0, 0.2), 0px 2px 2px 0px rgba(0, 0, 0, 0.14),
-    0px 1px 5px 0px rgba(0, 0, 0, 0.12);
+  padding: 6px 6px;
+  background: var(--glass-background);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-box-shadow);
+  color: var(--glass-color);
+  border: var(--glass-border);
+  font-weight: bolder;
 }
 
-:deep(.leaflet-control-zoom) {
-  bottom: 30px;
+/* Style the Leaflet zoom control */
+:deep(.leaflet-control-zoom.leaflet-bar) {
+  bottom: 33px;
+  background: var(--glass-background);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-box-shadow);
+  color: var(--glass-color);
+  border: var(--glass-border);
+}
+
+:deep(.leaflet-control-zoom.leaflet-bar a) {
+  background: transparent !important;
+  border: none;
+  color: var(--glass-color);
+}
+
+:deep(.leaflet-control-zoom.leaflet-bar a:hover),
+:deep(.leaflet-control-zoom.leaflet-bar a:focus) {
+  background: transparent !important;
+}
+
+/* Style the Leaflet layer provider selector */
+:deep(.leaflet-control-layers) {
+  background: var(--glass-background) !important;
+  backdrop-filter: var(--glass-filter) !important;
+  box-shadow: var(--glass-box-shadow) !important;
+  color: var(--glass-color) !important;
+  border: var(--glass-border) !important;
+  border-radius: 4px;
+}
+
+:deep(.leaflet-control-layers-expanded) {
+  background: var(--glass-background) !important;
+  backdrop-filter: var(--glass-filter) !important;
+  box-shadow: var(--glass-box-shadow) !important;
+  color: var(--glass-color) !important;
+  border: var(--glass-border) !important;
+}
+
+:deep(.leaflet-control-layers-list) {
+  background: transparent !important;
+  color: var(--glass-color) !important;
+}
+
+:deep(.leaflet-control-layers-selector) {
+  accent-color: var(--glass-color) !important;
+}
+
+:deep(.leaflet-control-layers label) {
+  color: var(--glass-color) !important;
 }
 </style>
