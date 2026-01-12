@@ -339,3 +339,18 @@ export interface VehicleMissionEstimate {
  * Types of map tile providers supported.
  */
 export type MapTileProvider = 'Esri World Imagery' | 'OpenStreetMap'
+
+export type SurveyVertexType = {
+  /**
+   * The index of the vertex to update.
+   */
+  index: number
+  /**
+   * The new latitude of the vertex.
+   */
+  lat: number
+  /**
+   * The new longitude of the vertex.
+   */
+  lng: number
+}

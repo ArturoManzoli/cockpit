@@ -340,7 +340,7 @@
           text="Flight mode"
           append-icon="mdi-send"
           style="z-index: 1002; border-radius: 0px"
-          :style="interfaceStore.globalGlassMenuStyles"
+          :style="[interfaceStore.globalGlassMenuStyles, { zIndex: 400 }]"
           hide-details
           size="small"
           @click.stop="router.push('/')"
@@ -442,11 +442,22 @@
   />
   <SideConfigPanel position="right" style="z-index: 600; pointer-events: auto" class="w-[320px]">
     <WaypointConfigPanel
+      v-if="selectedWaypoint"
       :selected-waypoint="selectedWaypoint"
       @remove-waypoint="removeSelectedWaypoint"
-      @should-update-waypoints="handleShouldUpdateWaypoints"
+      @should-update-waypoints="updateWaypoints"
+    />
+
+    <SurveyVertexConfigPanel
+      v-else-if="selectedSurveyVertexIndex !== undefined"
+      :selected-vertex="selectedSurveyVertex"
+      :vertex-index="selectedSurveyVertexIndex"
+      @update-vertex="updateSurveyVertexFromPanel"
+      @remove-vertex="removeSurveyVertexFromPanel"
+      @close="clearSurveyVertexSelection"
     />
   </SideConfigPanel>
+
   <HomePositionSettingHelp v-model="showHomePositionNotSetDialog" />
   <PoiManager ref="poiManagerRef" />
 
@@ -494,6 +505,7 @@ import ContextMenu from '@/components/mission-planning/ContextMenu.vue'
 import HomePositionSettingHelp from '@/components/mission-planning/HomePositionSettingHelp.vue'
 import MissionEstimatesPanel from '@/components/mission-planning/MissionEstimates.vue'
 import ScanDirectionDial from '@/components/mission-planning/ScanDirectionDial.vue'
+import SurveyVertexConfigPanel from '@/components/mission-planning/SurveyVertexConfigPanel.vue'
 import WaypointConfigPanel from '@/components/mission-planning/WaypointConfigPanel.vue'
 import PoiManager from '@/components/poi/PoiManager.vue'
 import SideConfigPanel from '@/components/SideConfigPanel.vue'
@@ -531,6 +543,7 @@ import {
   PointOfInterest,
   Survey,
   SurveyPolygon,
+  SurveyVertexType,
 } from '@/types/mission'
 
 const missionStore = useMissionStore()
@@ -769,6 +782,49 @@ const glassMenuCssVars = computed(() => ({
   '--glass-color': interfaceStore.globalGlassMenuStyles.color,
   '--glass-box-shadow': interfaceStore.globalGlassMenuStyles.boxShadow,
 }))
+
+const selectedSurveyVertexIndex = ref<number | undefined>(undefined)
+
+const selectedSurveyVertex = computed<L.LatLng | undefined>(() => {
+  const index = selectedSurveyVertexIndex.value
+  if (index === undefined) return undefined
+  if (index < 0 || index >= surveyPolygonVertexesPositions.value.length) return undefined
+  return surveyPolygonVertexesPositions.value[index]
+})
+
+const clearSurveyVertexSelection = (): void => {
+  selectedSurveyVertexIndex.value = undefined
+}
+
+const updateSurveyVertexFromPanel = (payload: SurveyVertexType): void => {
+  const { index, lat, lng } = payload
+  if (index < 0 || index >= surveyPolygonVertexesPositions.value.length) return
+
+  const latlng = L.latLng(lat, lng)
+  surveyPolygonVertexesPositions.value.splice(index, 1, latlng)
+
+  const marker = surveyPolygonVertexesMarkers.value[index]
+  if (marker) marker.setLatLng(latlng)
+
+  updatePolygon()
+  updateSurveyEdgeAddMarkers()
+  checkAndRemoveSurveyPath()
+}
+
+const removeSurveyVertexFromPanel = (index: number): void => {
+  if (index < 0 || index >= surveyPolygonVertexesPositions.value.length) return
+
+  const marker = surveyPolygonVertexesMarkers.value[index]
+  if (marker) marker.remove()
+
+  surveyPolygonVertexesPositions.value.splice(index, 1)
+  surveyPolygonVertexesMarkers.value.splice(index, 1)
+
+  clearSurveyVertexSelection()
+  updatePolygon()
+  updateSurveyEdgeAddMarkers()
+  checkAndRemoveSurveyPath()
+}
 
 const clearLiveMeasure = (): void => {
   destroyMeasureOverlay(planningMap.value || undefined)
@@ -1580,6 +1636,8 @@ const toggleSurvey = (): void => {
   }
   if (isCreatingSurvey.value) {
     isCreatingSurvey.value = false
+    selectedSurveyVertexIndex.value = undefined
+    interfaceStore.configPanelVisible = false
     lastSurveyState.value = {}
     canUndo.value = {}
     return
@@ -1944,6 +2002,7 @@ const addWaypoint = (
   })
   newMarker.on('contextmenu', (e: L.LeafletMouseEvent) => {
     selectedWaypoint.value = waypoint
+    clearSurveyVertexSelection()
     contextMenuType.value = 'waypoint'
     currentCursorGeoCoordinates.value = [e.latlng.lat, e.latlng.lng]
     showContextMenu(e)
@@ -2291,17 +2350,36 @@ const addSurveyPoint = (latlng: L.LatLng, edgeIndex: number | undefined = undefi
   const newMarker = createSurveyVertexMarker(
     latlng,
     // onClick callback
-    (marker) => {
+    (marker, evt) => {
       const index = surveyPolygonVertexesMarkers.value.indexOf(marker)
-      if (index !== -1) {
+      if (index === -1) return
+
+      const originalTarget = (
+        evt as unknown as {
+          /**
+           * The original mouse event.
+           */
+          originalEvent?: MouseEvent
+        }
+      ).originalEvent?.target as HTMLElement | null
+      const clickedDeleteButton = !!originalTarget?.closest?.('.delete-button')
+
+      if (clickedDeleteButton) {
         surveyPolygonVertexesPositions.value.splice(index, 1)
         surveyPolygonVertexesMarkers.value.splice(index, 1)
         marker.remove()
+
+        if (selectedSurveyVertexIndex.value === index) clearSurveyVertexSelection()
+
         updatePolygon()
         updateSurveyEdgeAddMarkers()
         checkAndRemoveSurveyPath()
-        createSurveyPath()
+        return
       }
+
+      selectedWaypoint.value = undefined
+      selectedSurveyVertexIndex.value = index
+      interfaceStore.configPanelVisible = true
     },
     // onDrag callback
     () => {
@@ -2315,6 +2393,12 @@ const addSurveyPoint = (latlng: L.LatLng, edgeIndex: number | undefined = undefi
   } else {
     surveyPolygonVertexesMarkers.value.splice(edgeIndex + 1, 0, newMarker)
   }
+
+  const insertedIndex = edgeIndex === undefined ? surveyPolygonVertexesMarkers.value.length - 1 : edgeIndex + 1
+  selectedWaypoint.value = undefined
+  selectedSurveyVertexIndex.value = insertedIndex
+  hideContextMenu()
+  interfaceStore.configPanelVisible = true
 
   updatePolygon()
   updateSurveyEdgeAddMarkers()
@@ -2401,6 +2485,7 @@ const generateWaypointsFromSurvey = (): void => {
     lastMarker.getElement()?.querySelector('.waypoint-main-marker')?.classList.add('green-marker')
   }
 
+  interfaceStore.configPanelVisible = false
   openSnackbar({ variant: 'success', message: 'Waypoints generated from survey path.', duration: 1000 })
 }
 
@@ -2544,6 +2629,10 @@ const createSurveyVertexMarker = (
     }),
     draggable: true,
   })
+    .on('dragstart', (event: L.LeafletEvent) => {
+      const target = event.target as L.Marker
+      onClick(target, event)
+    })
     .on('drag', () => {
       onDrag()
     })
@@ -2690,6 +2779,7 @@ const addWaypointMarker = (waypoint: Waypoint): void => {
   newMarker.on('contextmenu', (event: LeafletMouseEvent) => {
     contextMenuType.value = 'waypoint'
     selectedWaypoint.value = waypoint
+    clearSurveyVertexSelection()
     selectedSurveyId.value = ''
     interfaceStore.configPanelVisible = false
     currentCursorGeoCoordinates.value = [event.latlng.lat, event.latlng.lng]
@@ -2703,12 +2793,14 @@ const addWaypointMarker = (waypoint: Waypoint): void => {
     const mouse = event.originalEvent as MouseEvent
     if (mouse.shiftKey) {
       selectedWaypoint.value = waypoint
+      clearSurveyVertexSelection()
       removeSelectedWaypoint()
       return
     }
 
     // Default: open config panel
     selectedWaypoint.value = waypoint
+    clearSurveyVertexSelection()
     selectedSurveyId.value = ''
     hideContextMenu()
     interfaceStore.configPanelVisible = true

@@ -1,5 +1,8 @@
 <template>
-  <div class="flex flex-col h-full w-full justify-start" :style="interfaceStore.globalGlassMenuStyles">
+  <div
+    class="flex flex-col h-full w-full justify-start"
+    :style="[interfaceStore.globalGlassMenuStyles, { boxShadow: '-6px 0 8px -2px #00000033' }]"
+  >
     <ExpansiblePanel
       mark-expanded
       compact
