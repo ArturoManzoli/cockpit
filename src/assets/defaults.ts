@@ -3,6 +3,7 @@ import { OverlayGrid } from '@/libs/sensors-logging'
 import { DistanceDisplayUnit } from '@/libs/units'
 import { BatteryLevel, BatteryLevelThresholds } from '@/types/general'
 import { JoystickCalibration } from '@/types/joystick'
+import { MeasurementOptions } from '@/types/mission'
 import {
   type MiniWidgetProfile,
   type Profile,
@@ -942,4 +943,15 @@ export const defaultBatteryLevelThresholds: BatteryLevelThresholds = {
   medium: 14.0,
   low: 12.8,
   critical: 12.0,
+}
+
+// Default measurement options
+export const defaultMeasurementOptions: MeasurementOptions = {
+  unitSystem: 'metric',
+  showDistanceTags: true,
+  showAngleTags: true,
+  tagSize: 12,
+  distanceTagColor: { r: 255, g: 255, b: 255, a: 0.6 },
+  angleTagColor: { r: 83, g: 110, b: 114, a: 0.3 },
+  lineColor: { r: 176, g: 224, b: 230, a: 0.9 },
 }

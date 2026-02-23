@@ -2,14 +2,17 @@ import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { reactive, ref, watch } from 'vue'
 
+import { defaultMeasurementOptions } from '@/assets/defaults'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
 import { askForUsername } from '@/composables/usernamePrompDialog'
 import { cockpitLastConnectedUserKey, fallbackUsername } from '@/libs/settings-management'
 import { eventCategoriesDefaultMapping } from '@/libs/slide-to-confirm'
+import { UnitSystem } from '@/libs/units'
 import {
   AltitudeReferenceType,
   MapTileProvider,
+  MeasurementOptions,
   MissionCommand,
   PointOfInterest,
   PointOfInterestCoordinates,
@@ -50,6 +53,12 @@ export const useMissionStore = defineStore('mission', () => {
   const userLastMapTileProvider = useBlueOsStorage<MapTileProvider>(
     'cockpit-user-last-map-tile-provider',
     'Esri World Imagery'
+  )
+  const userUnitSystem = useBlueOsStorage<UnitSystem>('cockpit-user-unit-system', 'metric')
+  // Measurement options with persistence in BlueOS
+  const measurementOptions = useBlueOsStorage<MeasurementOptions>(
+    'cockpit-measurement-options',
+    defaultMeasurementOptions
   )
 
   const { showDialog } = useInteractionDialog()
@@ -281,5 +290,7 @@ export const useMissionStore = defineStore('mission', () => {
     defaultCruiseSpeed,
     userLastMapTileProvider,
     followVehicleOnMap,
+    userUnitSystem,
+    measurementOptions,
   }
 })
