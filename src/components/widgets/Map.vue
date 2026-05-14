@@ -169,6 +169,31 @@
         <p class="text-[14px] truncate mr-2">{{ poiPopupSelectedPoi.name }}</p>
         <div class="flex shrink-0 items-center gap-x-3">
           <v-icon
+            v-if="!poiPopupSelectedPoiIsGotoTarget"
+            v-tooltip="{ text: 'GoTo Point of Interest', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
+            variant="text"
+            icon="mdi-crosshairs-gps"
+            rounded="full"
+            size="x-small"
+            color="white"
+            class="text-[17px] cursor-pointer mt-1"
+            @click="onPoiPopupGoTo"
+          ></v-icon>
+          <v-icon
+            v-else
+            v-tooltip="{
+              text: 'Cancel GoTo command (vehicle will hold at current position)',
+              zIndex: POI_POPUP_TOOLTIP_Z_INDEX,
+            }"
+            variant="text"
+            icon="mdi-close-circle-multiple-outline"
+            rounded="full"
+            size="x-small"
+            color="white"
+            class="text-[17px] cursor-pointer mt-1"
+            @click="onPoiPopupCancelGoTo"
+          ></v-icon>
+          <v-icon
             v-tooltip="{ text: 'Delete Point of Interest', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
             variant="text"
             icon="mdi-trash-can"
@@ -1681,7 +1706,13 @@ const setDefaultMapPosition = async (): Promise<void> => {
   }
 }
 
-const executeGoToOption = async (): Promise<void> => {
+const executeGoToOption = async (options?: {
+  /**
+   * When true, do not place the regular GoTo marker on the map. Used for PoI GoTo targets,
+   * which display the active state via a pulsating border on the PoI marker itself.
+   */
+  skipGotoMarker?: boolean
+}): Promise<void> => {
   if (!clickedLocation.value || !map.value) return
 
   if (gotoMarker.value) {
@@ -1689,22 +1720,30 @@ const executeGoToOption = async (): Promise<void> => {
     gotoMarker.value = undefined
   }
 
-  gotoMarker.value = L.marker(clickedLocation.value as LatLngTuple, {
-    icon: L.divIcon({
-      className: 'marker-icon',
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
-    }),
-  }).addTo(map.value)
+  // Skip the regular goto marker for PoI targets; the PoI marker itself shows the active state
+  // via a pulsating border (see gotoTargetPoiId watcher and .poi-marker-goto-target styles).
+  if (options?.skipGotoMarker) {
+    // Caller is responsible for setting gotoTargetPoiId to the target PoI's id.
+  } else {
+    gotoTargetPoiId.value = null
 
-  const gotoTooltip = L.tooltip({
-    content: '<i class="mdi mdi-crosshairs-gps border-[1px] rounded-full text-[18px] px-[2px] pt-[1px] "></i>',
-    permanent: true,
-    direction: 'center',
-    className: 'waypoint-tooltip',
-    opacity: 1,
-  })
-  gotoMarker.value.bindTooltip(gotoTooltip)
+    gotoMarker.value = L.marker(clickedLocation.value as LatLngTuple, {
+      icon: L.divIcon({
+        className: 'marker-icon',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      }),
+    }).addTo(map.value)
+
+    const gotoTooltip = L.tooltip({
+      content: '<i class="mdi mdi-crosshairs-gps border-[1px] rounded-full text-[18px] px-[2px] pt-[1px] "></i>',
+      permanent: true,
+      direction: 'center',
+      className: 'waypoint-tooltip',
+      opacity: 1,
+    })
+    gotoMarker.value.bindTooltip(gotoTooltip)
+  }
 
   if (clickedLocation.value) {
     // Define default values
@@ -1724,6 +1763,20 @@ const executeGoToOption = async (): Promise<void> => {
     }
   }
 }
+
+// Tracks the PoI currently set as the vehicle's GoTo target.
+const gotoTargetPoiId = ref<string | null>(null)
+
+const setPoiGotoTargetStyle = (poiId: string, active: boolean): void => {
+  const marker = mapWidgetPoiMarkers.value[poiId]
+  const bg = marker?.getElement()?.querySelector('.poi-marker-background') as HTMLElement | null
+  bg?.classList.toggle('poi-marker-goto-target', active)
+}
+
+watch(gotoTargetPoiId, (newId, oldId) => {
+  if (oldId && oldId !== newId) setPoiGotoTargetStyle(oldId, false)
+  if (newId) setPoiGotoTargetStyle(newId, true)
+})
 
 // Floating action menu shown when right-clicking a Point of Interest.
 const POI_POPUP_WIDTH = 221
@@ -1762,6 +1815,31 @@ const closePoiPopup = (): void => {
 
 const onDocumentClickClosePoiPopup = (): void => {
   if (poiPopupVisible.value) closePoiPopup()
+}
+
+const poiPopupSelectedPoiIsGotoTarget = computed(
+  () => poiPopupSelectedId.value !== null && poiPopupSelectedId.value === gotoTargetPoiId.value
+)
+
+const onPoiPopupGoTo = async (): Promise<void> => {
+  const poi = poiPopupSelectedPoi.value
+  if (!poi) return
+  clickedLocation.value = [poi.coordinates[0], poi.coordinates[1]]
+  gotoTargetPoiId.value = poi.id
+  closePoiPopup()
+  await executeGoToOption({ skipGotoMarker: true })
+}
+
+// Cancels an active GoTo by switching the vehicle to its position-hold flight mode
+const onPoiPopupCancelGoTo = async (): Promise<void> => {
+  closePoiPopup()
+  try {
+    await vehicleStore.pauseMission()
+    gotoTargetPoiId.value = null
+    openSnackbar({ message: 'GoTo command cancelled. Vehicle will hold at its current position.', variant: 'success' })
+  } catch (error) {
+    openSnackbar({ message: `Cancel GoTo failed: ${(error as Error).message}`, variant: 'error' })
+  }
 }
 
 const onPoiPopupDelete = (): void => {
@@ -2132,6 +2210,8 @@ const addPoiMarkerToMapWidget = (poi: PointOfInterest): void => {
   })
 
   mapWidgetPoiMarkers.value[poi.id] = marker
+
+  if (gotoTargetPoiId.value === poi.id) setPoiGotoTargetStyle(poi.id, true)
 }
 
 const updatePoiMarkerOnMapWidget = (poi: PointOfInterest): void => {
@@ -2141,6 +2221,9 @@ const updatePoiMarkerOnMapWidget = (poi: PointOfInterest): void => {
   marker.setLatLng(poi.coordinates as LatLngTuple)
 
   marker.setIcon(L.divIcon(poiIconConfig(poi)))
+
+  // setIcon replaces the marker's DOM element, so the goto-target class needs to be re-applied.
+  if (gotoTargetPoiId.value === poi.id) setPoiGotoTargetStyle(poi.id, true)
 
   const updatedTooltipContent = `
     <strong>${poi.name}</strong><br>
@@ -2155,6 +2238,8 @@ const removePoiMarkerFromMapWidget = (poiId: string): void => {
 
   mapWidgetPoiMarkers.value[poiId].remove()
   delete mapWidgetPoiMarkers.value[poiId]
+
+  if (gotoTargetPoiId.value === poiId) gotoTargetPoiId.value = null
 }
 
 const hideControlPanel = (): void => {
@@ -2470,6 +2555,26 @@ watch(
 </style>
 
 <style>
+/* Unscoped because Leaflet creates the marker DOM imperatively (no scope attribute applied).
+   Uses box-shadow with a positive spread for the active border so the effect is drawn outside
+   the bg circle (revealing the map when transparent) and follows the circular border-radius.
+   The static 1px border is hidden during the active state so only the pulsating ring remains. */
+.poi-marker-background.poi-marker-goto-target {
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 1);
+  animation: poi-marker-goto-target-pulse 1s ease-in-out infinite;
+}
+
+@keyframes poi-marker-goto-target-pulse {
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 1);
+  }
+  50% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 0);
+  }
+}
+
 .speed-dial-glow {
   isolation: isolate;
 }
