@@ -153,6 +153,80 @@
   >
   </ContextMenu>
 
+  <Teleport to="body">
+    <div
+      v-if="poiPopupVisible && poiPopupSelectedPoi"
+      class="poi-popup-menu fixed z-[99999] flex flex-col rounded-md text-white"
+      :style="[
+        interfaceStore.globalGlassMenuStyles,
+        { background: '#333333EE', border: '1px solid #FFFFFF44' },
+        { top: `${poiPopupPosition.y}px`, left: `${poiPopupPosition.x}px`, width: `${POI_POPUP_WIDTH}px` },
+      ]"
+      @click.stop
+      @contextmenu.stop.prevent
+    >
+      <div class="flex justify-between items-center pt-1 pb-2 px-2">
+        <p class="text-[14px] truncate mr-2">{{ poiPopupSelectedPoi.name }}</p>
+        <div class="flex shrink-0 items-center gap-x-3">
+          <v-icon
+            v-tooltip="{ text: 'Delete Point of Interest', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
+            variant="text"
+            icon="mdi-trash-can"
+            rounded="full"
+            size="x-small"
+            color="white"
+            class="text-[17px] cursor-pointer mt-1"
+            @click="onPoiPopupDelete"
+          ></v-icon>
+          <v-icon
+            v-tooltip="{ text: 'Edit Point of Interest', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
+            variant="text"
+            icon="mdi-pencil"
+            rounded="full"
+            size="x-small"
+            color="white"
+            class="text-[17px] cursor-pointer mt-1"
+            @click="onPoiPopupEdit"
+          ></v-icon>
+        </div>
+      </div>
+
+      <v-divider />
+
+      <div
+        class="flex flex-col justify-center w-full items-center py-1 px-2 bg-[#EEEEEE] text-black rounded-bl-md rounded-br-md"
+      >
+        <div class="flex w-full items-center gap-x-2 text-[10px] py-[1px] mb-[2px]">
+          <v-icon
+            v-tooltip="{ text: 'Copy latitude to clipboard', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
+            variant="text"
+            icon="mdi-content-copy"
+            size="x-small"
+            color="black"
+            class="text-[12px] cursor-pointer shrink-0"
+            @click="onPoiPopupCopyCoordinate(0)"
+          ></v-icon>
+          <p class="flex-1">Lat.:</p>
+          <p>{{ poiPopupSelectedPoi.coordinates[0].toFixed(7) }}</p>
+        </div>
+        <v-divider class="border-black w-full" />
+        <div class="flex w-full items-center gap-x-2 text-[10px] py-[1px]">
+          <v-icon
+            v-tooltip="{ text: 'Copy longitude to clipboard', zIndex: POI_POPUP_TOOLTIP_Z_INDEX }"
+            variant="text"
+            icon="mdi-content-copy"
+            size="x-small"
+            color="black"
+            class="text-[12px] cursor-pointer shrink-0"
+            @click="onPoiPopupCopyCoordinate(1)"
+          ></v-icon>
+          <p class="flex-1">Long.:</p>
+          <p>{{ poiPopupSelectedPoi.coordinates[1].toFixed(7) }}</p>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <v-dialog v-model="widgetStore.widgetManagerVars(widget.hash).configMenuOpen" width="auto">
     <v-card class="pa-2" :style="interfaceStore.globalGlassMenuStyles">
       <v-card-title class="text-center">Map widget settings</v-card-title>
@@ -298,7 +372,7 @@ import { provideMapContext } from '@/composables/map/useMapContext'
 import { openSnackbar } from '@/composables/snackbar'
 import { MavCmd, MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { datalogger, DatalogVariable } from '@/libs/sensors-logging'
-import { degrees } from '@/libs/utils'
+import { copyToClipboard, degrees } from '@/libs/utils'
 import { createGridOverlay, fitMapToWaypoints, TargetFollower, WhoToFollow } from '@/libs/utils-map'
 import type { MAVLinkVehicle } from '@/libs/vehicle/mavlink/vehicle'
 import { useAppInterfaceStore } from '@/stores/appInterface'
@@ -401,6 +475,7 @@ const onTouchStart = (e: TouchEvent): void => {
   if (e.touches.length > 1) {
     isPinching.value = true
     if (contextMenuVisible.value) hideContextMenuAndMarker()
+    if (poiPopupVisible.value) closePoiPopup()
     clearTimeout(pinchTimeout)
   }
 }
@@ -768,6 +843,7 @@ onMounted(async () => {
 
   map.value.on('click', (event: LeafletMouseEvent) => {
     clickedLocation.value = [event.latlng.lat, event.latlng.lng]
+    closePoiPopup()
   })
 
   // Update center value after panning
@@ -856,6 +932,7 @@ onMounted(async () => {
   targetFollower.enableAutoUpdate()
 
   window.addEventListener('keydown', onKeydown)
+  document.addEventListener('click', onDocumentClickClosePoiPopup)
 
   // Pan map to vehicle on mounting if it's position is available, otherwise pan to home
   if (vehiclePosition.value) {
@@ -989,6 +1066,8 @@ const handleContextMenu = {
     if (!map.value || isPinching.value || isDragging.value) return
     event.preventDefault()
     event.stopPropagation()
+
+    closePoiPopup()
 
     const pt = map.value.mouseEventToContainerPoint(event)
     const ll = map.value.containerPointToLatLng(pt)
@@ -1149,6 +1228,7 @@ watch(
 onBeforeUnmount(() => {
   targetFollower.disableAutoUpdate()
   window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('click', onDocumentClickClosePoiPopup)
 
   if (map.value) {
     map.value.off('contextmenu')
@@ -1645,6 +1725,93 @@ const executeGoToOption = async (): Promise<void> => {
   }
 }
 
+// Floating action menu shown when right-clicking a Point of Interest.
+const POI_POPUP_WIDTH = 221
+const POI_POPUP_HEIGHT = 110
+const POI_POPUP_TOOLTIP_Z_INDEX = 100000
+
+const poiPopupVisible = ref(false)
+const poiPopupPosition = ref({ x: 0, y: 0 })
+const poiPopupSelectedId = ref<string | null>(null)
+const poiPopupSelectedPoi = computed(() =>
+  poiPopupSelectedId.value === null
+    ? null
+    : missionStore.pointsOfInterest.find((p) => p.id === poiPopupSelectedId.value) ?? null
+)
+
+const openPoiPopup = (poi: PointOfInterest, event: MouseEvent): void => {
+  if (contextMenuVisible.value) hideContextMenuAndMarker()
+
+  const margin = 8
+  let x = event.clientX
+  let y = event.clientY
+  if (x + POI_POPUP_WIDTH > window.innerWidth - margin) x = window.innerWidth - POI_POPUP_WIDTH - margin
+  if (y + POI_POPUP_HEIGHT > window.innerHeight - margin) y = window.innerHeight - POI_POPUP_HEIGHT - margin
+  if (x < margin) x = margin
+  if (y < margin) y = margin
+
+  poiPopupPosition.value = { x, y }
+  poiPopupSelectedId.value = poi.id
+  poiPopupVisible.value = true
+}
+
+const closePoiPopup = (): void => {
+  poiPopupVisible.value = false
+  poiPopupSelectedId.value = null
+}
+
+const onDocumentClickClosePoiPopup = (): void => {
+  if (poiPopupVisible.value) closePoiPopup()
+}
+
+const onPoiPopupDelete = (): void => {
+  const poi = poiPopupSelectedPoi.value
+  if (!poi) return
+  const poiId = poi.id
+  const poiName = poi.name
+  closePoiPopup()
+  showDialog({
+    variant: 'warning',
+    message: `Delete "${poiName}"?`,
+    persistent: false,
+    maxWidth: '350px',
+    actions: [
+      { text: 'Cancel', color: 'white', action: closeDialog },
+      {
+        text: 'Delete',
+        color: 'white',
+        action: () => {
+          missionStore.removePointOfInterest(poiId)
+          closeDialog()
+        },
+      },
+    ] as DialogActions[],
+  })
+}
+
+const onPoiPopupEdit = (): void => {
+  const poi = poiPopupSelectedPoi.value
+  if (!poi) return
+  if (!poiManagerMapWidgetRef.value) {
+    openSnackbar({ message: 'POI Manager (map widget) is not available.', variant: 'error' })
+    return
+  }
+  poiManagerMapWidgetRef.value.openDialog(undefined, poi)
+  closePoiPopup()
+}
+
+const onPoiPopupCopyCoordinate = async (index: 0 | 1): Promise<void> => {
+  const poi = poiPopupSelectedPoi.value
+  if (!poi) return
+  const label = index === 0 ? 'Latitude' : 'Longitude'
+  try {
+    await copyToClipboard(`${poi.coordinates[index]}`)
+    openSnackbar({ message: `${label} copied to clipboard.`, variant: 'success' })
+  } catch (error) {
+    openSnackbar({ message: `Failed to copy ${label.toLowerCase()}: ${(error as Error).message}`, variant: 'error' })
+  }
+}
+
 const onMenuOptionSelect = async (option: string): Promise<void> => {
   switch (option) {
     case 'goto': {
@@ -1743,6 +1910,7 @@ const onGlobalOriginSet = (latitude: number, longitude: number): void => {
 const onKeydown = (event: KeyboardEvent): void => {
   if (event.key === 'Escape') {
     hideContextMenuAndMarker()
+    closePoiPopup()
     return
   }
 }
@@ -1947,6 +2115,20 @@ const addPoiMarkerToMapWidget = (poi: PointOfInterest): void => {
         console.warn('POI not found in store:', poi.id)
       }
     }
+  })
+
+  marker.on('contextmenu', (event: L.LeafletMouseEvent) => {
+    L.DomEvent.stopPropagation(event)
+    event.originalEvent.stopPropagation()
+    event.originalEvent.preventDefault()
+
+    const freshPoi = missionStore.pointsOfInterest.find((p) => p.id === poi.id)
+    if (!freshPoi) {
+      console.warn('POI not found in store:', poi.id)
+      return
+    }
+
+    openPoiPopup(freshPoi, event.originalEvent)
   })
 
   mapWidgetPoiMarkers.value[poi.id] = marker
