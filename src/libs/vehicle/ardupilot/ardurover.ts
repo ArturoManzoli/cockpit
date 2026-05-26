@@ -5,28 +5,9 @@ import * as ardurover_metadata from '@/libs/vehicle/ardupilot/ParameterRepositor
 
 import * as Vehicle from '../vehicle'
 import { ArduPilotVehicle } from './ardupilot'
+import { RoverMode as CustomMode } from './types/modes'
 
-/**
- * Custom modes for Rover
- * There is no documentation from their source code
- */
-export enum CustomMode {
-  // Mode not set by vehicle yet
-  PRE_FLIGHT = -1,
-  MANUAL = 0,
-  ACRO = 1,
-  STEERING = 3,
-  HOLD = 4,
-  LOITER = 5,
-  FOLLOW = 6,
-  SIMPLE = 7,
-  DOCK = 8,
-  AUTO = 10,
-  RTL = 11,
-  SMART_RTL = 12,
-  GUIDED = 15,
-  INITIALISING = 16,
-}
+export { CustomMode }
 
 /**
  * ArduRover vehicle
@@ -40,7 +21,7 @@ export class ArduRover extends ArduPilotVehicle<CustomMode> {
    * @param {number} system_id
    */
   constructor(system_id: number) {
-    super(Vehicle.Type.Rover, system_id)
+    super(Vehicle.Type.Rover, system_id, CustomMode)
   }
 
   /**

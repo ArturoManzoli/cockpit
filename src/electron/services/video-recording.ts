@@ -3,7 +3,7 @@ import { ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import { createWriteStream } from 'fs'
 import { tmpdir } from 'os'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, isAbsolute, join } from 'path'
 import { pipeline } from 'stream'
 import { v4 as uuid } from 'uuid'
 import * as yauzl from 'yauzl'
@@ -13,7 +13,7 @@ import type { LiveConcatProcessResult, LiveStreamProcess, ZipExtractionResult } 
 
 import { videoFilename, videoThumbnailFilename } from '../../utils/video'
 import { getFFmpegPath } from './ffmpeg-path'
-import { cockpitFolderPath, filesystemStorage } from './storage'
+import { filesystemStorage, getCockpitFolderPath } from './storage'
 
 /**
  * Live video streaming service for Electron
@@ -72,7 +72,7 @@ const startVideoRecording = async (
   const tempDir = await createTempDirectory(`cockpit_video_recording_${recordingHash}`)
 
   // Get video folder path and construct output path
-  const videosPath = join(cockpitFolderPath, 'videos')
+  const videosPath = join(getCockpitFolderPath(), 'videos')
   await fs.mkdir(videosPath, { recursive: true })
 
   // Output directly as MP4 with fragmented format
@@ -324,25 +324,14 @@ const finalizeVideoRecording = async (processId: string): Promise<void> => {
 }
 
 /**
- * Extract ZIP file and return information about video chunks and telemetry
+ * Extract a single ZIP file into the provided destination directory using yauzl.
  * @param {string} zipFilePath - Path to the ZIP file
- * @returns {Promise<ZipExtractionResult>} Information about extracted chunks
+ * @param {string} extractPath - Destination directory for the extracted files
+ * @returns {Promise<string[]>} Promise resolving to absolute paths of all extracted files
  */
-const extractVideoChunksZip = async (zipFilePath: string): Promise<ZipExtractionResult> => {
-  console.debug(`Extracting ZIP file '${zipFilePath}'`)
-
-  if (!zipFilePath) {
-    throw new Error('zipFilePath is undefined or empty')
-  }
-
-  // Create temporary directory for extraction
-  const tempDir = await createTempDirectory('zip-extraction')
-  const extractPath = join(tempDir, 'extracted')
-  await fs.mkdir(extractPath, { recursive: true })
-
+const extractZipToDir = async (zipFilePath: string, extractPath: string): Promise<string[]> => {
   const extractedFiles: string[] = []
 
-  // Extract ZIP file using yauzl
   await new Promise<void>((resolve, reject) => {
     yauzl.open(zipFilePath, { lazyEntries: true }, (openErr, zipfile) => {
       if (openErr || !zipfile) {
@@ -397,26 +386,44 @@ const extractVideoChunksZip = async (zipFilePath: string): Promise<ZipExtraction
     })
   })
 
-  // Find video chunks (WebM files)
-  const chunkFiles = extractedFiles
-    .filter((file) => {
-      const fileName = basename(file)
-      return fileName.endsWith('.webm') || /^[a-f0-9]+_\d+/.test(fileName) || /chunk_\d+/.test(fileName)
-    })
-    .sort((a, b) => {
-      const aFileName = basename(a)
-      const bFileName = basename(b)
+  return extractedFiles
+}
 
-      // Extract chunk numbers from filenames like "hash_0", "hash_1", etc.
-      const aMatch = aFileName.match(/_(\d+)/)
-      const bMatch = bFileName.match(/_(\d+)/)
+/**
+ * Build a {@link ZipExtractionResult} from a flat list of extracted file paths.
+ * Filters and sorts WebM/chunk files, picks the first valid `.ass` telemetry file,
+ * and derives the recording hash from the first chunk's filename.
+ * @param {string[]} extractedFiles - All file paths produced by the ZIP extractions
+ * @param {string} tempDir - Temporary directory containing the extracted files (returned for cleanup)
+ * @returns {Promise<ZipExtractionResult>} Information about the unified set of chunks
+ */
+const buildExtractionResult = async (extractedFiles: string[], tempDir: string): Promise<ZipExtractionResult> => {
+  // Find video chunks (WebM files) and de-duplicate by basename so identical chunks across
+  // sibling part-zips are only included once.
+  const chunkFilesMap = new Map<string, string>()
+  for (const file of extractedFiles) {
+    const fileName = basename(file)
+    const isChunkFile = fileName.endsWith('.webm') || /^[a-f0-9]+_\d+/.test(fileName) || /chunk_\d+/.test(fileName)
+    if (!isChunkFile) continue
+    if (!chunkFilesMap.has(fileName)) {
+      chunkFilesMap.set(fileName, file)
+    }
+  }
 
-      if (aMatch && bMatch) {
-        return parseInt(aMatch[1], 10) - parseInt(bMatch[1], 10)
-      }
+  const chunkFiles = [...chunkFilesMap.values()].sort((a, b) => {
+    const aFileName = basename(a)
+    const bFileName = basename(b)
 
-      return aFileName.localeCompare(bFileName)
-    })
+    // Extract chunk numbers from filenames like "hash_0", "hash_1", etc.
+    const aMatch = aFileName.match(/_(\d+)/)
+    const bMatch = bFileName.match(/_(\d+)/)
+
+    if (aMatch && bMatch) {
+      return parseInt(aMatch[1], 10) - parseInt(bMatch[1], 10)
+    }
+
+    return aFileName.localeCompare(bFileName)
+  })
 
   // Filter valid chunks (non-empty files)
   const validChunks: string[] = []
@@ -432,10 +439,10 @@ const extractVideoChunksZip = async (zipFilePath: string): Promise<ZipExtraction
   }
 
   if (validChunks.length === 0) {
-    throw new Error('No valid video chunks found in ZIP file')
+    throw new Error('No valid video chunks found in ZIP file(s)')
   }
 
-  // Find .ass telemetry file
+  // Find .ass telemetry file (only the first batch carries it; pick whichever was extracted first)
   const assFile = extractedFiles.find((file) => basename(file).endsWith('.ass'))
 
   // Extract metadata from first chunk
@@ -452,7 +459,6 @@ const extractVideoChunksZip = async (zipFilePath: string): Promise<ZipExtraction
     creationDate = new Date()
   }
 
-  // Generate filename
   const fileName = videoFilename(hash, creationDate)
 
   return {
@@ -465,13 +471,90 @@ const extractVideoChunksZip = async (zipFilePath: string): Promise<ZipExtraction
 }
 
 /**
- * Copy telemetry file to video output directory
- * @param {string} originAssFilePath - Path to the .ass file
+ * Extract one or more ZIP files into a shared temporary directory and return
+ * a unified description of all video chunks and telemetry.
+ * @param {string[]} zipFilePaths - Absolute paths to the ZIP files
+ * @returns {Promise<ZipExtractionResult>} Information about the merged set of chunks
+ */
+const extractVideoChunksZips = async (zipFilePaths: string[]): Promise<ZipExtractionResult> => {
+  if (!zipFilePaths || zipFilePaths.length === 0) {
+    throw new Error('No ZIP file paths provided')
+  }
+
+  console.debug(`Extracting ${zipFilePaths.length} ZIP file(s): ${zipFilePaths.join(', ')}`)
+
+  const tempDir = await createTempDirectory('zip-extraction')
+  const extractPath = join(tempDir, 'extracted')
+  await fs.mkdir(extractPath, { recursive: true })
+
+  const extractedFiles: string[] = []
+  for (const zipFilePath of zipFilePaths) {
+    const filesFromZip = await extractZipToDir(zipFilePath, extractPath)
+    extractedFiles.push(...filesFromZip)
+  }
+
+  return buildExtractionResult(extractedFiles, tempDir)
+}
+
+/**
+ * Find sibling chunk-group ZIP files in the same folder as the provided ZIP.
+ * Recognizes the `chunks_<hash>_part<N>.zip` and `chunks_<hash>.zip` naming
+ * convention produced by Cockpit Lite when downloading chunk groups,
+ * and returns every ZIP that shares the same recording hash (including the
+ * input file). When no hash can be inferred, only the input path is returned.
+ * @param {string} zipFilePath - Absolute path to a chunk-group ZIP file
+ * @returns {Promise<string[]>} Sorted list of sibling ZIP paths (input included)
+ */
+const findSiblingChunkZips = async (zipFilePath: string): Promise<string[]> => {
+  if (!zipFilePath) return []
+
+  const folder = dirname(zipFilePath)
+  const inputName = basename(zipFilePath)
+
+  const hashRegex = /^chunks_([a-f0-9]+)(?:_part\d+)?\.zip$/i
+  const inputHashMatch = inputName.match(hashRegex)
+  if (!inputHashMatch) {
+    return [zipFilePath]
+  }
+
+  const hash = inputHashMatch[1].toLowerCase()
+  let folderEntries: string[] = []
+  try {
+    folderEntries = await fs.readdir(folder)
+  } catch (error) {
+    console.warn(`Failed to scan folder for sibling chunk ZIPs: ${error}`)
+    return [zipFilePath]
+  }
+
+  const siblings = folderEntries
+    .filter((name) => {
+      const match = name.match(hashRegex)
+      return !!match && match[1].toLowerCase() === hash
+    })
+    .map((name) => join(folder, name))
+    .sort((a, b) => {
+      // Order by part number (single-zip without `_partN` is treated as part 0).
+      const partRegex = /_part(\d+)\.zip$/i
+      const aPart = parseInt(basename(a).match(partRegex)?.[1] ?? '0', 10)
+      const bPart = parseInt(basename(b).match(partRegex)?.[1] ?? '0', 10)
+      return aPart - bPart
+    })
+
+  return siblings.length > 0 ? siblings : [zipFilePath]
+}
+
+/**
+ * Copy telemetry file to video output directory.
+ * If originAssFilePath is not absolute, it is resolved relative to the videos directory.
+ * @param {string} originAssFilePath - Absolute path or filename of the .ass file
  * @param {string} destAssFilePath - Path where to put the ass file
  */
 const copyTelemetryFile = async (originAssFilePath: string, destAssFilePath: string): Promise<void> => {
   try {
-    await fs.copyFile(originAssFilePath, destAssFilePath)
+    const resolvedOrigin = isAbsolute(originAssFilePath)
+      ? originAssFilePath
+      : join(getCockpitFolderPath(), 'videos', originAssFilePath)
+    await fs.copyFile(resolvedOrigin, destAssFilePath)
     console.log(`Copied telemetry file to '${destAssFilePath}'.`)
   } catch (error) {
     console.warn(`Failed to copy telemetry file:`, error)
@@ -553,7 +636,7 @@ const createVideoChunksZip = async (hash: string): Promise<string> => {
   console.debug(`Creating ZIP file for chunk group ${hash}`)
 
   // Find all chunk files for this hash
-  const tempChunksPath = join(cockpitFolderPath, 'videos', 'temporary-video-chunks')
+  const tempChunksPath = join(getCockpitFolderPath(), 'videos', 'temporary-video-chunks')
 
   let chunkFiles: string[] = []
   try {
@@ -603,7 +686,7 @@ const createVideoChunksZip = async (hash: string): Promise<string> => {
   }
 
   // Generate ZIP filename
-  const tempChunksFolderPath = join(cockpitFolderPath, 'videos', 'temporary-video-chunks')
+  const tempChunksFolderPath = join(getCockpitFolderPath(), 'videos', 'temporary-video-chunks')
   const zipFilename = `${defaultFileName}.zip`
   const zipFilePath = join(tempChunksFolderPath, zipFilename)
 
@@ -653,7 +736,7 @@ const createVideoChunksZip = async (hash: string): Promise<string> => {
 
     // Add .ass telemetry file if found - ALWAYS process this regardless of chunk failures
     if (assFileName) {
-      const assFilePath = join(cockpitFolderPath, 'videos', assFileName)
+      const assFilePath = join(getCockpitFolderPath(), 'videos', assFileName)
 
       fs.access(assFilePath)
         .then(() => fs.stat(assFilePath))
@@ -742,13 +825,25 @@ export const setupVideoRecordingService = (): void => {
   })
 
   /**
-   * Extract video chunks from ZIP file
+   * Extract video chunks from one or more ZIP files into a single temp directory
    */
-  ipcMain.handle('extract-video-chunks-zip', async (_, zipFilePath: string) => {
+  ipcMain.handle('extract-video-chunks-zips', async (_, zipFilePaths: string[]) => {
     try {
-      return await extractVideoChunksZip(zipFilePath)
+      return await extractVideoChunksZips(zipFilePaths)
     } catch (error) {
-      console.error('Error extracting video chunks from ZIP:', error)
+      console.error('Error extracting video chunks from ZIPs:', error)
+      throw error
+    }
+  })
+
+  /**
+   * Find sibling chunk-group ZIP files in the same folder as the provided ZIP
+   */
+  ipcMain.handle('find-sibling-chunk-zips', async (_, zipFilePath: string) => {
+    try {
+      return await findSiblingChunkZips(zipFilePath)
+    } catch (error) {
+      console.error('Error finding sibling chunk ZIPs:', error)
       throw error
     }
   })

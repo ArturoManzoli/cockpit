@@ -7,9 +7,11 @@ import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useMissionStore } from '@/stores/mission'
 
+import { getDataLakeVariableData, getDataLakeVariableInfo } from './actions/data-lake'
 import { settingsManager } from './settings-management'
 import { unitAbbreviation } from './units'
 import { degrees } from './utils'
+import { findDataLakeInputsInString, replaceDataLakeInputsInString } from './utils-data-lake'
 
 /**
  * Variables data can be datalogged
@@ -71,10 +73,6 @@ type VeryGenericData = {
    * Linux epoch stating when this value was last changed
    */
   lastChanged?: number
-  /**
-   * Current view of the variable
-   */
-  hideLabel?: boolean
 }
 
 /**
@@ -88,7 +86,7 @@ export type ExtendedVariablesData = {
   [key: string]: {
     value: string
     lastChanged: number
-    hideLabel?: boolean
+    displayName: string
   }
 }
 
@@ -324,26 +322,29 @@ class DataLogger {
 
       /* eslint-disable vue/max-len, prettier/prettier, max-len */
       let variablesData: ExtendedVariablesData = {
-        [DatalogVariable.roll]: { value: `${degrees(vehicleStore.attitude.roll)?.toFixed(1)} °`, ...timeNowObj },
-        [DatalogVariable.pitch]: { value: `${degrees(vehicleStore.attitude.pitch)?.toFixed(1)} °`, ...timeNowObj },
-        [DatalogVariable.heading]: { value: `${degrees(vehicleStore.attitude.yaw)?.toFixed(1)} °`, ...timeNowObj },
-        [DatalogVariable.depth]: { value: `${depthValue} ${depthUnit}`, ...timeNowObj },
-        [DatalogVariable.mode]: { value: vehicleStore.mode || 'Unknown', ...timeNowObj },
-        [DatalogVariable.batteryVoltage]: { value: `${vehicleStore.powerSupply.voltage?.toFixed(2)} V` || 'Unknown', ...timeNowObj },
-        [DatalogVariable.batteryCurrent]: { value: `${vehicleStore.powerSupply.current?.toFixed(2)} A` || 'Unknown', ...timeNowObj },
-        [DatalogVariable.gpsVisibleSatellites]: { value: vehicleStore.statusGPS.visibleSatellites?.toFixed(0) || 'Unknown', ...timeNowObj },
-        [DatalogVariable.gpsFixType]: { value: vehicleStore.statusGPS.fixType, ...timeNowObj },
-        [DatalogVariable.latitude]: { value: `${vehicleStore.coordinates.latitude?.toFixed(6)} °` || 'Unknown', ...timeNowObj },
-        [DatalogVariable.longitude]: { value: `${vehicleStore.coordinates.longitude?.toFixed(6)} °` || 'Unknown', ...timeNowObj },
-        [DatalogVariable.missionName]: { value: missionStore.missionName || 'Cockpit', hideLabel: true, ...timeNowObj },
-        [DatalogVariable.time]: { value: format(timeNow, 'HH:mm:ss O'), hideLabel: true, ...timeNowObj },
-        [DatalogVariable.date]: { value: format(timeNow, 'LLL dd, yyyy'), hideLabel: true, ...timeNowObj },
-        [DatalogVariable.instantaneousPower]: { value: `${vehicleStore.instantaneousWatts?.toFixed(1)} W` || 'Unknown', ...timeNowObj },
+        [DatalogVariable.roll]: { displayName: DatalogVariable.roll, value: `${degrees(vehicleStore.attitude.roll)?.toFixed(1)} °`, ...timeNowObj },
+        [DatalogVariable.pitch]: { displayName: DatalogVariable.pitch, value: `${degrees(vehicleStore.attitude.pitch)?.toFixed(1)} °`, ...timeNowObj },
+        [DatalogVariable.heading]: { displayName: DatalogVariable.heading, value: `${degrees(vehicleStore.attitude.yaw)?.toFixed(1)} °`, ...timeNowObj },
+        [DatalogVariable.depth]: { displayName: DatalogVariable.depth, value: `${depthValue} ${depthUnit}`, ...timeNowObj },
+        [DatalogVariable.mode]: { displayName: DatalogVariable.mode, value: vehicleStore.mode || 'Unknown', ...timeNowObj },
+        [DatalogVariable.batteryVoltage]: { displayName: DatalogVariable.batteryVoltage, value: `${vehicleStore.powerSupply.voltage?.toFixed(2)} V` || 'Unknown', ...timeNowObj },
+        [DatalogVariable.batteryCurrent]: { displayName: DatalogVariable.batteryCurrent, value: `${vehicleStore.powerSupply.current?.toFixed(2)} A` || 'Unknown', ...timeNowObj },
+        [DatalogVariable.gpsVisibleSatellites]: { displayName: DatalogVariable.gpsVisibleSatellites, value: vehicleStore.statusGPS.visibleSatellites?.toFixed(0) || 'Unknown', ...timeNowObj },
+        [DatalogVariable.gpsFixType]: { displayName: DatalogVariable.gpsFixType, value: vehicleStore.statusGPS.fixType, ...timeNowObj },
+        [DatalogVariable.latitude]: { displayName: DatalogVariable.latitude, value: `${vehicleStore.coordinates.latitude?.toFixed(6)} °` || 'Unknown', ...timeNowObj },
+        [DatalogVariable.longitude]: { displayName: DatalogVariable.longitude, value: `${vehicleStore.coordinates.longitude?.toFixed(6)} °` || 'Unknown', ...timeNowObj },
+        [DatalogVariable.missionName]: { displayName: '', value: missionStore.missionName || 'Cockpit', ...timeNowObj },
+        [DatalogVariable.time]: { displayName: '', value: format(timeNow, 'HH:mm:ss O'), ...timeNowObj },
+        [DatalogVariable.date]: { displayName: '', value: format(timeNow, 'LLL dd, yyyy'), ...timeNowObj },
+        [DatalogVariable.instantaneousPower]: { displayName: DatalogVariable.instantaneousPower, value: `${vehicleStore.instantaneousWatts?.toFixed(1)} W` || 'Unknown', ...timeNowObj },
       }
 
       /* eslint-enable vue/max-len, prettier/prettier, max-len */
       const veryGenericData = this.collectVeryGenericData(timeNowObj)
       variablesData = { ...variablesData, ...veryGenericData }
+
+      const dataLakeData = this.collectDataLakeData(variablesData, timeNowObj)
+      variablesData = { ...variablesData, ...dataLakeData }
 
       const logPoint: CockpitStandardLogPoint = {
         epoch: timeNow.getTime(),
@@ -372,9 +373,56 @@ class DataLogger {
     this.veryGenericIndicators.forEach((indicator) => {
       result[indicator.displayName] = {
         value: indicator.variableValue,
+        displayName: indicator.displayName,
         lastChanged: data.lastChanged,
       }
     })
+    return result
+  }
+
+  /**
+   * Collects data from data lake variables in the telemetry display grid that are not already covered
+   * by standard variables or VeryGenericIndicator data.
+   * Also resolves {{ variableId }} templates in custom messages.
+   * @param {ExtendedVariablesData} currentData - Already collected variables data (standard + VGI)
+   * @param {{ lastChanged: number }} timeInfo - Timestamp info for the log point
+   * @param {number} timeInfo.lastChanged - Linux epoch stating when this value was last changed
+   * @returns {ExtendedVariablesData} Resolved data lake variable values
+   */
+  collectDataLakeData(currentData: ExtendedVariablesData, timeInfo: { lastChanged: number }): ExtendedVariablesData {
+    const result: ExtendedVariablesData = {}
+
+    for (const gridEntries of Object.values(this.telemetryDisplayData)) {
+      for (const entry of gridEntries) {
+        if (currentData[entry]) continue
+
+        if (findDataLakeInputsInString(entry).length > 0) {
+          result[entry] = {
+            value: replaceDataLakeInputsInString(entry),
+            displayName: '',
+            ...timeInfo,
+          }
+          continue
+        }
+
+        const variableInfo = getDataLakeVariableInfo(entry)
+        if (variableInfo) {
+          const value = getDataLakeVariableData(entry)
+          let displayName = variableInfo.name ?? entry
+
+          // If the variable is a MAVLink variable, remove the (MAVLink / System: <systemId> / Component: <componentId>) suffix
+          if (entry.includes('mavlink/') && displayName.includes('(')) {
+            displayName = displayName.substring(0, displayName.lastIndexOf('(')).trim()
+          }
+          result[entry] = {
+            value: value !== undefined ? String(value) : 'N/A',
+            displayName,
+            ...timeInfo,
+          }
+        }
+      }
+    }
+
     return result
   }
 
@@ -572,7 +620,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         .map((variable) => {
           const variableData = logPoint.data[variable]
           if (variableData) {
-            return `${variableData.hideLabel ? '' : `${variable}:`} ${variableData.value}`
+            return variableData.displayName ? `${variableData.displayName}: ${variableData.value}` : variableData.value
           } else {
             return `${variable}`
           }

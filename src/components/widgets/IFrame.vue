@@ -3,43 +3,78 @@
     <div
       v-if="widget.options.isCollapsible"
       ref="iframe-container"
-      class="w-full rounded-lg overflow-hidden -mt-2"
-      :class="[isWrapped ? 'h-[42px]' : 'h-full']"
+      class="w-full h-full rounded-lg overflow-hidden"
       :width="canvasSize.width"
       :height="canvasSize.height"
       :style="interfaceStore.globalGlassMenuStyles"
     >
-      <div class="flex flex-col justify-start items-center h-auto pt-2 cursor-pointer">
-        <div class="flex justify-between w-full h-[25px] px-2">
-          <v-icon class="cursor-grab opacity-40" @mousedown="enableMovingOnDrag" @mouseup="disableMovingOnDrag">
-            mdi-drag
-          </v-icon>
-          <div class="select-none">
-            {{ widget.options.containerName || 'iframe' }}
+      <div class="flex flex-col justify-between h-full">
+        <div
+          class="flex justify-between w-full h-[42px] shrink-0 items-center px-2"
+          :class="expandsUpward ? 'order-2' : 'order-1'"
+        >
+          <div
+            class="flex items-center gap-1 flex-1 min-w-0 cursor-grab select-none"
+            @mousedown="enableMovingOnDrag"
+            @mouseup="disableMovingOnDrag"
+          >
+            <v-icon class="opacity-40 flex-shrink-0">mdi-drag</v-icon>
+            <span class="flex-1 text-center truncate">{{ widget.options.containerName }}</span>
           </div>
           <v-btn
-            :icon="isWrapped ? 'mdi-chevron-down' : 'mdi-chevron-up'"
+            :icon="collapseToggleIcon"
             variant="text"
             size="36"
-            class="mt-[-6px] opacity-60"
-            @click="toggleWrapContainer"
+            class="opacity-60 flex-shrink-0"
+            @click="toggleCollapse"
           />
         </div>
-        <div v-show="!isWrapped" class="pt-2">
+        <div
+          v-show="!widget.options.startCollapsed"
+          class="relative flex-1 min-h-0 w-full"
+          :class="expandsUpward ? 'order-1' : 'order-2'"
+        >
           <iframe
+            v-if="urlCheckStatus === 'ok'"
             v-show="iframe_loaded"
             ref="iframe"
             :src="toBeUsedURL"
-            :style="iframeStyle"
+            :style="collapsibleIframeStyle"
             frameborder="0"
             @load="loadFinished"
           />
+          <div v-else class="iframe-status-overlay flex flex-col items-center justify-center text-center px-4 gap-2">
+            <template v-if="urlCheckStatus === 'waiting'">
+              <v-icon size="48" class="opacity-80">mdi-progress-clock</v-icon>
+              <p class="text-base font-semibold">{{ waitingTitle }}</p>
+              <p class="text-sm opacity-70">
+                Trying again in {{ retryCountdownSeconds }}
+                {{ retryCountdownSeconds === 1 ? 'second' : 'seconds' }}
+              </p>
+              <v-progress-linear
+                :model-value="retryRemainingPercent"
+                color="white"
+                height="4"
+                rounded
+                reverse
+                class="!max-w-[60%] mt-2"
+              />
+            </template>
+            <template v-else-if="urlCheckStatus === 'retrying'">
+              <v-progress-circular indeterminate color="white" size="48" width="3" />
+              <p class="text-base font-semibold">Retrying...</p>
+            </template>
+            <template v-else>
+              <v-progress-circular indeterminate color="white" size="32" width="3" />
+            </template>
+          </div>
         </div>
       </div>
     </div>
     <div v-else>
       <teleport to=".widgets-view">
         <iframe
+          v-if="urlCheckStatus === 'ok'"
           v-show="iframe_loaded"
           ref="iframe"
           :src="toBeUsedURL"
@@ -47,6 +82,35 @@
           frameborder="0"
           @load="loadFinished"
         />
+        <div
+          v-else
+          class="iframe-status-overlay flex flex-col items-center justify-center text-center px-4 gap-2"
+          :style="[iframeStyle, { position: 'absolute' }]"
+        >
+          <template v-if="urlCheckStatus === 'waiting'">
+            <v-icon size="48" class="opacity-80">mdi-progress-clock</v-icon>
+            <p class="text-base font-semibold">{{ waitingTitle }}</p>
+            <p class="text-sm opacity-70">
+              Trying again in {{ retryCountdownSeconds }}
+              {{ retryCountdownSeconds === 1 ? 'second' : 'seconds' }}
+            </p>
+            <v-progress-linear
+              :model-value="retryRemainingPercent"
+              color="white"
+              height="4"
+              rounded
+              reverse
+              class="!max-w-[60%] mt-2"
+            />
+          </template>
+          <template v-else-if="urlCheckStatus === 'retrying'">
+            <v-progress-circular indeterminate color="white" size="48" width="3" />
+            <p class="text-base font-semibold">Retrying...</p>
+          </template>
+          <template v-else>
+            <v-progress-circular indeterminate color="white" size="32" width="3" />
+          </template>
+        </div>
       </teleport>
     </div>
     <v-dialog v-model="widgetStore.widgetManagerVars(widget.hash).configMenuOpen" min-width="600" max-width="45%">
@@ -92,26 +156,39 @@
                 class="ml-3 my-2"
                 @update:model-value="handleBaseUrlToggle"
               />
-              <div class="flex justify-between">
+              <div class="flex items-center gap-2">
                 <v-switch
                   v-model="widget.options.isCollapsible"
-                  label="Collapsible container"
+                  label="Collapsible"
                   color="white"
                   class="ml-2"
+                  hide-details
                 />
-                <div v-if="widget.options.isCollapsible">
-                  <v-text-field
-                    v-model="widget.options.containerName"
-                    label="Container name"
-                    item-title="name"
-                    density="compact"
-                    variant="outlined"
-                    no-data-text="iframe"
-                    hide-details
-                    theme="dark"
-                    class="w-[300px] mt-2"
-                  />
-                </div>
+                <v-select
+                  v-if="widget.options.isCollapsible"
+                  v-model="widget.options.expandDirection"
+                  :items="expandDirectionOptions"
+                  item-title="label"
+                  item-value="value"
+                  label="Expand direction"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  theme="dark"
+                  class="max-w-[120px] ml-4"
+                />
+                <v-text-field
+                  v-if="widget.options.isCollapsible"
+                  v-model="widget.options.containerName"
+                  label="Container name"
+                  item-title="name"
+                  density="compact"
+                  variant="outlined"
+                  no-data-text="iframe"
+                  hide-details
+                  theme="dark"
+                  class="ml-2"
+                />
               </div>
             </template>
           </ExpansiblePanel>
@@ -129,7 +206,7 @@
 
 <script setup lang="ts">
 import { useWindowSize } from '@vueuse/core'
-import { computed, defineProps, onBeforeMount, onBeforeUnmount, ref, toRefs, watch } from 'vue'
+import { computed, onBeforeMount, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 
 import { defaultBlueOsAddress } from '@/assets/defaults'
 import { openSnackbar } from '@/composables/snackbar'
@@ -152,15 +229,154 @@ const props = defineProps<{
 }>()
 const widget = toRefs(props).widget
 
+const { width: windowWidth, height: windowHeight } = useWindowSize()
+const collapsedHeaderHeightPx = 42
+const expandDirectionOptions = [
+  { label: 'Auto', value: 'auto' },
+  { label: 'Down', value: 'down' },
+  { label: 'Up', value: 'up' },
+]
+
+/**
+ * Returns the widget's persistent internal state, initializing it if absent (e.g. for legacy widgets).
+ * @returns {Record<string, any>} The persistent internal state object
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getInternalState = (): Record<string, any> => {
+  if (!widget.value.persistentInternalState) {
+    widget.value.persistentInternalState = {}
+  }
+  return widget.value.persistentInternalState
+}
+
 const iframe_loaded = ref(false)
 const transparency = ref(0)
 const inputURL = ref(widget.value.options.source)
-const isWrapped = ref(false)
 const vehicleAddressFromDataLake = ref<string>('')
 const lastUsedURL = ref<Record<string, string>>({
   usingVehicleAddressAsBase: '',
   notUsingVehicleAddressAsBase: '',
 })
+
+type UrlCheckStatus = 'checking' | 'ok' | 'waiting' | 'retrying'
+
+const urlCheckTimeoutMs = 10000
+const urlCheckRetryDelayMs = 5000
+const minRetryingDisplayMs = 1000
+const countdownTickMs = 100
+
+const urlCheckStatus = ref<UrlCheckStatus>('checking')
+const retryCountdownMs = ref(0)
+
+let countdownIntervalId: ReturnType<typeof setInterval> | undefined
+
+const retryCountdownSeconds = computed(() => Math.ceil(retryCountdownMs.value / 1000))
+const retryRemainingPercent = computed(() => (retryCountdownMs.value / urlCheckRetryDelayMs) * 100)
+const waitingTitle = computed(() =>
+  toBeUsedURL.value.includes('extensionv2') ? 'BlueOS extension not ready yet' : 'Page not ready yet'
+)
+
+const clearUrlCheckTimers = (): void => {
+  if (countdownIntervalId !== undefined) {
+    clearInterval(countdownIntervalId)
+    countdownIntervalId = undefined
+  }
+}
+
+/**
+ * Probes a URL with `mode: 'no-cors'` to tell apart "server unreachable" from "server up but
+ * CORS blocking the read". A no-cors GET only throws on actual network failures; when the
+ * server replies (with any status), it resolves with an opaque response. This lets us decide
+ * whether to retry the URL check or just let the iframe load directly.
+ * @param {string} url URL to probe.
+ * @returns {Promise<boolean>} True if the server responded at all; false on network failure.
+ */
+const isServerReachable = async (url: string): Promise<boolean> => {
+  try {
+    await fetch(url, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(urlCheckTimeoutMs),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Schedules the next URL check after a fixed interval, animating a countdown so the user has
+ * clear feedback about when the next attempt will happen.
+ */
+const startWaitingCountdown = (): void => {
+  clearUrlCheckTimers()
+  urlCheckStatus.value = 'waiting'
+  retryCountdownMs.value = urlCheckRetryDelayMs
+
+  const startTime = Date.now()
+  countdownIntervalId = setInterval(() => {
+    const remaining = Math.max(0, urlCheckRetryDelayMs - (Date.now() - startTime))
+    retryCountdownMs.value = remaining
+    if (remaining <= 0) {
+      clearUrlCheckTimers()
+      checkUrlStatus()
+    }
+  }, countdownTickMs)
+}
+
+/**
+ * Pre-fetches the iframe URL to verify the page is reachable before mounting the iframe.
+ *
+ * On any 4xx/5xx response, or when the server is unreachable (e.g. the vehicle is rebooting),
+ * we keep retrying every few seconds and show a "page not ready" overlay with a countdown to
+ * the next attempt. CORS failures — detected via a no-cors probe that confirms the server is
+ * alive — fall back to 'ok' so arbitrary external URLs still render as before.
+ *
+ * The 'retrying' state (active fetch on a non-initial attempt) is held for at least
+ * `minRetryingDisplayMs` so the user always sees a clear "we are trying" indicator, even
+ * when the fetch resolves quickly.
+ * @returns {Promise<void>} Resolves once the URL check (and any retry scheduling) is settled.
+ */
+const checkUrlStatus = async (): Promise<void> => {
+  clearUrlCheckTimers()
+
+  const isInitialCheck = urlCheckStatus.value === 'checking'
+  if (!isInitialCheck) {
+    urlCheckStatus.value = 'retrying'
+  }
+
+  const urlAtCheckStart = toBeUsedURL.value
+  const startTime = Date.now()
+
+  let outcome: 'ok' | 'retry'
+  try {
+    const response = await fetch(urlAtCheckStart, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(urlCheckTimeoutMs),
+    })
+    outcome = response.ok ? 'ok' : 'retry'
+  } catch {
+    if (toBeUsedURL.value !== urlAtCheckStart) return
+    outcome = (await isServerReachable(urlAtCheckStart)) ? 'ok' : 'retry'
+  }
+
+  if (!isInitialCheck) {
+    const elapsed = Date.now() - startTime
+    if (elapsed < minRetryingDisplayMs) {
+      await new Promise<void>((resolve) => setTimeout(resolve, minRetryingDisplayMs - elapsed))
+    }
+  }
+
+  if (toBeUsedURL.value !== urlAtCheckStart) return
+
+  if (outcome === 'ok') {
+    urlCheckStatus.value = 'ok'
+  } else {
+    startWaitingCountdown()
+  }
+}
 
 const vehicleBaseUrl = computed(() => {
   const protocol = window.location.protocol.includes('file') ? 'http:' : window.location.protocol
@@ -176,10 +392,6 @@ const toBeUsedURL = computed(() => {
   return composedURL(widget.value.options.source, widget.value.options.useVehicleAddressAsBase)
 })
 
-const toggleWrapContainer = (): void => {
-  isWrapped.value = !isWrapped.value
-}
-
 const enableMovingOnDrag = (): void => {
   widgetStore.allowMovingAndResizing(widget.value.hash, true)
   window.addEventListener('mouseup', disableMovingOnDrag)
@@ -187,9 +399,90 @@ const enableMovingOnDrag = (): void => {
 }
 
 const disableMovingOnDrag = (): void => {
-  widgetStore.allowMovingAndResizing(widget.value.hash, false)
+  widgetStore.allowMovingAndResizing(widget.value.hash, widgetStore.editingMode)
   window.removeEventListener('mouseup', disableMovingOnDrag)
   window.removeEventListener('dragend', disableMovingOnDrag)
+}
+
+const lockedExpandDirection = ref<'up' | 'down' | undefined>(undefined)
+
+/**
+ * Computes the expand direction from the widget's current position.
+ * If the title bar center is below the viewport midpoint, returns 'up'.
+ * @returns {'up' | 'down'} The direction based on position
+ */
+const computeDirectionFromPosition = (): 'up' | 'down' => {
+  const collapsedHeightNormalized = collapsedHeaderHeightPx / windowHeight.value
+  const titleBarCenter = widget.value.position.y + collapsedHeightNormalized / 2
+  return titleBarCenter > 0.5 ? 'up' : 'down'
+}
+
+/**
+ * The effective expand direction. When the user has chosen a fixed direction, that is used directly.
+ * In 'auto' mode, while collapsed the direction is computed from the widget's position (title bar
+ * in the bottom half -> up, otherwise down). While expanded, the direction is locked to the value
+ * that was computed at expand time so it stays consistent until collapsed again.
+ * @returns {'up' | 'down'} The resolved direction
+ */
+const effectiveExpandDirection = computed((): 'up' | 'down' => {
+  const direction = widget.value.options.expandDirection ?? 'auto'
+  if (direction !== 'auto') return direction
+
+  if (lockedExpandDirection.value) return lockedExpandDirection.value
+
+  return computeDirectionFromPosition()
+})
+
+/**
+ * Whether the widget currently expands (or will expand) upward.
+ * Used to flip the layout so the title bar stays at the bottom.
+ * @returns {boolean} True if expanding upward
+ */
+const expandsUpward = computed((): boolean => effectiveExpandDirection.value === 'up')
+
+/**
+ * Icon for the collapse/expand button, reflecting the direction the content will move.
+ * @returns {string} The MDI icon name
+ */
+const collapseToggleIcon = computed((): string => {
+  const isCollapsed = widget.value.options.startCollapsed
+  const direction = effectiveExpandDirection.value
+  if (isCollapsed) {
+    return direction === 'up' ? 'mdi-chevron-up' : 'mdi-chevron-down'
+  }
+  return direction === 'up' ? 'mdi-chevron-down' : 'mdi-chevron-up'
+})
+
+/**
+ * Toggles the collapsible container between collapsed and expanded states.
+ * Adjusts widget position and size so the container expands in the correct direction.
+ */
+const toggleCollapse = (): void => {
+  const isCurrentlyCollapsed = widget.value.options.startCollapsed
+  const collapsedHeightNormalized = collapsedHeaderHeightPx / windowHeight.value
+  const direction = effectiveExpandDirection.value
+
+  if (isCurrentlyCollapsed) {
+    lockedExpandDirection.value = direction
+    const expandedHeight = getInternalState().expandedHeight ?? widget.value.size.height
+
+    if (direction === 'up') {
+      const heightDelta = expandedHeight - collapsedHeightNormalized
+      widget.value.position.y = Math.max(0, widget.value.position.y - heightDelta)
+    }
+    widget.value.size.height = expandedHeight
+  } else {
+    getInternalState().expandedHeight = widget.value.size.height
+
+    if (direction === 'up') {
+      const heightDelta = widget.value.size.height - collapsedHeightNormalized
+      widget.value.position.y = Math.min(1 - collapsedHeightNormalized, widget.value.position.y + heightDelta)
+    }
+    widget.value.size.height = collapsedHeightNormalized
+    lockedExpandDirection.value = undefined
+  }
+
+  widget.value.options.startCollapsed = !isCurrentlyCollapsed
 }
 
 const canvasSize = computed(() => ({
@@ -229,24 +522,18 @@ const apiEventCallback = (event: MessageEvent): void => {
   }
   const { variable } = event.data
   listenDataLakeVariable(variable, (value) => {
-    iframe.value.contentWindow.postMessage({ type: 'cockpit:datalakeVariable', variable, value }, '*')
+    iframe.value?.contentWindow?.postMessage({ type: 'cockpit:datalakeVariable', variable, value }, '*')
   })
 }
 
-// Watch for changes in vehicle address to reload iframe when necessary
-watch(
-  [vehicleAddressFromDataLake, () => widget.value.options.useVehicleAddressAsBase],
-  () => {
-    if (widget.value.options.useVehicleAddressAsBase) {
-      // Force iframe reload by setting loaded to false
-      iframe_loaded.value = false
-      setTimeout(() => {
-        iframe_loaded.value = true
-      }, 100)
-    }
-  },
-  { deep: true }
-)
+// Re-run the URL check whenever the composed iframe URL changes (user-edited source, vehicle
+// address change, or toggling the "use vehicle address as base" option). The iframe is kept
+// hidden until the new URL passes the check and finishes loading.
+watch(toBeUsedURL, () => {
+  iframe_loaded.value = false
+  urlCheckStatus.value = 'checking'
+  checkUrlStatus()
+})
 
 // Listen to vehicle address changes from data lake
 let vehicleAddressListenerId: string | undefined
@@ -254,12 +541,23 @@ let vehicleAddressListenerId: string | undefined
 onBeforeMount((): void => {
   window.addEventListener('message', apiEventCallback, true)
 
-  // Merge default options with existing widget options
   const defaultOptions = {
     source: 'http://' + defaultBlueOsAddress,
     useVehicleAddressAsBase: false,
+    startCollapsed: false,
+    containerName: 'iframe',
+    expandDirection: 'auto' as 'auto' | 'up' | 'down',
   }
   widget.value.options = { ...defaultOptions, ...widget.value.options }
+
+  if (widget.value.options.isCollapsible && widget.value.options.startCollapsed) {
+    if (!getInternalState().expandedHeight) {
+      getInternalState().expandedHeight = widget.value.size.height
+    }
+    widget.value.size.height = collapsedHeaderHeightPx / windowHeight.value
+  } else if (widget.value.options.isCollapsible) {
+    lockedExpandDirection.value = computeDirectionFromPosition()
+  }
 
   // Get initial vehicle address from data lake
   const vehicleAddressData = getDataLakeVariableData('vehicle-address')
@@ -273,6 +571,8 @@ onBeforeMount((): void => {
       vehicleAddressFromDataLake.value = value
     }
   })
+
+  checkUrlStatus()
 })
 
 onBeforeUnmount((): void => {
@@ -280,9 +580,19 @@ onBeforeUnmount((): void => {
   if (vehicleAddressListenerId) {
     unlistenDataLakeVariable('vehicle-address', vehicleAddressListenerId)
   }
+  clearUrlCheckTimers()
 })
 
-const { width: windowWidth, height: windowHeight } = useWindowSize()
+const collapsibleIframeStyle = computed<string>(() => {
+  let newStyle = ''
+  if (widgetStore.editingMode) {
+    newStyle = newStyle.concat(' ', 'pointer-events:none; border:0;')
+  }
+  if (!widgetStore.isWidgetVisible(widget.value)) {
+    newStyle = newStyle.concat(' ', 'display: none;')
+  }
+  return newStyle
+})
 
 const iframeStyle = computed<string>(() => {
   let newStyle = ''
@@ -337,5 +647,15 @@ iframe {
   margin: 0;
   padding: 0;
   opacity: calc(v-bind('iframeOpacity'));
+}
+
+.iframe-status-overlay {
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  border-radius: 8px;
+  pointer-events: none;
+  user-select: none;
 }
 </style>

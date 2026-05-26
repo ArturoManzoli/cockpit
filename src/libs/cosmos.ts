@@ -4,9 +4,11 @@ import { type ElectronLog } from '@/types/electron-general'
 import { ElectronStorageDB } from '@/types/general'
 import type { ElectronSDLJoystickControllerStateEventData } from '@/types/joystick'
 import { NetworkInfo } from '@/types/network'
+import type { TelemetrySystemHardwareInfo } from '@/types/platform'
 import { SDLStatus } from '@/types/sdl'
 import type { SerialData } from '@/types/serial'
 import type { FileDialogOptions, FileStats } from '@/types/storage'
+import type { Go2RTCStreamInfo } from '@/types/video'
 
 import {
   createDataLakeVariable,
@@ -15,6 +17,7 @@ import {
   getAllDataLakeVariablesInfo,
   getDataLakeVariableData,
   getDataLakeVariableInfo,
+  getDataLakeVariableLastUpdateTimestamp,
   listenDataLakeVariable,
   setDataLakeVariableData,
   unlistenDataLakeVariable,
@@ -153,6 +156,12 @@ declare global {
        * @param id - The id of the variable to delete
        */
       deleteDataLakeVariable: typeof deleteDataLakeVariable
+      /**
+       * Get the timestamp of the last update for a data lake variable
+       * @param id - The id of the variable
+       * @returns The timestamp (from performance.now()) or undefined if the variable has never been set
+       */
+      getDataLakeVariableLastUpdateTimestamp: typeof getDataLakeVariableLastUpdateTimestamp
 
       // Cockpit actions:
 
@@ -197,6 +206,21 @@ declare global {
        * @returns Promise containing subnet information
        */
       getInfoOnSubnets: () => Promise<NetworkInfo[]>
+      /**
+       * Fast TCP port probe used as a pre-filter during vehicle discovery
+       * @param host IPv4 address to probe
+       * @param port TCP port to probe
+       * @param timeoutMs Time to wait before giving up, in milliseconds
+       * @returns Promise resolving to true if the port accepted the connection
+       */
+      checkTcpPortOpen: (host: string, port: number, timeoutMs: number) => Promise<boolean>
+      /**
+       * Tear down every still-open `checkTcpPortOpen` socket in the main
+       * process. Used to short-circuit the discovery pre-filter when the user
+       * presses "Stop" or closes the dialog mid-scan.
+       * @returns Promise resolving when the in-flight set has been cleared
+       */
+      abortTcpPortProbes: () => Promise<void>
       /**
        * Get memory usage information from the main process
        * @returns Promise containing memory usage data
@@ -271,6 +295,31 @@ declare global {
        */
       openCockpitFolder: () => void
       /**
+       * Get the current Cockpit folder path
+       * @returns {Promise<string>} The current folder path
+       */
+      getCockpitFolderPath: () => Promise<string>
+      /**
+       * Get the default Cockpit folder path
+       * @returns {Promise<string>} The default folder path
+       */
+      getDefaultCockpitFolderPath: () => Promise<string>
+      /**
+       * Set a new Cockpit folder path
+       * @param {string} newPath - The new folder path
+       * @returns {Promise<void>}
+       */
+      setCockpitFolderPath: (newPath: string) => Promise<void>
+      /**
+       * Open a native folder picker to select a Cockpit folder
+       * @returns {Promise<string | null>} The selected path, or null if cancelled
+       */
+      selectCockpitFolder: () => Promise<string | null>
+      /**
+       * Open the snapshots folder in the system file manager
+       */
+      openSnapshotFolder: () => void
+      /**
        * Open video folder
        */
       openVideoFolder: () => void
@@ -290,11 +339,12 @@ declare global {
        */
       getFileStats: (pathOrKey: string, subFolders?: string[]) => Promise<FileStats>
       /**
-       * Show file dialog to select a file
+       * Show a file dialog to select one or more files. Multi-selection is enabled
+       * by default; pass `allowMultiple: false` to restrict the dialog to a single file.
        * @param options - Optional dialog configuration
-       * @returns The selected file path, or null if cancelled
+       * @returns The selected file paths, or null if cancelled
        */
-      getPathOfSelectedFile: (options?: FileDialogOptions) => Promise<string | null>
+      getPathsOfSelectedFiles: (options?: FileDialogOptions) => Promise<string[] | null>
       /**
        * Capture the workspace area of the application
        */
@@ -325,6 +375,20 @@ declare global {
        * Get a list of all electron logs
        */
       getElectronLogs: () => Promise<ElectronLog[]>
+      /**
+       * Get the current session's electron log file name and size
+       * @returns The file name and size of the current session's log file
+       */
+      getCurrentElectronLogInfo: () => Promise<{
+        /**
+         * The name of the current session's log file
+         */
+        fileName: string
+        /**
+         * The size in bytes of the current session's log file
+         */
+        size: number
+      }>
       /**
        * Get specific electron log content
        * @param logName - The name of the log file
@@ -370,7 +434,29 @@ declare global {
          * The architecture of the process. Possibilities can be found in the Architecture enum.
          */
         processArch: string
+        /**
+         * Information about all connected displays
+         */
+        displays: Array<{
+          /**
+           * The width of the display in pixels
+           */
+          width: number
+          /**
+           * The height of the display in pixels
+           */
+          height: number
+          /**
+           * The scale factor of the display (DPI scaling)
+           */
+          scaleFactor: number
+        }>
       }>
+      /**
+       * Hardware snapshot for telemetry (main process / systeminformation)
+       * @returns {Promise<TelemetrySystemHardwareInfo>} Serializable hardware fields
+       */
+      getHardwareTelemetryInfo: () => Promise<TelemetrySystemHardwareInfo>
       /**
        * Start live video streaming process with FFmpeg
        * @param firstChunk - The first video chunk blob
@@ -404,11 +490,42 @@ declare global {
        */
       finalizeVideoRecording: (processId: string) => Promise<void>
       /**
-       * Extract video chunks from ZIP file
-       * @param zipFilePath - Path to the ZIP file
-       * @returns Promise resolving to extraction result with chunk paths and metadata
+       * Register an RTSP stream with the go2rtc sidecar for WebRTC consumption
+       * @param name - Unique stream name used for WebRTC signaling
+       * @param rtspUrl - Full RTSP URL including optional credentials
        */
-      extractVideoChunksZip: (zipFilePath: string) => Promise<import('@/types/video').ZipExtractionResult>
+      go2rtcAddStream: (name: string, rtspUrl: string) => Promise<void>
+      /**
+       * Remove an RTSP stream from the go2rtc sidecar
+       * @param name - The stream name to remove
+       */
+      go2rtcRemoveStream: (name: string) => Promise<void>
+      /**
+       * Query go2rtc for parsed info about all registered streams
+       * @returns {Promise<Record<string, Go2RTCStreamInfo>>} Stream name to info map
+       */
+      go2rtcGetStreamsInfo: () => Promise<Record<string, Go2RTCStreamInfo>>
+      /**
+       * Get the port the go2rtc sidecar is listening on, starting it if necessary
+       * @returns {Promise<number>} The port number
+       */
+      go2rtcGetPort: () => Promise<number>
+      /**
+       * Extract video chunks from one or more ZIP files into a single temp directory.
+       * Pass a single-element array to process a standalone chunk-group archive, or
+       * multiple paths (typically the part-zips of the same recording) to merge them.
+       * @param zipFilePaths - Paths to the ZIP files
+       * @returns Promise resolving to a unified extraction result with all chunk paths and metadata
+       */
+      extractVideoChunksZips: (zipFilePaths: string[]) => Promise<import('@/types/video').ZipExtractionResult>
+      /**
+       * Find sibling chunk-group ZIP files in the same folder as the provided ZIP.
+       * Sibling ZIPs share the same recording hash and follow the
+       * `chunks_<hash>_part<N>.zip` (or `chunks_<hash>.zip`) naming convention.
+       * @param zipFilePath - Path to a chunk-group ZIP file
+       * @returns Promise resolving to all sibling ZIP paths, including the input path
+       */
+      findSiblingChunkZips: (zipFilePath: string) => Promise<string[]>
       /**
        * Read chunk file and return as Uint8Array
        * @param chunkPath - Path to the chunk file
@@ -454,6 +571,7 @@ window.cockpit = {
   createDataLakeVariable: createDataLakeVariable,
   updateDataLakeVariableInfo: updateDataLakeVariableInfo,
   deleteDataLakeVariable: deleteDataLakeVariable,
+  getDataLakeVariableLastUpdateTimestamp: getDataLakeVariableLastUpdateTimestamp,
   // Cockpit actions:
   availableCockpitActions: availableCockpitActions,
   registerNewAction: registerNewAction,
@@ -476,7 +594,7 @@ global!.unimplemented = function (message?: string) {
 }
 
 // eslint-disable-next-line
-global!.unused = function <T>(variable: T) {} // eslint-disable-line
+global!.unused = function <T>(variable: T) { } // eslint-disable-line
 
 /* c8 ignore stop */
 

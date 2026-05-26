@@ -84,6 +84,31 @@ export const setupElectronLogService = (): void => {
   // Log Electron low-level events
   logger.eventLogger.startLogging()
 
+  // Get current session log file name and size
+  ipcMain.handle(
+    'get-current-electron-log-info',
+    async (): Promise<{
+      /**
+       * The name of the current session's log file
+       */
+      fileName: string
+      /**
+       * The size in bytes of the current session's log file
+       */
+      size: number
+    }> => {
+      const fileName = logger.transports.file.fileName as string
+      try {
+        const logPath = join(getElectronLogsPath(), fileName)
+        const stats = await stat(logPath)
+        return { fileName, size: stats.size }
+      } catch (error) {
+        // If file doesn't exist yet, return size 0
+        return { fileName, size: 0 }
+      }
+    }
+  )
+
   // Get all electron logs
   ipcMain.handle('get-electron-logs', async (): Promise<ElectronLog[]> => {
     try {
@@ -92,9 +117,10 @@ export const setupElectronLogService = (): void => {
 
       return await Promise.all(
         syslogFiles.map(async (logFile) => {
-          const logContent = await readFile(join(getElectronLogsPath(), logFile), 'utf-8')
+          const filePath = join(getElectronLogsPath(), logFile)
 
-          // Extract date and time from filename
+          // Extract date, time and size from file
+          const stats = await stat(filePath)
           const match = logFile.match(/Cockpit \((.+?)\)\.syslog/)
           let initialDate = format(new Date(), systemLogDateFormat)
           let initialTime = format(new Date(), systemLogTimeFormat)
@@ -108,7 +134,7 @@ export const setupElectronLogService = (): void => {
           }
 
           return {
-            content: logContent,
+            size: stats.size,
             path: logFile,
             initialTime,
             initialDate,

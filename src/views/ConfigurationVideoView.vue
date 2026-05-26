@@ -3,7 +3,7 @@
     <template #help-icon> </template>
     <template #title>Video configuration</template>
     <template #content>
-      <div class="flex-col h-full ml-[1vw] w-[840px] max-h-[85vh] overflow-y-auto pr-3">
+      <div class="flex-col h-full ml-[1vw] w-[920px] max-h-[85vh] overflow-y-auto pr-3">
         <ExpansiblePanel no-top-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Streams mapping</template>
           <template #info>
@@ -28,6 +28,9 @@
                     </th>
                     <th class="text-center">
                       <p class="text-[16px] font-bold">External name</p>
+                    </th>
+                    <th class="text-center">
+                      <p class="text-[16px] font-bold">Type</p>
                     </th>
                     <th class="text-center">
                       <p class="text-[16px] font-bold">Video source</p>
@@ -57,8 +60,29 @@
                     </td>
                     <td>
                       <div class="flex items-center justify-center">
+                        <v-chip
+                          size="small"
+                          :color="
+                            (item.protocol ?? videoStore.getStreamProtocol(item.externalId)) === 'rtsp'
+                              ? '#e67e22'
+                              : '#3498db'
+                          "
+                          variant="flat"
+                          label
+                          class="text-white text-xs font-medium"
+                        >
+                          {{
+                            (item.protocol ?? videoStore.getStreamProtocol(item.externalId)) === 'rtsp'
+                              ? 'RTSP'
+                              : 'WebRTC'
+                          }}
+                        </v-chip>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="flex items-center justify-center">
                         <ScrollingText
-                          :text="getStreamInfo(item.externalId)?.sourceName || 'Unknown'"
+                          :text="getStreamDisplayInfo(item.externalId).source"
                           max-width="120px"
                           class="text-sm text-gray-300"
                         />
@@ -68,14 +92,13 @@
                       <div class="flex items-center justify-center">
                         <div class="text-center">
                           <p class="text-sm text-gray-300 leading-tight">
-                            {{
-                              getStreamInfo(item.externalId)
-                                ? `${getStreamInfo(item.externalId)?.width}x${getStreamInfo(item.externalId)?.height}`
-                                : 'Unknown'
-                            }}
+                            {{ getStreamDisplayInfo(item.externalId).resolution }}
                           </p>
-                          <p class="text-xs text-gray-400 leading-tight">
-                            {{ getStreamInfo(item.externalId) ? `@ ${getStreamInfo(item.externalId)?.fps}fps` : '' }}
+                          <p
+                            v-if="getStreamDisplayInfo(item.externalId).fps"
+                            class="text-xs text-gray-400 leading-tight"
+                          >
+                            @ {{ getStreamDisplayInfo(item.externalId).fps }}
                           </p>
                         </div>
                       </div>
@@ -85,13 +108,13 @@
                         <div class="flex items-center justify-center border-[1px] border-[#ffffff44] rounded-md">
                           <div
                             class="flex items-center rounded-md p-1 text-[#ffffffa5]"
-                            :style="{ backgroundColor: getStreamStatus(item.externalId).color }"
+                            :style="{ backgroundColor: getStreamStatus(item).color }"
                           >
                             <v-icon size="small">
-                              {{ getStreamStatus(item.externalId).icon }}
+                              {{ getStreamStatus(item).icon }}
                             </v-icon>
                             <span class="text-xs ml-1">
-                              {{ getStreamStatus(item.externalId).status }}
+                              {{ getStreamStatus(item).status }}
                             </span>
                           </div>
                         </div>
@@ -129,6 +152,25 @@
                 <span v-if="ignoredStreamExternalIds.length > 0" class="text-gray-400 text-sm ml-2">
                   ({{ ignoredStreamExternalIds.length }} ignored)
                 </span>
+              </div>
+              <div v-if="isElectron()" class="mt-4 mr-2 mb-2 w-[95%]">
+                <div class="text-sm text-gray-300 mb-2">Add direct RTSP stream (Standalone)</div>
+                <div class="flex items-end gap-2 w-full">
+                  <v-text-field
+                    v-model="rtspUrlInput"
+                    label="RTSP URL"
+                    density="compact"
+                    variant="outlined"
+                    class="flex-1 min-w-0"
+                    hide-details
+                    @keyup.enter="addRtspStream"
+                    @input="rtspInputError = ''"
+                  />
+                  <v-btn variant="text" class="shrink-0 mb-[3px]" @click="addRtspStream">Add</v-btn>
+                </div>
+                <div v-if="rtspInputError" class="text-red-300 text-sm mt-2">
+                  {{ rtspInputError }}
+                </div>
               </div>
             </div>
           </template>
@@ -406,15 +448,13 @@
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import InteractionDialog from '@/components/InteractionDialog.vue'
 import ScrollingText from '@/components/ScrollingText.vue'
-import { type ProcessedStreamInfo, getStreamInformationFromVehicle } from '@/libs/blueos'
 import { isElectron } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
-import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useSnapshotStore } from '@/stores/snapshot'
 import { useVideoStore } from '@/stores/video'
 import { VideoStreamCorrespondency } from '@/types/video'
@@ -429,7 +469,6 @@ const availableICEProtocols = ['udp', 'tcp']
 
 const videoStore = useVideoStore()
 const interfaceStore = useAppInterfaceStore()
-const mainVehicleStore = useMainVehicleStore()
 const snapshotStore = useSnapshotStore()
 
 // Edit dialog state
@@ -443,14 +482,19 @@ const showUnavailableStreamDialog = ref(false)
 const unavailableStreamId = ref('')
 
 const showIgnoredStreams = ref(false)
-const streamInformation = ref<ProcessedStreamInfo[]>([])
-let fetchInterval: ReturnType<typeof setInterval> | null = null
+const rtspUrlInput = ref('rtsp://user:password@camera-ip:554/stream')
+const rtspInputError = ref('')
 
 const streamsToShow = computed(() => {
   return [
     ...videoStore.streamsCorrespondency.map((item) => ({ ...item, isIgnored: false })),
     ...(showIgnoredStreams.value
-      ? ignoredStreamExternalIds.value.map((id) => ({ name: '--', externalId: id, isIgnored: true }))
+      ? ignoredStreamExternalIds.value.map((id) => ({
+          name: '--',
+          externalId: id,
+          isIgnored: true,
+          protocol: id.startsWith('rtsp://') || id.startsWith('rtsps://') ? ('rtsp' as const) : undefined,
+        }))
       : []),
   ].filter((item) => item.name !== '')
 })
@@ -481,12 +525,27 @@ const cancelEditDialog = (): void => {
   editDialogError.value = ''
 }
 
+const addRtspStream = (): void => {
+  try {
+    rtspInputError.value = ''
+    if (!rtspUrlInput.value.trim()) {
+      rtspInputError.value = 'Please provide an RTSP URL.'
+      return
+    }
+    videoStore.addRtspStreamCorrespondency(rtspUrlInput.value.trim())
+    rtspUrlInput.value = ''
+  } catch (error) {
+    rtspInputError.value = (error as Error).message
+  }
+}
+
 const deleteStream = (item: VideoStreamCorrespondency): void => {
   videoStore.deleteStreamCorrespondency(item.externalId)
 }
 
 const restoreIgnoredStream = (externalId: string): void => {
-  const isStreamAvailable = videoStore.namesAvailableStreams.includes(externalId)
+  const isRtsp = externalId.startsWith('rtsp://') || externalId.startsWith('rtsps://')
+  const isStreamAvailable = isRtsp || videoStore.namesAvailableStreams.includes(externalId)
 
   // If the stream is available, restore normally, otherwise ask the user to confirm they want to delete it permanently
   if (isStreamAvailable) {
@@ -508,48 +567,30 @@ const deleteStreamPermanently = (): void => {
   closeUnavailableStreamDialog()
 }
 
-const fetchStreamInformation = async (): Promise<void> => {
-  if (!mainVehicleStore.globalAddress) return
-
-  try {
-    streamInformation.value = await getStreamInformationFromVehicle(mainVehicleStore.globalAddress)
-  } catch (error) {
-    console.error('Failed to fetch stream information:', error)
-    streamInformation.value = []
-  }
-}
-
-const startStreamInfoFetching = (): void => {
-  // Clear any existing interval
-  if (fetchInterval) {
-    clearInterval(fetchInterval)
-  }
-
-  // Fetch immediately
-  fetchStreamInformation()
-
-  // Set up interval to fetch every 5 seconds
-  fetchInterval = setInterval(() => {
-    fetchStreamInformation()
-  }, 5000)
-}
-
-const stopStreamInfoFetching = (): void => {
-  if (fetchInterval) {
-    clearInterval(fetchInterval)
-    fetchInterval = null
-  }
-}
-
-const getStreamInfo = (externalId: string): ProcessedStreamInfo | undefined => {
-  return streamInformation.value.find((info) => info.name === externalId)
+const getStreamDisplayInfo = (
+  externalId: string
+): {
+  /** Video source description */
+  source: string
+  /** Resolution string */
+  resolution: string
+  /** FPS string */
+  fps: string
+} => {
+  return videoStore.getStreamDisplayInfo(externalId)
 }
 
 // eslint-disable-next-line
-const getStreamStatus = (externalId: string): { status: 'Available' | 'Unavailable' | 'Offline' | 'Unknown'; icon: string; color: string } => {
-  const isInAvailableList = videoStore.namesAvailableStreams.includes(externalId)
-  const streamInfo = getStreamInfo(externalId)
-  const isRunning = streamInfo?.running ?? false
+const getStreamStatus = (item: { externalId: string; protocol?: string }): { status: 'Available' | 'Unavailable' | 'Offline' | 'Unknown'; icon: string; color: string } => {
+  const protocol = item.protocol ?? videoStore.getStreamProtocol(item.externalId)
+  if (protocol === 'rtsp') {
+    return isElectron()
+      ? { status: 'Available', icon: 'mdi-check-circle', color: '#297e1944' }
+      : { status: 'Unavailable', icon: 'mdi-close-circle', color: '#ff000044' }
+  }
+
+  const isInAvailableList = videoStore.namesAvailableStreams.includes(item.externalId)
+  const isRunning = videoStore.streamInformation.find((i) => i.name === item.externalId)?.running ?? false
 
   if (isInAvailableList && isRunning) {
     return { status: 'Available', icon: 'mdi-check-circle', color: '#297e1944' }
@@ -566,11 +607,6 @@ onMounted(async () => {
   if (allowedIceProtocols.value.length === 0) {
     allowedIceProtocols.value = availableICEProtocols
   }
-  startStreamInfoFetching()
-})
-
-onUnmounted(() => {
-  stopStreamInfoFetching()
 })
 
 const openVideoLibrary = (): void => {

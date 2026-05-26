@@ -7,7 +7,12 @@
     :leave-from-class="leaveFromClass"
     :leave-to-class="leaveToClass"
   >
-    <div v-if="interfaceStore.isConfigPanelVisible" class="fixed shadow-lg" :class="panelPositionClass">
+    <div
+      v-if="interfaceStore.isConfigPanelVisible"
+      class="fixed shadow-lg"
+      :class="panelPositionClass"
+      :style="panelPositionStyle"
+    >
       <v-btn
         v-if="!hideButton"
         icon
@@ -20,15 +25,28 @@
       </v-btn>
       <slot></slot>
     </div>
+    <v-btn
+      v-else-if="!hideButton"
+      icon
+      size="x-small"
+      variant="text"
+      class="reopen_btn bg-[#00000066] text-white elevation-2"
+      :class="reopenPositionClass"
+      @click="openPanel"
+    >
+      <v-icon class="text-[18px]">{{ `mdi-arrow-${oppositePosition}` }}</v-icon>
+    </v-btn>
   </transition>
 </template>
 
 <script setup lang="ts">
-import { computed, defineProps } from 'vue'
+import { computed } from 'vue'
 
 import { useAppInterfaceStore } from '@/stores/appInterface'
+import { useWidgetManagerStore } from '@/stores/widgetManager'
 
 const interfaceStore = useAppInterfaceStore()
+const widgetStore = useWidgetManagerStore()
 
 const props = defineProps<{
   /**
@@ -44,6 +62,38 @@ const props = defineProps<{
 const closePanel = (): void => {
   interfaceStore.configPanelVisible = false
 }
+
+const openPanel = (): void => {
+  interfaceStore.configPanelVisible = true
+}
+
+const oppositePosition = computed(() => {
+  switch (props.position) {
+    case 'right':
+      return 'left'
+    case 'bottom':
+      return 'up'
+    case 'top':
+      return 'down'
+    case 'left':
+    default:
+      return 'right'
+  }
+})
+
+const reopenPositionClass = computed(() => {
+  switch (props.position) {
+    case 'right':
+      return 'right-0 top-1/2 -translate-y-1/2'
+    case 'bottom':
+      return 'bottom-0 left-1/2 -translate-x-1/2'
+    case 'top':
+      return 'top-0 left-1/2 -translate-x-1/2'
+    case 'left':
+    default:
+      return 'left-0 top-1/2 -translate-y-1/2'
+  }
+})
 
 const enterActiveClass = 'transition-transform duration-500 ease-in-out'
 const leaveActiveClass = 'transition-transform duration-0 ease-in-out'
@@ -80,7 +130,7 @@ const leaveToClass = computed(() => {
 const panelPositionClass = computed(() => {
   switch (props.position) {
     case 'right':
-      return 'right-0 top-0 bottom-0 w-64'
+      return 'right-0 bottom-0 w-64'
     case 'bottom':
       return 'left-0 right-0 bottom-0 h-64'
     case 'top':
@@ -88,6 +138,30 @@ const panelPositionClass = computed(() => {
     case 'left':
     default:
       return 'left-0 top-0 bottom-0 w-64'
+  }
+})
+
+const panelPositionStyle = computed<Record<string, string>>((): Record<string, string> => {
+  const topPx = `${widgetStore.currentTopBarHeightPixels}px`
+  const bottomPx = `${widgetStore.currentBottomBarHeightPixels}px`
+
+  switch (props.position) {
+    case 'left':
+    case 'right':
+      return {
+        top: topPx,
+        bottom: bottomPx,
+        height: `calc(100% - ${widgetStore.currentTopBarHeightPixels}px - ${widgetStore.currentBottomBarHeightPixels}px)`,
+      }
+
+    case 'bottom':
+      return {
+        bottom: bottomPx,
+        height: `calc(16rem + ${widgetStore.currentBottomBarHeightPixels}px)`,
+      }
+
+    default:
+      return {}
   }
 })
 </script>
@@ -102,5 +176,10 @@ const panelPositionClass = computed(() => {
   z-index: 500;
   position: absolute;
   margin-top: 3px;
+}
+.reopen_btn {
+  z-index: 500;
+  position: fixed;
+  border-radius: 4px;
 }
 </style>

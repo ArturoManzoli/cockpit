@@ -1,5 +1,5 @@
 <div align="center">
-  <img style="width: 20%" src="src/assets/cockpit-logo.png"><br>
+  <img style="width: 20%" src="src/assets/cockpit-logo.avif"><br>
 </div>
 
 <div align="center">
@@ -16,7 +16,7 @@
 <br>
 
 <div align="center">
-  <img style="width: 65%" src="./public/images/screen.png"><br>
+  <img style="width: 65%" src="./public/images/screen.avif"><br>
 </div>
 
 <br>
@@ -25,6 +25,7 @@
 ![Downloads](https://img.shields.io/github/downloads/bluerobotics/cockpit/total?label=Downloads)
 [![Latest Beta](https://img.shields.io/github/v/tag/bluerobotics/cockpit.svg?label=Latest%20Beta)](https://github.com/bluerobotics/cockpit/releases)
 [![Docker](https://img.shields.io/docker/v/bluerobotics/cockpit?label=Docker)](https://hub.docker.com/r/bluerobotics/cockpit/tags)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/bluerobotics/cockpit)
 
 ---
 
@@ -102,7 +103,8 @@ Below is a table summarizing the current status, but in general, you can expect 
 | **Feature** | **🌐 Browser** | **🖥️ Desktop** |
 |-------------|---------------|----------------|
 | **Joystick Support** | Only when tab and window are in focus  | ✅ Window can be unfocused and in the background |
-| **Video/Snapshots** | Needs to be downloaded | ✅ Saved directly to your folders |
+| **Video** | Needs to be downloaded and merged into a working video using the Desktop app | ✅ Final MP4 file saved directly to your folders |
+| **Snapshots** | Needs to be downloaded | ✅ Saved directly to your folders |
 | **Vehicle Discovery** | ❌ Not available | ✅ Auto-scan for vehicles in the network|
 | **Updates** | Manual updates required | ✅ Auto-updates / update notifications |
 | **System Monitoring** | Memory usage only | ✅ CPU and Memory tracking |
@@ -137,17 +139,17 @@ ArduCopter support has been physically tested, but the primary development team 
   <table>
     <tr>
       <td align="center">
-        <img src="src/assets/brov2-marker.png" width="80"><br>
+        <img src="src/assets/brov2-marker.avif" width="80"><br>
         <strong>Submarines</strong><br>
         <em>ArduSub</em>
       </td>
       <td align="center">
-        <img src="src/assets/blueboat-marker.png" width="80"><br>
+        <img src="src/assets/blueboat-marker.avif" width="80"><br>
         <strong>Surface Boats</strong><br>
         <em>ArduRover</em>
       </td>
       <td align="center">
-        <img src="src/assets/arducopter-top-view.png" width="80"><br>
+        <img src="src/assets/arducopter-top-view.avif" width="80"><br>
         <strong>Drones</strong><br>
         <em>ArduCopter</em>
       </td>
@@ -220,24 +222,26 @@ Be sure to check our docs for more information on how to take advantage of these
 
 While Cockpit is a powerful and feature-rich ground control station, there are some current limitations to be aware of:
 
-### 📹 **Video Processing Constraints**
-Cockpit records video in "chunks" at each second and then reconstructs them into a complete video file through a processing step. For longer recordings, this reconstruction process can exceed your computer's memory capacity.
-
-- [**Recommended limit**](https://github.com/bluerobotics/cockpit/issues/2004): Keep recordings under **30 minutes** for reliable in-app processing
-- **For longer recordings**: Use our [online processing tool](https://cockpit-online-processing.rlehmk.dev/) to process video chunks in batches (e.g. 1000 chunks each time) and then combine the resulting files with an external video editing software, like [LosslessCut](https://mifi.no/losslesscut/)
-- **Processing capability varies** by computer specifications - systems with more RAM can handle longer recordings. Testing before critical missions is encouraged
 
 ### 🚁 **Vehicle Support Gaps**
-- [**PX4 autopilots**](https://github.com/bluerobotics/cockpit/issues/2008): Currently not supported, though MAVLink communication is implemented
+- [**PX4 autopilots**]: Cockpit's MAVLink functionality is mostly generic, so it is expected that most available features will also work with PX4 autopilot firmware. That said, the core development team does not actively test with PX4 vehicles, so please open a documenting issue (or ideally a solving pull request) for any problems you encounter.
 - **Aerial and Ground vehicles**: Although recognized by the application, those types of vehicles have limited support and testing
 - **Contributions welcome**: We're actively seeking community help to add support for PX4 vehicles as well as improve the support for Aerial and Ground vehicles on Ardupilot
 
 ### 🗺️ **Mission Planning Limitations**
-- **Basic waypoints only**: Current mission planning supports "pass by" waypoints and polygon surveys
-- [**No MAVLink command support**](https://github.com/bluerobotics/cockpit/issues/1737): Advanced waypoints with specific MAVLink commands (loitering, conditional actions, servo control) are not yet implemented
 - **Geofencing**: Not currently supported in mission planning
 
 > 💡 **Help Us Improve**: Many of these limitations represent opportunities for community contributions. Check our [GitHub Issues](https://github.com/bluerobotics/cockpit/issues) for specific areas where help is needed!
+
+---
+
+## 📚 Documentation & Support
+
+- **📖 User Documentation**: [blueos.cloud/docs/extensions/cockpit](https://blueos.cloud/cockpit/docs)
+- **💬 Community Forum**: [discuss.bluerobotics.com](https://discuss.bluerobotics.com/c/bluerobotics-software/cockpit)
+- **🐛 Issue Tracker**: [GitHub Issues](https://github.com/bluerobotics/cockpit/issues)
+- **💡 Feature Requests**: [GitHub Discussions](https://github.com/bluerobotics/cockpit/discussions)
+- **🛠️ Auto-generated Developer Documentation**: [DeepWiki](https://deepwiki.com/bluerobotics/cockpit)
 
 ---
 
@@ -297,6 +301,17 @@ yarn lint:fix
 
 The development server will start at `http://localhost:5173` with hot reloading enabled.
 
+> **📌 Submodules**: This repository relies on Git submodules. When submodules are updated (e.g., after pulling changes), run the following command to keep your development environment working:
+> ```bash
+> git submodule update --init --recursive
+> ```
+
+### Testing PR Builds on ARM-based macOS machines (Apple Silicon)
+PR builds are not code-signed by Apple, so macOS will block them by default via Gatekeeper. To bypass that, after installing the `.dmg`, run the following command:
+```bash
+xattr -d com.apple.quarantine /Applications/Cockpit.app
+```
+
 ### Backend Services (Optional)
 For video support, Cockpit relies on a backend service called [mavlink-camera-manager](https://github.com/mavlink/mavlink-camera-manager).
 This service is included by default on [BlueOS](https://github.com/bluerobotics/blueos), but if you want to use Cockpit without BlueOS installed on your vehicle, you should install it in the vehicle or in your top-side computer.
@@ -309,16 +324,6 @@ docker-compose -f sim.yml --profile ardusub up
 
 # Other profiles: arducopter, ardurover, arduplane
 ```
-
----
-
-
-## 📚 Documentation & Support
-
-- **📖 User Documentation**: [blueos.cloud/docs/extensions/cockpit](https://blueos.cloud/cockpit/docs)
-- **💬 Community Forum**: [discuss.bluerobotics.com](https://discuss.bluerobotics.com/c/bluerobotics-software/cockpit)
-- **🐛 Issue Tracker**: [GitHub Issues](https://github.com/bluerobotics/cockpit/issues)
-- **💡 Feature Requests**: [GitHub Discussions](https://github.com/bluerobotics/cockpit/discussions)
 
 ---
 
@@ -335,7 +340,7 @@ See [LICENSE.md](LICENSE.md) for details.
 ## 🏢 About Blue Robotics
 
 <div align="center">
-  <img src="./src/assets/blue-robotics-white-name-logo.png" width="200">
+  <img src="./src/assets/blue-robotics-white-name-logo.avif" width="200">
   <p><strong>On a mission to enable the future of marine robotics</strong></p>
   <p>
     <a href="https://bluerobotics.com">🌐 Website</a> •

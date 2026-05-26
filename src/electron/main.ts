@@ -1,12 +1,15 @@
-import { app, BrowserWindow, protocol, screen } from 'electron'
+import { app, BrowserWindow, powerSaveBlocker, protocol, screen } from 'electron'
 import { join } from 'path'
 
 import { setupAutoUpdater } from './services/auto-update'
 import store from './services/config-store'
 import { setupElectronLogService } from './services/electron-log'
+import { setupGo2RTCService } from './services/go2rtc'
+import { setupHardwareTelemetryService } from './services/hardware-telemetry'
 import { setupJoystickMonitoring } from './services/joystick'
 import { linkService } from './services/link'
 import { setupNetworkService } from './services/network'
+import { setupOsmRefererService } from './services/osm-referer'
 import { setupResourceMonitoringService } from './services/resource-monitoring'
 import { setupFilesystemStorage } from './services/storage'
 import { setupSystemInfoService } from './services/system-info'
@@ -23,16 +26,22 @@ export const ROOT_PATH = {
 
 let mainWindow: BrowserWindow | null
 
+let appSuspensionPowerSaveBlockerId: number | undefined
+let displaySleepPowerSaveBlockerId: number | undefined
+
 /**
  * Create electron window
  */
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     icon: join(ROOT_PATH.dist, 'pwa-512x512.png'),
+    backgroundColor: '#333333',
     webPreferences: {
       preload: join(ROOT_PATH.dist, 'electron/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
+      webSecurity: !process.env.VITE_DEV_SERVER_URL, // Disable CORS in dev mode so we don't have to deal with per-system workarounds
     },
     autoHideMenuBar: true,
     width: store.get('windowBounds')?.width ?? screen.getPrimaryDisplay().workAreaSize.width,
@@ -90,17 +99,26 @@ setupFilesystemStorage()
 setupNetworkService()
 setupResourceMonitoringService()
 setupSystemInfoService()
+setupHardwareTelemetryService()
 setupUserAgentService()
 setupWorkspaceService()
 setupJoystickMonitoring()
 setupVideoRecordingService()
+setupGo2RTCService()
 
 app.whenReady().then(async () => {
   console.log('Electron app is ready.')
   console.log(`Cockpit version: ${app.getVersion()}`)
 
+  // Inject a Referer header for OSM tile requests before the first tile is fetched, so the
+  // standalone build (loaded from file://) complies with the OSM tile usage policy.
+  setupOsmRefererService()
+
   console.log('Creating window...')
   createWindow()
+
+  appSuspensionPowerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  displaySleepPowerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
 
   setTimeout(() => {
     setupAutoUpdater(mainWindow as BrowserWindow)
@@ -108,6 +126,15 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  if (appSuspensionPowerSaveBlockerId !== undefined && powerSaveBlocker.isStarted(appSuspensionPowerSaveBlockerId)) {
+    powerSaveBlocker.stop(appSuspensionPowerSaveBlockerId)
+    appSuspensionPowerSaveBlockerId = undefined
+  }
+  if (displaySleepPowerSaveBlockerId !== undefined && powerSaveBlocker.isStarted(displaySleepPowerSaveBlockerId)) {
+    powerSaveBlocker.stop(displaySleepPowerSaveBlockerId)
+    displaySleepPowerSaveBlockerId = undefined
+  }
+
   // @ts-ignore: import.meta.env does not exist in the types
   if (import.meta.env.DEV) {
     app.exit()

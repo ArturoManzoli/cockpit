@@ -1,52 +1,23 @@
 import { v4 as uuid } from 'uuid'
 
+import {
+  type DataLakeVariable,
+  type DataLakeVariableListener,
+  type DataLakeVariableType,
+  type ListenDataLakeVariableOptions,
+} from '@/types/data-lake'
+
 import { settingsManager } from '../settings-management'
 
-/**
- * The type of a variable in the data lake
- */
-export type DataLakeVariableType = 'string' | 'number' | 'boolean'
-
-/**
- * A configuration for a Data Lake variable
- */
-export interface DataLakeVariable {
-  /**
-   * The id of the variable
-   */
-  id: string
-  /**
-   * The name of the variable
-   */
-  name: string
-  /**
-   * The type of the variable
-   */
-  type: DataLakeVariableType
-  /**
-   * What the variable does or means
-   */
-  description?: string
-  /**
-   * Whether the variable existance should be persisted between boots
-   */
-  persistent?: boolean
-  /**
-   * Whether the variable's value should be persisted between boots
-   */
-  persistValue?: boolean
-  /**
-   * Whether the variable's value should be allowed to be changed by the user
-   */
-  allowUserToChangeValue?: boolean
-}
+export type { DataLakeVariable, DataLakeVariableListener, DataLakeVariableType, ListenDataLakeVariableOptions }
 
 const persistentVariablesKey = 'cockpit-persistent-data-lake-variables'
 const persistentValuesKey = 'cockpit-persistent-data-lake-values'
 
 const dataLakeVariableInfo: Record<string, DataLakeVariable> = {}
+const dataLakeVariableTimestamps: Record<string, number> = {}
 export const dataLakeVariableData: Record<string, string | number | boolean | undefined> = {}
-const dataLakeVariableListeners: Record<string, Record<string, (value: string | number | boolean) => void>> = {}
+const dataLakeVariableListeners: Record<string, Record<string, DataLakeVariableListener>> = {}
 const dataLakeVariableInfoListeners: Record<string, (variables: Record<string, DataLakeVariable>) => void> = {}
 
 // Load persistent variables from localStorage on initialization
@@ -64,7 +35,7 @@ const loadPersistentVariables = (): void => {
   if (savedValues && typeof savedValues === 'object') {
     Object.entries(savedValues).forEach(([id, value]) => {
       // Only load values for variables that exist and have persistValue set to true
-      if (dataLakeVariableInfo[id] && dataLakeVariableInfo[id].persistValue) {
+      if (dataLakeVariableInfo[id] && dataLakeVariableInfo[id]?.persistValue) {
         dataLakeVariableData[id] = value as string | number | boolean | undefined
       }
     })
@@ -73,9 +44,9 @@ const loadPersistentVariables = (): void => {
 
 // Save persistent variables to localStorage
 const savePersistentVariables = (): void => {
-  const persistentVariables = Object.values(dataLakeVariableInfo).filter((variable) => variable.persistent)
+  const persistentVariables = Object.values(dataLakeVariableInfo).filter((variable) => variable?.persistent)
 
-  settingsManager.setKeyValue(persistentVariablesKey, JSON.stringify(persistentVariables))
+  settingsManager.setKeyValue(persistentVariablesKey, persistentVariables)
 }
 
 // Save persistent values to localStorage
@@ -83,14 +54,14 @@ const savePersistentValues = (): void => {
   const persistentValuesObj: Record<string, string | number | boolean> = {}
 
   Object.entries(dataLakeVariableInfo)
-    .filter(([, variable]) => variable.persistValue)
+    .filter(([, variable]) => variable?.persistValue)
     .forEach(([id]) => {
       if (dataLakeVariableData[id] !== undefined) {
         persistentValuesObj[id] = dataLakeVariableData[id] as string | number | boolean
       }
     })
 
-  settingsManager.setKeyValue(persistentValuesKey, JSON.stringify(persistentValuesObj))
+  settingsManager.setKeyValue(persistentValuesKey, persistentValuesObj)
 }
 
 export const getAllDataLakeVariablesInfo = (): Record<string, DataLakeVariable> => {
@@ -107,6 +78,11 @@ export const createDataLakeVariable = (variable: DataLakeVariable, initialValue?
   }
   dataLakeVariableInfo[variable.id] = variable
   dataLakeVariableData[variable.id] = initialValue
+
+  // Initialize timestamp if initial value is provided
+  if (initialValue !== undefined) {
+    dataLakeVariableTimestamps[variable.id] = performance.now()
+  }
 
   if (variable.persistent) {
     savePersistentVariables()
@@ -126,11 +102,11 @@ export const updateDataLakeVariableInfo = (variable: DataLakeVariable): void => 
 
   dataLakeVariableInfo[variable.id] = variable
 
-  if (variable.persistent) {
+  if (variable?.persistent) {
     savePersistentVariables()
   }
 
-  if (variable.persistValue) {
+  if (variable?.persistValue) {
     savePersistentValues()
   }
 
@@ -142,8 +118,12 @@ export const getDataLakeVariableData = (id: string): string | number | boolean |
 }
 
 export const setDataLakeVariableData = (id: string, data: string | number | boolean): void => {
-  // If the value is not changing, skip the "update"
+  // Always update the timestamp regardless of value change
+  dataLakeVariableTimestamps[id] = performance.now()
+
+  // If the value is not changing, skip the value "update" but notify timestamp listeners
   if (dataLakeVariableData[id] === data) {
+    notifyDataLakeVariableTimestampListeners(id)
     return
   }
 
@@ -162,14 +142,15 @@ export const deleteDataLakeVariable = (id: string): void => {
 
   delete dataLakeVariableInfo[id]
   delete dataLakeVariableData[id]
+  delete dataLakeVariableTimestamps[id]
 
   // If variable was persistent, remove it from the storage
-  if (variable && variable.persistent) {
+  if (variable && variable?.persistent) {
     savePersistentVariables()
   }
 
   // If variable had persistValue, update the persisted values
-  if (variable && variable.persistValue) {
+  if (variable && variable?.persistValue) {
     savePersistentValues()
   }
 
@@ -178,13 +159,18 @@ export const deleteDataLakeVariable = (id: string): void => {
 
 export const listenDataLakeVariable = (
   variableId: string,
-  listener: (value: string | number | boolean) => void
+  listener: (value: string | number | boolean) => void,
+  options?: ListenDataLakeVariableOptions
 ): string => {
   if (!dataLakeVariableListeners[variableId]) {
     dataLakeVariableListeners[variableId] = {}
   }
   const listenerId = uuid()
-  dataLakeVariableListeners[variableId][listenerId] = listener
+  dataLakeVariableListeners[variableId][listenerId] = {
+    callback: listener,
+    notifyOnTimestampChange: options?.notifyOnTimestampChange ?? false,
+  }
+
   return listenerId
 }
 
@@ -204,8 +190,39 @@ const notifyDataLakeVariableListeners = (id: string): void => {
   if (dataLakeVariableListeners[id]) {
     const value = dataLakeVariableData[id]
     if (value === undefined) return
-    Object.values(dataLakeVariableListeners[id]).forEach((listener) => listener(value))
+    Object.entries(dataLakeVariableListeners[id]).forEach(([listenerId, listener]) => {
+      try {
+        listener.callback(value)
+      } catch (error) {
+        console.error(`[DataLake] Error in listener "${listenerId}" for variable "${id}":`, error)
+      }
+    })
   }
+}
+
+const notifyDataLakeVariableTimestampListeners = (id: string): void => {
+  if (dataLakeVariableListeners[id]) {
+    const value = dataLakeVariableData[id]
+    if (value === undefined) return
+    Object.entries(dataLakeVariableListeners[id])
+      .filter(([, listener]) => listener.notifyOnTimestampChange)
+      .forEach(([listenerId, listener]) => {
+        try {
+          listener.callback(value)
+        } catch (error) {
+          console.error(`[DataLake] Error in timestamp listener "${listenerId}" for variable "${id}":`, error)
+        }
+      })
+  }
+}
+
+/**
+ * Get the timestamp of the last update for a data lake variable
+ * @param {string} id - The id of the variable
+ * @returns {number | undefined} The timestamp (from performance.now()) or undefined if the variable has never been set
+ */
+export const getDataLakeVariableLastUpdateTimestamp = (id: string): number | undefined => {
+  return dataLakeVariableTimestamps[id]
 }
 
 export const listenToDataLakeVariablesInfoChanges = (
@@ -220,9 +237,28 @@ export const unlistenToDataLakeVariablesInfoChanges = (listenerId: string): void
   delete dataLakeVariableInfoListeners[listenerId]
 }
 
+// Debounce timer for variable info change notifications
+let notifyInfoListenersTimeout: ReturnType<typeof setTimeout> | null = null
+const notifyInfoDebounceMs = 1000
+
 const notifyDataLakeVariableInfoListeners = (): void => {
-  const updatedVariables = getAllDataLakeVariablesInfo()
-  Object.values(dataLakeVariableInfoListeners).forEach((listener) => listener(updatedVariables))
+  // Clear any pending notification
+  if (notifyInfoListenersTimeout) {
+    clearTimeout(notifyInfoListenersTimeout)
+  }
+
+  // Schedule a new notification after the debounce period
+  notifyInfoListenersTimeout = setTimeout(() => {
+    const updatedVariables = getAllDataLakeVariablesInfo()
+    Object.entries(dataLakeVariableInfoListeners).forEach(([listenerId, listener]) => {
+      try {
+        listener(updatedVariables)
+      } catch (error) {
+        console.error(`[DataLake] Error in variable info listener "${listenerId}":`, error)
+      }
+    })
+    notifyInfoListenersTimeout = null
+  }, notifyInfoDebounceMs)
 }
 
 // Initialize by loading persistent variables

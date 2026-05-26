@@ -52,8 +52,7 @@ import { VehicleFactory } from '@/libs/vehicle/vehicle-factory'
 import type { MissionLoadingCallback, Waypoint } from '@/types/mission'
 
 import { useControllerStore } from './controller'
-import { useWidgetManagerStore } from './widgetManager'
-
+import { useMissionStore } from './mission'
 /**
  * Custom parameter data description interface
  */
@@ -78,7 +77,7 @@ const { openSnackbar } = useSnackbar()
 
 export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const controllerStore = useControllerStore()
-  const widgetStore = useWidgetManagerStore()
+  const missionStore = useMissionStore()
   const ws_protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
   const http_protocol = location?.protocol === 'https:' ? 'https' : 'http'
 
@@ -117,6 +116,12 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const currentlyConnectedVehicleId = ref<string | undefined>()
 
   const lastHeartbeat = ref<Date>()
+
+  /**
+   * Set to true the first time {@link isVehicleOnline} becomes true in this app session, and not reset
+   * until a full page reload. Used to distinguish "never had a link" from "had a link, now lost".
+   */
+  const hasVehicleBeenOnlineThisSession = ref(false)
   const firmwareType = ref<MavAutopilot>()
   const vehicleType = ref<MavType>()
   const altitude: Altitude = reactive({} as Altitude)
@@ -136,6 +141,17 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   const vehicleArmingTime = ref<Date | undefined>(undefined)
   const currentVehicleName = ref<string | undefined>(undefined)
   const vehiclePositionMaxSampleRate = useStorage('cockpit-vehicle-position-max-sampling-ms', 200) // Limits the frequency of vehicle position updates
+  const reachedMissionItemSequences = ref<number[]>([])
+  const currentMissionSeq = ref<number | undefined>(undefined)
+
+  const markMissionItemAsReached = (sequence: number): void => {
+    if (reachedMissionItemSequences.value.includes(sequence)) return
+    reachedMissionItemSequences.value = [...reachedMissionItemSequences.value, sequence]
+  }
+
+  const clearReachedMissionItems = (): void => {
+    reachedMissionItemSequences.value = []
+  }
 
   const defaultVehiclePayload: VehiclePayloadParameters = {
     extraPayloadKg: 0,
@@ -165,6 +181,20 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     false
   )
 
+  // Store setting to enable/disable legacy data lake variable names (e.g., 'ATTITUDE/roll' in addition to '/mavlink/1/1/ATTITUDE/roll')
+  // Enabled by default for backward compatibility reasons - users with old devices may want to disable this to improve performance
+  const enableLegacyDataLakeVariableNames = useBlueOsStorage('cockpit-enable-legacy-datalake-variable-names', true)
+
+  // Maximum time without heartbeats before the vehicle is considered offline. Configurable so users on
+  // high-latency or lossy links (e.g. cellular modems) can extend the window beyond the 5 s default.
+  const vehicleConnectionTimeoutMs = useBlueOsStorage('cockpit-vehicle-connection-timeout-ms', 5000)
+
+  // Maximum time the MAVLink websocket may stay open without receiving any message before it is
+  // forcibly recycled. Decoupled from the heartbeat timeout: keeping it shorter than the heartbeat
+  // window lets the socket recover silently before the UI ever flips to "offline" on a brief drop;
+  // keeping it longer trades responsiveness for fewer recycles on high-latency links.
+  const vehicleConnectionWatchdogTimeoutMs = useBlueOsStorage('cockpit-vehicle-connection-watchdog-timeout-ms', 4000)
+
   const MAVLink2RestWebsocketURI = computed(() => {
     const queryURI = new URLSearchParams(window.location.search).get('MAVLink2RestWebsocketURI')
     const customURI = customMAVLink2RestWebsocketURI.value.enabled
@@ -185,21 +215,34 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   })
 
   /**
-   * Check if vehicle is online (no more than 5 seconds passed since last heartbeat)
+   * Check if vehicle is online (no more than {@link vehicleConnectionTimeoutMs} passed since last heartbeat)
    * @returns { boolean } True if vehicle is online
    */
   const isVehicleOnline = computed(() => {
-    return lastHeartbeat.value !== undefined && new Date(timeNow.value).getTime() - lastHeartbeat.value.getTime() < 5000
+    return (
+      lastHeartbeat.value !== undefined &&
+      new Date(timeNow.value).getTime() - lastHeartbeat.value.getTime() < vehicleConnectionTimeoutMs.value
+    )
+  })
+
+  /**
+   * True when a vehicle was online in this session (heartbeats received) and is now offline. Use for
+   * alarming disconnection UI; omit when the user never established a link this session.
+   * @returns {boolean} True if the user should see connection-lost (red border, pulsing comm indicator, etc.)
+   */
+  const isVehicleConnectionLost = computed(() => {
+    return hasVehicleBeenOnlineThisSession.value && !isVehicleOnline.value
   })
 
   watch(isVehicleOnline, (isOnline) => {
     if (isOnline) {
+      hasVehicleBeenOnlineThisSession.value = true
       dispatchEvent(new CustomEvent('vehicle-online', { detail: { vehicleAddress: globalAddress.value } }))
-    } else {
-      dispatchEvent(new CustomEvent('vehicle-offline'))
+      return
     }
-    if (isOnline) return
+    dispatchEvent(new CustomEvent('vehicle-offline'))
     currentlyConnectedVehicleId.value = undefined
+    isArmed.value = undefined
   })
 
   watch(enableDatalakeVariablesFromOtherSystems, (newValue) => {
@@ -207,10 +250,22 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.shouldCreateDatalakeVariablesFromOtherSystems = newValue
   })
 
+  watch(enableLegacyDataLakeVariableNames, (newValue) => {
+    if (!mainVehicle.value) return
+    mainVehicle.value.shouldCreateLegacyDataLakeVariables = newValue
+  })
+
   watch(
     globalAddress,
     (newAddress) => {
       if (newAddress === undefined) return
+
+      // Clean the address by removing trailing slashes
+      let cleanedAddress = newAddress
+      if (cleanedAddress.endsWith('/')) {
+        cleanedAddress = cleanedAddress.slice(0, -1)
+        globalAddress.value = cleanedAddress
+      }
 
       // Register vehicle address variables if they don't exist
       const vehicleAddressVariableId = 'vehicle-address'
@@ -234,11 +289,17 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       }
 
       // Update the variables with the new address
-      setDataLakeVariableData(vehicleAddressVariableId, newAddress)
+      setDataLakeVariableData(vehicleAddressVariableId, cleanedAddress)
       setDataLakeVariableData(vehicleMavlink2RestHttpEndpointVariableId, defaultMAVLink2RestHttpURI.value)
     },
     { immediate: true }
   )
+
+  watch(isArmed, (isNowArmed, wasPreviouslyArmed) => {
+    if (isNowArmed === true && wasPreviouslyArmed !== true) {
+      clearReachedMissionItems()
+    }
+  })
 
   const rtcConfiguration = computed(() => {
     const queryWebRtcConfiguration = new URLSearchParams(window.location.search).get('webRTCConfiguration')
@@ -463,6 +524,22 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
   }
 
   /**
+   * Pause mission that is on the vehicle
+   */
+  async function pauseMission(): Promise<void> {
+    if (!mainVehicle.value) throw new Error('No vehicle available to pause mission.')
+    await mainVehicle.value.pauseMission()
+  }
+
+  /**
+   * Send the vehicle home (RTL)
+   */
+  async function returnHome(): Promise<void> {
+    if (!mainVehicle.value) throw new Error('No vehicle available to return home.')
+    await mainVehicle.value.returnHome()
+  }
+
+  /**
    * List of available flight modes
    * @returns {Array<string>}
    */
@@ -505,7 +582,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     }
   })
 
-  ConnectionManager.addConnection(MAVLink2RestWebsocketURI.value, Protocol.Type.MAVLink)
+  ConnectionManager.addConnection(MAVLink2RestWebsocketURI.value, Protocol.Type.MAVLink, {
+    websocket: { getWatchdogTimeoutMs: () => vehicleConnectionWatchdogTimeoutMs.value },
+  })
 
   let applyThrottledCoordinates = useThrottleFn(
     (nc: Coordinates) => Object.assign(coordinates, nc),
@@ -527,6 +606,13 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
 
     // Set callback to check if datalake variables from other systems should be created
     mainVehicle.value.shouldCreateDatalakeVariablesFromOtherSystems = enableDatalakeVariablesFromOtherSystems.value
+    // Set whether to create legacy data lake variable names
+    mainVehicle.value.shouldCreateLegacyDataLakeVariables = enableLegacyDataLakeVariableNames.value
+
+    // Set callback for mission's current waypoint updates
+    mainVehicle.value.onMissionCurrent.add(MAVLinkType.MISSION_CURRENT, (seq: number) => {
+      currentMissionSeq.value = seq
+    })
 
     mainVehicle.value.onAltitude.add((newAltitude: Altitude) => {
       Object.assign(altitude, newAltitude)
@@ -537,6 +623,11 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.onArm.add((armed: boolean) => {
       const wasArmed = isArmed.value
       isArmed.value = armed
+
+      // Clear vehicle history on disarm/arm transition only when not persistent (persistent history is cleared only via map context menu)
+      if (wasArmed !== undefined && wasArmed !== armed && !isVehiclePositionHistoryPersistent.value) {
+        missionStore.clearVehicleHistory()
+      }
 
       // If the vehicle was already in the desired state or it's the first time we are checking, do not capture an event
       if (wasArmed === undefined || wasArmed === armed) return
@@ -575,6 +666,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.onStatusGPS.add((newStatusGPS: StatusGPS) => {
       Object.assign(statusGPS, newStatusGPS)
     })
+    mainVehicle.value.onMissionItemReached.add((sequence: number) => {
+      markMissionItemAsReached(sequence)
+    })
     mainVehicle.value.onIncomingMAVLinkMessage.add(MAVLinkType.HEARTBEAT, (pack: Package) => {
       if (pack.header.component_id != 1) {
         return
@@ -588,20 +682,6 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
 
       if (oldVehicleType !== vehicleType.value && vehicleType.value !== undefined) {
         console.log('Vehicle type changed to', vehicleType.value)
-
-        try {
-          controllerStore.loadDefaultProtocolMappingForVehicle(vehicleType.value)
-          console.info(`Loaded default joystick protocol mapping for vehicle type ${vehicleType.value}.`)
-        } catch (error) {
-          console.error(`Could not load default protocol mapping for vehicle type ${vehicleType.value}: ${error}`)
-        }
-
-        try {
-          widgetStore.loadDefaultProfileForVehicle(vehicleType.value)
-          console.info(`Loaded default profile for vehicle type ${vehicleType.value}.`)
-        } catch (error) {
-          console.error(`Could not load default profile for vehicle type ${vehicleType.value}: ${error}`)
-        }
       }
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -908,6 +988,15 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mainVehicle.value.requestDefaultMessages()
   }
 
+  /**
+   * Sets the current mission item as active on the vehicle
+   * @param {number} seq - Sequential number of the mission item to set as current
+   */
+  async function setMissionCurrent(seq: number): Promise<void> {
+    if (!mainVehicle.value) throw new Error('No vehicle available to set mission current.')
+    await mainVehicle.value.setMissionCurrent(seq)
+  }
+
   return {
     arm,
     takeoff,
@@ -923,6 +1012,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     uploadMission,
     clearMissions,
     startMission,
+    pauseMission,
+    returnHome,
+    setMissionCurrent,
     getCurrentVehicleName,
     mainVehicle,
     globalAddress,
@@ -950,6 +1042,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     isArmed,
     flying,
     isVehicleOnline,
+    isVehicleConnectionLost,
     icon,
     configurationPages,
     rtcConfiguration,
@@ -959,11 +1052,17 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     mavlinkMessageIntervalOptions,
     updateMessageInterval,
     resetMessageIntervalsToCockpitDefault,
+    reachedMissionItemSequences,
+    clearReachedMissionItems,
     fetchHomeWaypoint,
     setHomeWaypoint,
     vehiclePayloadParameters,
     vehiclePositionMaxSampleRate,
+    vehicleConnectionTimeoutMs,
+    vehicleConnectionWatchdogTimeoutMs,
     enableDatalakeVariablesFromOtherSystems,
+    enableLegacyDataLakeVariableNames,
     getVehicleAddress,
+    currentMissionSeq,
   }
 })

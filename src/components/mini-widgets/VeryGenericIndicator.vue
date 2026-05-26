@@ -160,24 +160,39 @@
             </div>
             <RecycleScroller
               v-if="iconSearchString === '' && showIconChooseModal"
+              ref="iconGridRef"
               v-slot="{ item }"
-              class="w-full h-40 mt-3 text-[34px]"
+              class="w-full h-40 mt-3"
+              :style="{ fontSize: iconGridFontSize }"
               :items="iconsNames"
-              :item-size="46"
-              :grid-items="7"
+              :item-size="iconGridRowHeight"
+              :item-secondary-size="iconGridSecondarySize"
+              :grid-items="iconGridColumns"
             >
-              <span class="m-1 text-white cursor-pointer mdi icon-symbol" :class="[item]" @click="chooseIcon(item)">
-              </span>
+              <span
+                :class="[
+                  `block w-full h-full text-center text-white cursor-pointer mdi icon-symbol leading-[${iconGridRowHeight}px]`,
+                  item,
+                ]"
+                @click="chooseIcon(item)"
+              />
             </RecycleScroller>
             <div
-              v-else-if="showIconChooseModal"
-              class="grid w-full h-40 grid-cols-7 mt-3 overflow-x-hidden overflow-y-scroll"
+              v-if="iconSearchString !== '' && showIconChooseModal"
+              class="grid w-full h-40 mt-3 overflow-x-hidden overflow-y-scroll"
+              :style="{
+                gridTemplateColumns: `repeat(${iconGridColumns}, minmax(0, 1fr))`,
+                gridAutoRows: `${iconGridRowHeight}px`,
+                fontSize: iconGridFontSize,
+              }"
             >
               <span
                 v-for="icon in iconsToShow"
                 :key="icon"
-                class="m-1 text-white cursor-pointer mdi icon-symbol"
-                :class="[icon]"
+                :class="[
+                  `block text-center text-white cursor-pointer mdi icon-symbol leading-[${iconGridRowHeight}px]`,
+                  icon,
+                ]"
                 @click="chooseIcon(icon)"
               />
             </div>
@@ -205,8 +220,7 @@
 </template>
 
 <script setup lang="ts">
-import * as MdiExports from '@mdi/js/mdi'
-import { watchThrottled } from '@vueuse/core'
+import { useElementSize, watchThrottled } from '@vueuse/core'
 import Fuse from 'fuse.js'
 import { computed, onBeforeMount, onMounted, ref, toRefs, watch } from 'vue'
 
@@ -249,9 +263,19 @@ onBeforeMount(() => {
     })
   }
 
-  iconsNames = Object.keys(MdiExports).map((originalName) => {
-    return originalName.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
-  })
+  iconsNames = []
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof CSSStyleRule) {
+          const match = rule.selectorText.match(/^\.(mdi-[a-z0-9-]+)::before$/)
+          if (match) iconsNames.push(match[1])
+        }
+      }
+    } catch {
+      // Skip CORS-restricted stylesheets
+    }
+  }
 })
 
 const widgetStore = useWidgetManagerStore()
@@ -418,6 +442,17 @@ const fuseOptions = { includeScore: true, ignoreLocation: true, threshold: 0.3 }
 let iconsNames: string[] = []
 
 // Search for icon using fuzzy-finder
+const iconGridColumns = 7
+const iconGridRowHeight = 46
+const iconGridFontSize = '34px'
+
+const iconGridRef = ref<HTMLElement | null>(null)
+const { width: iconGridWidth } = useElementSize(iconGridRef)
+const iconGridSecondarySize = computed(() => {
+  if (!iconGridWidth.value) return iconGridRowHeight
+  return Math.floor(iconGridWidth.value / iconGridColumns)
+})
+
 const iconSearchString = ref('')
 const iconsToShow = ref<string[]>([])
 watchThrottled(

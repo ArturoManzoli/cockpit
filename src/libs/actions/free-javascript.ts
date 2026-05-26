@@ -1,3 +1,5 @@
+import { JavascriptActionConfig } from '@/types/cockpit-actions'
+
 import {
   CockpitAction,
   CockpitActionsFunction,
@@ -9,21 +11,16 @@ import { settingsManager } from '../settings-management'
 
 const javascriptActionIdPrefix = 'javascript-action'
 
-export type JavascriptActionConfig = {
-  /**
-   * The name of the action
-   */
-  name: string
-  /**
-   * The JavaScript code to execute
-   */
-  code: string
-}
-
 let registeredJavascriptActionConfigs: Record<string, JavascriptActionConfig> = {}
 
-export const registerJavascriptActionConfig = (action: JavascriptActionConfig): string => {
-  const id = `${javascriptActionIdPrefix} (${action.name})`
+/**
+ * Register a new JavaScript action config and create a cockpit action for it
+ * @param {JavascriptActionConfig} action - The action config to register
+ * @param {string} customId - Optional explicit ID (e.g. from an extension manifest). Falls back to a generated ID.
+ * @returns {string} The ID under which the action was registered
+ */
+export const registerJavascriptActionConfig = (action: JavascriptActionConfig, customId?: string): string => {
+  const id = customId ?? `${javascriptActionIdPrefix} (${action.name})`
   registeredJavascriptActionConfigs[id] = action
   saveJavascriptActionConfigs()
   updateCockpitActions()
@@ -39,6 +36,7 @@ export const getAllJavascriptActionConfigs = (): Record<string, JavascriptAction
 }
 
 export const deleteJavascriptActionConfig = (id: string): void => {
+  deleteAction(id as CockpitActionsFunction)
   delete registeredJavascriptActionConfigs[id]
   saveJavascriptActionConfigs()
   updateCockpitActions()

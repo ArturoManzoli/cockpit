@@ -22,6 +22,25 @@ export const defaultProfileVehicleCorrespondency = {
   [MavType.MAV_TYPE_QUADROTOR]: defaultMavProfileHash,
 }
 
+export const blankViewsGroup: Profile = {
+  name: 'Default',
+  hash: '00000000-0000-0000-0000-000000000000',
+  views: [
+    {
+      hash: '00000000-0000-0000-0000-000000000001',
+      name: 'Main View',
+      showBottomBarOnBoot: true,
+      visible: true,
+      widgets: [],
+      miniWidgetContainers: [
+        { name: 'Bottom-left container', widgets: [] },
+        { name: 'Bottom-center container', widgets: [] },
+        { name: 'Bottom-right container', widgets: [] },
+      ],
+    },
+  ],
+}
+
 export const defaultWidgetManagerVars: WidgetManagerVars = {
   everMounted: false,
   configMenuOpen: false,
@@ -286,6 +305,20 @@ export const widgetProfiles: Profile[] = [
         hash: 'fc6abfcc-5a19-4e70-9a96-f03f6c55f1b3',
         name: 'Map View',
         widgets: [
+          {
+            hash: '32759d44-73ce-470b-92e7-4b6d70b3c827',
+            name: 'MissionControlPanel',
+            component: WidgetType.MissionControlPanel,
+            position: {
+              x: 0.837604,
+              y: 0.804823,
+            },
+            size: {
+              width: 0.134754,
+              height: 0.09353,
+            },
+            options: {},
+          },
           {
             hash: '80e785e1-31e2-4bfe-85d4-99fee6ca3f76',
             name: 'VirtualHorizon',
@@ -908,15 +941,15 @@ export const defaultJoystickCalibration: JoystickCalibration = {
   deadband: {
     enabled: false,
     thresholds: {
-      axes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      buttons: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      axes: Array(64).fill(0),
+      buttons: Array(64).fill(0),
     },
   },
   exponential: {
     enabled: false,
     factors: {
-      axes: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-      buttons: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      axes: Array(64).fill(1),
+      buttons: Array(64).fill(1),
     },
   },
 }
@@ -938,8 +971,11 @@ export const defaultBatteryLevelColorScheme: Record<BatteryLevel, string> = {
 
 // Values based on Blue Robotics standard 4s Li-Ion battery pack voltages
 export const defaultBatteryLevelThresholds: BatteryLevelThresholds = {
-  high: 15.2,
-  medium: 14.0,
-  low: 12.8,
-  critical: 12.0,
+  medium: 15.2,
+  low: 14.0,
+  critical: 12.8,
 }
+
+// Defaults for the procedural noise that replaces failed satellite tiles.
+export const defaultMapFallbackBaseColor = '#0f303e'
+export const defaultMapFallbackNoiseIntensity = 0.3

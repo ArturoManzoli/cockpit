@@ -23,6 +23,17 @@ const initialTime = new Date()
 const fileName = `Cockpit (${format(initialTime, systemLogDateTimeFormat)}).syslog`
 
 /* eslint-disable jsdoc/require-jsdoc */
+
+// Export the current session's log file name so it can be used to identify the current session
+export const getCurrentSessionLogFileName = (): string => fileName
+
+// Export function to get current session log file name and size
+// For web version, returns event count instead of estimated size
+export const getCurrentSessionLogInfo = async (): Promise<{ fileName: string; size: number }> => {
+  const eventCount = currentSystemLog.events.length
+  return { fileName, size: eventCount }
+}
+
 type LogEvent = {
   epoch: number
   level: string
@@ -64,7 +75,7 @@ const sendLogToElectron = (level: string, message: string): void => {
 
 const enableSystemLogging = settingsManager.getKeyValue(systemLoggingEnablingKey)
 
-if (enableSystemLogging === 'true') {
+if (enableSystemLogging) {
   const isRunningInElectron = isElectron()
 
   console.log(`

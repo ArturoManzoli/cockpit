@@ -1,7 +1,7 @@
 <template>
   <div>
     <img
-      class="fixed w-[100vw] h-[100vh] top-0 left-0 z-[9990] filter brightness-[80%]"
+      class="fixed inset-0 w-full h-full object-cover object-center z-[9990] filter brightness-[80%]"
       :src="splashBackground"
       alt="Background"
     />
@@ -25,57 +25,71 @@
     </div>
 
     <div v-if="isDecember()" id="tether-animation">
-      <div class="absolute top-[30vh] right-[-55px] animate-left-down-fast" style="z-index: 9991">
-        <img class="wiggle w-[40px] opacity-60" :src="gifts" alt="tether-to-gift" />
-      </div>
-      <div class="absolute top-[33vh] right-[-20px] animate-left-down-fast" style="z-index: 9990">
-        <img class="w-[60px] rotate-[-15deg]" :src="tetherXmas" alt="tether-to-gift" />
-      </div>
-      <div class="absolute top-[31.5vh] right-0 animate-left-down-fast" style="z-index: 9991">
-        <img
-          class="w-[70px] scale-x-[-1] scale-y-[-1] rotate-[15deg] contrast-100 brightness-0"
-          :src="xmasTree"
-          alt="christmas-tree"
-        />
-      </div>
-      <div class="absolute top-[35vh] right-[60px] animate-left-down-fast" style="z-index: 9990">
-        <img class="w-[110px]" :src="tetherXmas" alt="tether-to-tree" />
-      </div>
-      <div class="absolute top-[35vh] right-[8%] animate-left-down-fast" style="z-index: 9990">
-        <img class="w-[60px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Fish" />
-      </div>
-      <div class="absolute top-[37vh] right-[4%] animate-left-down-faster" style="z-index: 9990">
-        <img class="w-[30px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Fish" />
-      </div>
-      <div class="absolute top-[39vh] right-[2%] animate-left-down-faster2" style="z-index: 9990">
-        <img class="w-[35px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Fish" />
+      <div class="absolute top-[10vh] right-[-55px]">
+        <div class="relative top-[3vh] right-[35px] animate-left-down-fast" style="z-index: 9990">
+          <img class="w-[60px] rotate-[-15deg]" :src="tetherXmas" alt="tether-to-gift" />
+        </div>
+        <div class="relative top-[5.4vh] right-[-125px] animate-left-down-fast-xmas-tree" style="z-index: 9991">
+          <img
+            class="w-[70px] scale-x-[-1] scale-y-[-1] rotate-[160deg] contrast-100 brightness-0"
+            :src="xmasTree"
+            alt="christmas-tree"
+          />
+        </div>
+        <div class="relative top-[4.9vh] right-[-35px] animate-left-down-fast" style="z-index: 9990">
+          <img class="w-[110px] rotate-[-15deg]" :src="tetherXmas" alt="tether-to-tree" />
+        </div>
+        <div class="relative top-[5vh] right-[8%] animate-left-down-fast" style="z-index: 9990">
+          <img class="w-[60px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Rov" />
+        </div>
+        <div class="relative top-[7vh] right-[2%] animate-left-down-faster" style="z-index: 9990">
+          <img class="w-[30px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Rov" />
+        </div>
+        <div class="relative top-[9vh] right-[1%] animate-left-down-faster2" style="z-index: 9990">
+          <img class="w-[35px] opacity-70 rotate-[-10deg]" :src="rovSide" alt="Rov" />
+        </div>
       </div>
     </div>
     <div
-      class="fixed w-[70vw] h-[55vh] top-1/2 left-1/2 rounded-[20px] transform -translate-x-1/2 -translate-y-1/2 z-[9992]"
-      :style="[interfaceStore.globalGlassMenuStyles, { border: '1px solid #ffffff55' }]"
+      class="fixed top-1/2 left-1/2 rounded-[20px] transform -translate-x-1/2 -translate-y-1/2 z-[9992]"
+      :style="[
+        interfaceStore.globalGlassMenuStyles,
+        {
+          border: '1px solid #ffffff55',
+          width: 'min(70vw, 90vw)',
+          maxWidth: '1200px',
+          aspectRatio: '70 / 32',
+          height: 'auto',
+          maxHeight: '90vh',
+        },
+      ]"
     >
       <div
-        class="relative flex flex-col w-full h-[80%] rounded-tr-[20px] rounded-tl-[20px] items-center justify-center elevation-7 border-b-[1px] border-[#ffffff33] bg-[#FFFFFF11] px-8"
+        class="relative flex flex-col w-full h-[80%] rounded-tr-[20px] rounded-tl-[20px] items-center justify-center elevation-7 border-b-[1px] border-[#ffffff33] bg-[#FFFFFF11] px-[8%] py-[2%]"
       >
         <div class="relative h-[55%] -ml-[1vw] z-[9993] object-contain brightness-125">
           <img :src="cockpitLogoName" class="h-full" alt="Cockpit Logo" />
           <img
             v-if="!isElectron()"
             :src="lite"
-            class="w-[16vh] absolute right-8 -bottom-12 rotate-[-20deg]"
+            class="w-[16%] absolute right-[3%] -bottom-[22%] rotate-[-20deg]"
             alt="Cockpit-lite"
           />
         </div>
         <img
-          class="absolute top-[2vh] left-[2vh] w-[15%] z-[9993]"
+          class="absolute top-[5%] left-[2%] w-[15%] z-[9993]"
           :src="blueRoboticsWhiteNameLogo"
           alt="Blue Robotics Logo"
         />
       </div>
 
-      <div class="flex flex-col w-full h-[20%] items-center justify-center text-center">
-        <p class="text-[1.7vw]">{{ randomLightHeartedMessage }}</p>
+      <div
+        class="flex flex-col w-full h-[20%] items-center justify-center text-center overflow-hidden px-6"
+        style="container-type: size"
+      >
+        <p class="max-w-full whitespace-nowrap text-ellipsis overflow-hidden" style="font-size: 30cqh">
+          {{ randomLightHeartedMessage }}
+        </p>
       </div>
     </div>
     <div class="absolute bottom-0 left-[280px] animate-ascend" style="z-index: 9991">
@@ -112,18 +126,17 @@ import { getMonth } from 'date-fns'
 
 import { useAppInterfaceStore } from '@/stores/appInterface'
 
-import blueRoboticsWhiteNameLogo from '../assets/blue-robotics-white-name-logo.png'
-import blueROV from '../assets/blueROV-front.png'
-import blueROVXmas from '../assets/blueROV-front-santa-hat.png'
-import rovSide from '../assets/blueROV-side-dark.png'
-import cockpitLogoName from '../assets/cockpit-name-logo.png'
-import fish from '../assets/fish-transparent.png'
-import gifts from '../assets/gifts.png'
-import lite from '../assets/lite.png'
+import blueRoboticsWhiteNameLogo from '../assets/blue-robotics-white-name-logo.avif'
+import blueROV from '../assets/blueROV-front.avif'
+import blueROVXmas from '../assets/blueROV-front-santa-hat.avif'
+import rovSide from '../assets/blueROV-side-dark.avif'
+import cockpitLogoName from '../assets/cockpit-name-logo.avif'
+import fish from '../assets/fish-transparent.avif'
+import lite from '../assets/lite.avif'
 import xmasTree from '../assets/pulling-xmas-tree.gif'
-import splashBackground from '../assets/splash-background.png'
-import tether from '../assets/tether.png'
-import tetherXmas from '../assets/tether-xmas.png'
+import splashBackground from '../assets/splash-background.avif'
+import tether from '../assets/tether.avif'
+import tetherXmas from '../assets/tether-xmas.avif'
 
 const interfaceStore = useAppInterfaceStore()
 const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
@@ -257,6 +270,15 @@ onBeforeUnmount(() => {
   }
 }
 
+@keyframes leftDownXmas {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(-20vw, 20vh) rotate(10deg);
+  }
+}
+
 @keyframes leftDown2 {
   from {
     transform: translate(0, 0);
@@ -278,6 +300,10 @@ onBeforeUnmount(() => {
   animation: leftDown 40s linear forwards;
 }
 
+.animate-left-down-fast-xmas-tree {
+  animation: leftDownXmas 40s linear forwards;
+}
+
 @keyframes ascend {
   from {
     transform: translateY(calc(0 + 150px));
@@ -289,7 +315,7 @@ onBeforeUnmount(() => {
 
 .wiggle {
   animation: wiggle 8s ease-in-out infinite;
-  transform-origin: 10% 50%;
+  transform-origin: 0% 100%;
 }
 
 @keyframes wiggle {

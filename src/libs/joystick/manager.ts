@@ -6,13 +6,15 @@ import {
   convertSDLControllerStateToGamepadState,
   convertSDLJoystickStateToGamepadState,
 } from '@/types/joystick'
+import { JoystickMapVidPid, JoystickModel } from '@/types/joystick-model-defs'
 
 import { settingsManager } from '../settings-management'
+import { isElectron } from '../utils'
 import { applyCalibration } from './calibration'
 
-export const joystickCalibrationOptionsKey = 'cockpit-joystick-calibration-options'
+export { JoystickModel }
 
-import { isElectron } from '../utils'
+export const joystickCalibrationOptionsKey = 'cockpit-joystick-calibration-options'
 
 /**
  * Possible events from GamepadListener
@@ -25,45 +27,6 @@ export enum EventType {
   Axis = 'axis',
   Button = 'button',
 }
-
-/**
- * Supported joystick models
- */
-export enum JoystickModel {
-  DualSense = 'DualSense (PS5)',
-  DualShock4 = 'DualShock (PS4)',
-  XboxOne_Wireless = 'Xbox One Wireless Controller',
-  XboxOne_Wired = 'Xbox One Wired Controller',
-  XboxOneS_Bluetooth = 'Xbox One S (bluetooth)',
-  XboxController_Bluetooth = 'Xbox controller (bluetooth)',
-  XboxController_Wired = 'Xbox controller (wired)',
-  XboxController_360 = 'Xbox 360 controller',
-  LogitechExtreme3DPro = 'Logitech Extreme 3D Pro',
-  IpegaPG9023 = 'Ipega PG-9023',
-  SteamDeckLCD = 'Steam Deck LCD',
-  SteamDeckOLED = 'Steam Deck OLED',
-  EightBitDoUltimate2C = '8BitDo Ultimate 2C',
-  ThrustmasterSimTaskFarmStick = 'Thrustmaster SimTask FarmStick',
-  Unknown = 'Unknown',
-}
-
-const JoystickMapVidPid: Map<string, JoystickModel> = new Map([
-  // Sony
-  ['054c:0ce6', JoystickModel.DualSense],
-  ['054c:09cc', JoystickModel.DualShock4],
-  ['045e:02ea', JoystickModel.XboxOne_Wired],
-  ['045e:02e0', JoystickModel.XboxOne_Wireless],
-  ['045e:02fd', JoystickModel.XboxOneS_Bluetooth],
-  ['045e:0b13', JoystickModel.XboxController_Bluetooth],
-  ['045e:0b12', JoystickModel.XboxController_Wired],
-  ['28de:11ff', JoystickModel.XboxController_360],
-  ['046d:c215', JoystickModel.LogitechExtreme3DPro],
-  ['1949:0402', JoystickModel.IpegaPG9023],
-  ['28de:11ff', JoystickModel.SteamDeckLCD],
-  ['28de:1205', JoystickModel.SteamDeckOLED],
-  ['2dc8:301b', JoystickModel.EightBitDoUltimate2C],
-  ['044f:0416', JoystickModel.ThrustmasterSimTaskFarmStick],
-])
 
 // Necessary to add functions
 // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -157,9 +120,16 @@ export type JoystickStateEvent = {
    */
   index: number
   /**
-   * Gamepad object
+   * Gamepad object holding the raw, un-calibrated axes and buttons.
+   * Consumers that need the actual stick position (e.g. the calibration UI
+   * or the joystick visualizations) should read from here.
    */
   gamepad: Gamepad
+  /**
+   * Joystick state with calibration (deadband, exponential) already applied.
+   * Consumers driving vehicle commands should read from here.
+   */
+  calibratedState: JoystickState
 }
 
 export type JoystickConnectEvent = {
@@ -394,15 +364,8 @@ class JoystickManager {
       const gamepadId = `${data.deviceName} (SDL STANDARD JOYSTICK Vendor: ${data.vendorId} Product: ${data.productId})`
       const gamepadModel = this.getModel(gamepadId)
 
-      const newState: JoystickState = {
-        axes: [...gamepadState.axes],
-        buttons: [...gamepadState.buttons],
-      }
-
-      gamepadState.axes.forEach((value, index) => {
-        const calibratedValue = this.applyCalibrationToValue('axis', index, value ?? 0, gamepadModel)
-        newState.axes[index] = calibratedValue
-      })
+      const rawAxes = gamepadState.axes.map((value) => value ?? 0)
+      const rawButtons = gamepadState.buttons.map((value) => value ?? 0)
 
       const joystickEvent: JoystickStateEvent = {
         index: data.deviceId,
@@ -412,10 +375,10 @@ class JoystickManager {
           connected: true,
           timestamp: Date.now(),
           mapping: 'standard',
-          axes: newState.axes.map((value) => value ?? 0),
-          buttons: newState.buttons.map((value) => ({
-            pressed: (value ?? 0) > 0.5,
-            value: value ?? 0,
+          axes: rawAxes,
+          buttons: rawButtons.map((value) => ({
+            pressed: value > 0.5,
+            value: value,
             touched: false,
           })),
           vibrationActuator: {
@@ -423,19 +386,19 @@ class JoystickManager {
             reset: async () => 'complete' as const,
           },
         },
+        calibratedState: this.buildCalibratedState(rawAxes, rawButtons, gamepadModel),
       }
 
       // Add joystick to the list of joysticks if it is not already there
       if (!this.joysticks.has(data.deviceId)) {
         this.joysticks.set(data.deviceId, joystickEvent.gamepad)
         this.enabledJoysticks.push(data.deviceId)
+        // Emit joystick connection update only when a new joystick is detected
+        this.emitJoystickConnectionUpdate()
       }
 
       // Emit joystick state update
       this.emitStateEvent(joystickEvent)
-
-      // Emit joystick connection update
-      this.emitJoystickConnectionUpdate()
     })
   }
 
@@ -519,7 +482,7 @@ class JoystickManager {
   }
 
   /**
-   * Load calibration settings from localStorage
+   * Load calibration settings from local storage
    */
   private loadCalibrationSettings(): void {
     try {
@@ -534,21 +497,21 @@ class JoystickManager {
   }
 
   /**
-   * Apply calibration to a joystick value
-   * @param {string} inputType The type of input ('button' or 'axis')
-   * @param {number} inputIndex The index of the input
-   * @param {number} originalValue The original value of the input
-   * @param {JoystickModel} joystickModel The joystick model
-   * @returns {number} The calibrated value
+   * Build a calibrated `JoystickState` from raw axes and buttons.
+   * Calibration is per-axis: deadband and exponential scaling are applied
+   * using the thresholds/factors stored for the given joystick model.
+   * Buttons are passed through untouched, matching the previous behavior.
+   * @param {number[]} rawAxes Raw axis values straight from the device
+   * @param {number[]} rawButtons Raw button values straight from the device
+   * @param {JoystickModel} model Joystick model used to look up calibration
+   * @returns {JoystickState} The calibrated joystick state
    */
-  private applyCalibrationToValue(
-    inputType: 'button' | 'axis',
-    inputIndex: number,
-    originalValue: number,
-    joystickModel: JoystickModel
-  ): number {
-    const calibration = this.calibrationOptions.get(joystickModel) ?? defaultJoystickCalibration
-    return applyCalibration(inputType, inputIndex, originalValue, calibration)
+  private buildCalibratedState(rawAxes: number[], rawButtons: number[], model: JoystickModel): JoystickState {
+    const calibration = this.calibrationOptions.get(model) ?? defaultJoystickCalibration
+    return {
+      axes: rawAxes.map((value, index) => applyCalibration('axis', index, value, calibration)),
+      buttons: [...rawButtons],
+    }
   }
 
   /**
@@ -567,42 +530,33 @@ class JoystickManager {
 
       const previousState = this.previousGamepadState.get(gamepad.index)
 
-      const newState: JoystickState = {
-        axes: [...gamepad.axes],
-        buttons: [...(gamepad.buttons.map((button) => button.value) as number[])],
-      }
+      const rawAxes = [...gamepad.axes]
+      const rawButtons = gamepad.buttons.map((button) => button.value)
       let shouldEmitStateEvent = false
 
-      // Check axes
       if (previousState) {
-        // Check for axis changes
-        gamepad.axes.forEach((value, index) => {
-          if (previousState.axes[index] !== value) {
-            const calibratedValue = this.applyCalibrationToValue('axis', index, value, joystickModel)
-            newState.axes[index] = calibratedValue
-          }
+        rawAxes.forEach((value, index) => {
           if (previousState.axes[index] !== value) {
             shouldEmitStateEvent = true
           }
         })
 
-        // Check for button changes
-        gamepad.buttons.forEach((button, index) => {
-          const previousButton = previousState.buttons[index]
-          if (previousButton !== button.value) {
-            newState.buttons[index] = button.value
-          }
-          if (previousButton !== button.value) {
+        rawButtons.forEach((value, index) => {
+          if (previousState.buttons[index] !== value) {
             shouldEmitStateEvent = true
           }
         })
       }
 
       // Update previous state
-      this.previousGamepadState.set(gamepad.index, newState)
+      this.previousGamepadState.set(gamepad.index, { axes: rawAxes, buttons: rawButtons })
 
       if (shouldEmitStateEvent) {
-        this.emitStateEvent({ index: gamepad.index, gamepad: gamepad })
+        this.emitStateEvent({
+          index: gamepad.index,
+          gamepad: gamepad,
+          calibratedState: this.buildCalibratedState(rawAxes, rawButtons, joystickModel),
+        })
       }
     }
 

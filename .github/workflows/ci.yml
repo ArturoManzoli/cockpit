@@ -8,6 +8,12 @@ on:
   # Run every 6 days to help us stay on our toes
   - cron: '0 0 */6 * *'
 
+env:
+  # Raise Node's V8 old-space limit so `vite build` doesn't OOM.
+  # The bundle sits near the default ~2 GB cap on every platform and
+  # intermittently crashes (seen most often on macos-15 arm64).
+  NODE_OPTIONS: --max-old-space-size=6144
+
 jobs:
   test:
     name: Test
@@ -132,11 +138,25 @@ jobs:
 
       - name: Set version as environment variable (Windows)
         if: matrix.os == 'windows-latest'
-        run: echo "VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $env:GITHUB_ENV
+        run: |
+          $TAG = ((git describe --tags --abbrev=0) -replace '^v','').Trim()
+          $VERSION = $TAG
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $VERSION = "0.0.0-${{ github.event.pull_request.number }}"
+          }
+          echo "VERSION=$VERSION" >> $env:GITHUB_ENV
+          echo "COCKPIT_VERSION=$VERSION" >> $env:GITHUB_ENV
 
       - name: Set version as environment variable (others)
         if: matrix.os != 'windows-latest'
-        run: echo "VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_ENV
+        run: |
+          TAG=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          VERSION=$TAG
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            VERSION="0.0.0-${{ github.event.pull_request.number }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "COCKPIT_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Install and build
         run: |
@@ -211,7 +231,16 @@ jobs:
           # Only rename if the generic name exists.
           if [ -f dist/latest-mac.yml ]; then mv dist/latest-mac.yml dist/latest-mac-arm64.yml; fi
 
+      - name: Package AppImage in tar.gz (Linux)
+        if: matrix.suffix == 'linux'
+        run: |
+          cd dist
+          chmod +x Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage
+          tar -czvf Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage.tar.gz \
+            Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage
+
       - name: Upload binary artifact
+        if: matrix.suffix != 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
@@ -220,7 +249,7 @@ jobs:
 
       - name: Upload binary release
         uses: svenstaro/upload-release-action@v2
-        if: startsWith(github.ref, 'refs/tags/') && success()
+        if: matrix.suffix != 'linux' && startsWith(github.ref, 'refs/tags/') && success()
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }}
@@ -228,6 +257,24 @@ jobs:
           overwrite: true
           prerelease: true
           file_glob: true
+
+      - name: Upload tar.gz artifact (Linux)
+        if: matrix.suffix == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage.tar.gz
+          path: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage.tar.gz
+          if-no-files-found: error
+
+      - name: Upload tar.gz release (Linux)
+        uses: svenstaro/upload-release-action@v2
+        if: matrix.suffix == 'linux' && startsWith(github.ref, 'refs/tags/') && success()
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.AppImage.tar.gz
+          tag: ${{ github.ref }}
+          overwrite: true
+          prerelease: true
 
       - name: Upload diff release (mac-only)
         uses: svenstaro/upload-release-action@v2
@@ -287,8 +334,15 @@ jobs:
           sudo flatpak remote-add --system flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak remote-add --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
 
-      - name: Set version as environment variable (others)
-        run: echo "VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_ENV
+      - name: Set version as environment variable
+        run: |
+          TAG=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          VERSION=$TAG
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            VERSION="0.0.0-${{ github.event.pull_request.number }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "COCKPIT_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Build electron (arm)
         if: matrix.os == 'ubuntu-24-arm'

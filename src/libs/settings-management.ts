@@ -1,10 +1,17 @@
 /* eslint-disable vue/max-len, prettier/prettier, max-len */
 import { v4 as uuidv4 } from 'uuid'
 
+import { NoPathInBlueOsErrorName } from '@/types/blueos'
 import {
+  cockpitLastConnectedUserKey,
+  cockpitLastConnectedVehicleKey,
   CockpitSetting,
+  fallbackUsername,
+  fallbackVehicleId,
   KeyValueVehicleUpdateQueue,
+  localOldStyleSettingsKey,
   LocalSyncedSettings,
+  localSyncedSettingsKey,
   NoVehicleIdErrorName,
   OldCockpitSettingsPackage,
   SettingsListener,
@@ -12,27 +19,17 @@ import {
   SettingsPackage,
   UserChangedEvent,
   UserSettings,
+  vehicleIdKey,
+  vehicleNewStyleSettingsKey,
+  vehicleOldStyleSettingsBackupKey,
+  vehicleOldStyleSettingsKey,
   VehicleOnlineEvent,
   VehicleSettings,
 } from '@/types/settings-management'
 
-import {
-  getKeyDataFromCockpitVehicleStorage,
-  NoPathInBlueOsErrorName,
-  setKeyDataOnCockpitVehicleStorage,
-} from './blueos'
+import { getKeyDataFromCockpitVehicleStorage, setKeyDataOnCockpitVehicleStorage } from './blueos'
 import { deserialize, isEqual, sleep, tryACoupleOfTimes } from './utils'
 
-export const localOldStyleSettingsKey = 'cockpit-settings-v1-backup'
-export const vehicleOldStyleSettingsKey = 'settings'
-export const vehicleOldStyleSettingsBackupKey = 'settings-v1-backup'
-export const vehicleNewStyleSettingsKey = 'settings-v2'
-export const localSyncedSettingsKey = 'cockpit-settings-v2'
-export const cockpitLastConnectedVehicleKey = 'cockpit-last-connected-vehicle-id'
-export const cockpitLastConnectedUserKey = 'cockpit-last-connected-user'
-export const vehicleIdKey = 'cockpit-vehicle-id'
-export const fallbackUsername = 'fallback-user'
-export const fallbackVehicleId = 'fallback-vehicle'
 const nullValue = 'null'
 const possibleNullValues = [fallbackUsername, fallbackVehicleId, nullValue, null, undefined, '']
 const keyValueUpdateDebounceTime = 100
@@ -732,7 +729,7 @@ export class SettingsManager {
     const getOldStyleVehicleSettingsFn = () => this.vehicle.getKeyData(vehicleAddress, vehicleOldStyleSettingsKey)
     const oldStyleVehicleSettings = await tryACoupleOfTimes(getOldStyleVehicleSettingsFn, 0, 300)
 
-    if (Object.keys(oldStyleVehicleSettings).length === 0) {
+    if (!oldStyleVehicleSettings || Object.keys(oldStyleVehicleSettings).length === 0) {
       console.warn('[SettingsManager] No old-style vehicle settings found. Skipping backup.')
       return
     }
@@ -768,7 +765,7 @@ export class SettingsManager {
     const getOldStyleVehicleSettingsFn = () => this.vehicle.getKeyData(vehicleAddress, vehicleOldStyleSettingsKey)
     const oldStyleVehicleSettings = await tryACoupleOfTimes(getOldStyleVehicleSettingsFn, 0, 300)
 
-    if (Object.keys(oldStyleVehicleSettings).length === 0) {
+    if (!oldStyleVehicleSettings || Object.keys(oldStyleVehicleSettings).length === 0) {
       console.warn('[SettingsManager] No old-style vehicle settings found. Skipping migration.')
       return
     }
@@ -805,7 +802,7 @@ export class SettingsManager {
     const getNewStyleVehicleSettingsFn = () => this.vehicle.getKeyData(vehicleAddress, vehicleNewStyleSettingsKey)
     const newStyleVehicleSettings = await tryACoupleOfTimes(getNewStyleVehicleSettingsFn, 0, 300)
 
-    if (Object.keys(newStyleVehicleSettings).length <= 0) {
+    if (!newStyleVehicleSettings || Object.keys(newStyleVehicleSettings).length <= 0) {
       console.info('[SettingsManager] No new-style vehicle settings found. Aborting import.')
       return
     }
@@ -1080,6 +1077,27 @@ export class SettingsManager {
   public handleVehicleGettingOnline = async (vehicleAddress: string): Promise<void> => {
     console.log('[SettingsManager]', 'Handling vehicle getting online!')
 
+    let succeeded = false
+    try {
+      await this.runVehicleGettingOnlinePipeline(vehicleAddress)
+      succeeded = true
+    } catch (error) {
+      console.error('[SettingsManager]', 'Failed to fully handle vehicle getting online.', error)
+    } finally {
+      // Dispatch even on failure so listeners can proceed without a successful BlueOS round-trip.
+      dispatchEvent(
+        new CustomEvent('vehicle-sync-complete', {
+          detail: {
+            vehicleAddress,
+            vehicleId: this.currentVehicleId,
+            succeeded,
+          },
+        })
+      )
+    }
+  }
+
+  private runVehicleGettingOnlinePipeline = async (vehicleAddress: string): Promise<void> => {
     // Before anything else, back up old-style vehicle settings in the vehicle, if needed
     await this.backupOldStyleVehicleSettingsIfNeeded(vehicleAddress)
 

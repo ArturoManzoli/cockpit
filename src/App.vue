@@ -44,79 +44,34 @@
       </teleport>
 
       <div ref="routerSection" class="router-view">
-        <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }" :style="connectionStatusFeedback">
-          <div
+        <div class="main-view" :class="{ 'edit-mode': widgetStore.editingMode }">
+          <WidgetBar
             v-show="showTopBarNow"
             id="mainTopBar"
-            class="bar top-bar"
-            :style="[
-              interfaceStore.globalGlassMenuStyles,
-              interfaceStore.isOnSmallScreen && interfaceStore.isOnSmallScreen ? topBarScaleStyle : undefined,
-            ]"
+            position="top"
+            :containers="widgetStore.currentMiniWidgetsProfile.containers"
           >
-            <button
-              v-if="interfaceStore.mainMenuStyleTrigger === 'burger'"
-              class="flex items-center justify-center h-full mr-2 aspect-square top-bar-hamburger"
-              @click="toggleMainMenu"
-            >
-              <span class="text-3xl transition-all mdi mdi-menu text-slate-300 hover:text-slate-50" />
-            </button>
-            <div class="flex-1">
-              <MiniWidgetContainer
-                :container="widgetStore.currentMiniWidgetsProfile.containers[0]"
-                :allow-editing="widgetStore.editingMode"
-                align="start"
-              />
-            </div>
-            <div class="grow" />
-            <div class="flex-1">
-              <MiniWidgetContainer
-                :container="widgetStore.currentMiniWidgetsProfile.containers[1]"
-                :allow-editing="widgetStore.editingMode"
-                align="center"
-              />
-            </div>
-            <div class="grow" />
-            <div class="flex-1">
-              <MiniWidgetContainer
-                :container="widgetStore.currentMiniWidgetsProfile.containers[2]"
-                :allow-editing="widgetStore.editingMode"
-                align="end"
-              />
-            </div>
-          </div>
+            <template #prepend>
+              <button
+                v-if="interfaceStore.mainMenuStyleTrigger === 'burger'"
+                class="flex items-center justify-center h-full mr-2 aspect-square top-bar-hamburger"
+                @click="toggleMainMenu"
+              >
+                <span class="text-3xl transition-all mdi mdi-menu text-slate-300 hover:text-slate-50" />
+              </button>
+            </template>
+          </WidgetBar>
           <AltitudeSlider />
           <div class="bottom-container">
             <SlideToConfirm />
           </div>
           <div v-for="view in widgetStore.viewsToShow" :key="view.name">
             <Transition name="fade">
-              <div
+              <WidgetBar
                 v-show="view.name === currentSelectedViewName && showBottomBarNow"
-                class="bar bottom-bar"
-                :style="[
-                  interfaceStore.globalGlassMenuStyles,
-                  interfaceStore.isOnSmallScreen ? bottomBarScaleStyle : undefined,
-                ]"
-              >
-                <MiniWidgetContainer
-                  :container="view.miniWidgetContainers[0]"
-                  :allow-editing="widgetStore.editingMode"
-                  align="start"
-                />
-                <div />
-                <MiniWidgetContainer
-                  :container="view.miniWidgetContainers[1]"
-                  :allow-editing="widgetStore.editingMode"
-                  align="center"
-                />
-                <div />
-                <MiniWidgetContainer
-                  :container="view.miniWidgetContainers[2]"
-                  :allow-editing="widgetStore.editingMode"
-                  align="end"
-                />
-              </div>
+                position="bottom"
+                :containers="view.miniWidgetContainers"
+              />
             </Transition>
           </div>
           <router-view />
@@ -125,11 +80,24 @@
       </div>
     </v-main>
   </v-app>
+  <div
+    class="vehicle-connection-overlay"
+    :class="{
+      'is-disconnected': vehicleStore.isVehicleConnectionLost,
+      'is-reconnected': showReconnectedFeedback,
+    }"
+    aria-hidden="true"
+  />
   <About v-if="showAboutDialog" @update:show-about-dialog="showAboutDialog = $event" />
+  <DataPrivacyModal />
   <Tutorial v-if="interfaceStore.isTutorialVisible" />
   <VideoLibraryModal v-if="interfaceStore.isVideoLibraryVisible" />
   <VehicleDiscoveryDialog v-model="showDiscoveryDialog" show-auto-search-option />
-  <ActionDiscoveryModal auto-check-on-mount />
+  <CameraReplacementDialog />
+  <ExternalFeaturesDiscoveryModal auto-check-on-mount />
+  <VehicleDefaultsAutoImportModal />
+  <VehicleDefaultsViewsImportModal />
+  <VehicleDefaultsJoystickImportModal />
   <UpdateNotification v-if="isElectron()" />
   <ArchitectureWarning v-if="isElectron()" />
   <SnackbarContainer />
@@ -147,16 +115,21 @@
 </template>
 
 <script setup lang="ts">
-import { useStorage, useWindowSize } from '@vueuse/core'
+import { useStorage } from '@vueuse/core'
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import ActionDiscoveryModal from '@/components/ActionDiscoveryModal.vue'
 import ArchitectureWarning from '@/components/ArchitectureWarning.vue'
+import CameraReplacementDialog from '@/components/CameraReplacementDialog.vue'
+import DataPrivacyModal from '@/components/DataPrivacyModal.vue'
+import ExternalFeaturesDiscoveryModal from '@/components/ExternalFeaturesDiscoveryModal.vue'
 import GlassModal from '@/components/GlassModal.vue'
 import SkullAnimation from '@/components/SkullAnimation.vue'
 import SnackbarContainer from '@/components/SnackbarContainer.vue'
 import Tutorial from '@/components/Tutorial.vue'
 import UpdateNotification from '@/components/UpdateNotification.vue'
+import VehicleDefaultsAutoImportModal from '@/components/vehicle-defaults/VehicleDefaultsAutoImportModal.vue'
+import VehicleDefaultsJoystickImportModal from '@/components/vehicle-defaults/VehicleDefaultsJoystickImportModal.vue'
+import VehicleDefaultsViewsImportModal from '@/components/vehicle-defaults/VehicleDefaultsViewsImportModal.vue'
 import VehicleDiscoveryDialog from '@/components/VehicleDiscoveryDialog.vue'
 import VideoLibraryModal from '@/components/VideoLibraryModal.vue'
 import {
@@ -171,11 +144,12 @@ import About from './components/About.vue'
 import AltitudeSlider from './components/AltitudeSlider.vue'
 import EditMenu from './components/EditMenu.vue'
 import MainMenu from './components/MainMenu.vue'
-import MiniWidgetContainer from './components/MiniWidgetContainer.vue'
 import SlideToConfirm from './components/SlideToConfirm.vue'
 import SplashScreen from './components/SplashScreen.vue'
+import WidgetBar from './components/WidgetBar.vue'
 import { openMainMenuIfSafeOrDesired } from './composables/armSafetyDialog'
 import { useSnackbar } from './composables/snackbar'
+import { useVehicleDefaultsAutoImport } from './composables/vehicleDefaults/vehicleDefaultsAutoImport'
 import { checkBlueOsUserDataSimilarity } from './libs/blueos'
 import { useAppInterfaceStore } from './stores/appInterface'
 import { useDevelopmentStore } from './stores/development'
@@ -194,6 +168,10 @@ const missionStore = useMissionStore()
 // Initialize the snapshot store to register action callbacks
 useSnapshotStore()
 
+// Listen for `vehicle-sync-complete` events to auto-import vehicle-type defaults or open the
+// VehicleDefaultsAutoImportModal when the user still needs to make a decision.
+useVehicleDefaultsAutoImport()
+
 const showAboutDialog = ref(false)
 const currentSubMenuComponent = ref<SubMenuComponent>(null)
 
@@ -203,8 +181,6 @@ const handleShowAboutDialog = (): void => {
 
 // Main menu
 const isSlidingOut = ref(false)
-
-const { width: windowWidth } = useWindowSize()
 
 // Check if the user data in browser storage is the same as on blueOS; if not, keep the splash screen open for a maximum of 20 seconds.
 onBeforeMount(async () => {
@@ -242,10 +218,6 @@ watch(
   }
 )
 
-const topBottomBarScale = computed(() => {
-  return windowWidth.value / originalBarWidth
-})
-
 const toggleMainMenu = (): void => {
   if (interfaceStore.isMainMenuVisible) {
     closeMainMenu()
@@ -280,60 +252,37 @@ onBeforeUnmount(() => {
 })
 
 /* eslint-disable jsdoc/require-jsdoc  */
-const connectionStatusFeedback = ref<{ border: string; transition?: string }>({ border: '0px' })
-
-const resetConnectionStatusFeedback = (): void => {
-  setTimeout(() => {
-    connectionStatusFeedback.value = {
-      border: '0px solid transparent',
-      transition: 'border 4s ease-out',
-    }
-  }, 4000)
-}
+// Drives the brief green flash on reconnect. The red border pulse (when connection was lost) is CSS-only
+// on the overlay; the overlay uses isVehicleConnectionLost so idle sessions without a link stay neutral.
+const showReconnectedFeedback = ref(false)
+let reconnectedFeedbackTimeout: ReturnType<typeof setTimeout> | undefined
 
 // Connection monitoring and visual feedback
 watch(
   () => vehicleStore.isVehicleOnline,
   (isOnline) => {
+    if (reconnectedFeedbackTimeout) clearTimeout(reconnectedFeedbackTimeout)
+
     if (!isOnline) {
+      showReconnectedFeedback.value = false
+      if (!vehicleStore.isVehicleConnectionLost) return
       openSnackbar({
         message: 'Vehicle connection lost: reestablishing',
         variant: 'error',
         duration: 3000,
         closeButton: false,
       })
-      connectionStatusFeedback.value = { border: '3px solid red' }
-
-      resetConnectionStatusFeedback()
       return
     }
 
     openSnackbar({ message: 'Vehicle connected', variant: 'success', duration: 3000, closeButton: false })
-    connectionStatusFeedback.value = { border: '3px solid green' }
-
-    resetConnectionStatusFeedback()
+    showReconnectedFeedback.value = true
+    reconnectedFeedbackTimeout = setTimeout(() => (showReconnectedFeedback.value = false), 4000)
   }
 )
 
 const routerSection = ref()
 const currentSelectedViewName = computed(() => widgetStore.currentView.name)
-const originalBarWidth = 1800
-
-const topBarScaleStyle = computed(() => {
-  return {
-    transform: `scale(${topBottomBarScale.value})`,
-    transformOrigin: 'top left',
-    width: `${originalBarWidth}px`,
-  }
-})
-
-const bottomBarScaleStyle = computed(() => {
-  return {
-    transform: `scale(${topBottomBarScale.value})`,
-    transformOrigin: 'bottom left',
-    width: `${originalBarWidth}px`,
-  }
-})
 
 // Control showing mouse
 let hideMouseTimeoutId: ReturnType<typeof setInterval>
@@ -370,10 +319,10 @@ onBeforeUnmount(() => {
 })
 
 // Dynamic styles
-const currentTopBarHeightPixels = computed(() => `${widgetStore.currentTopBarHeightPixels}px`)
 const currentBottomBarHeightPixels = computed(() => `${widgetStore.currentBottomBarHeightPixels}px`)
 
 const showDiscoveryDialog = ref(false)
+const discoveryDialogAutoOpened = ref(false)
 const preventAutoSearch = useStorage('cockpit-prevent-auto-vehicle-discovery-dialog', false)
 
 onMounted(() => {
@@ -382,6 +331,7 @@ onMounted(() => {
     setTimeout(() => {
       if (vehicleStore.isVehicleOnline) return
       showDiscoveryDialog.value = true
+      discoveryDialogAutoOpened.value = true
     }, 5000)
   }
 
@@ -391,6 +341,23 @@ onMounted(() => {
     }, 6000)
   }
 })
+
+watch(showDiscoveryDialog, (isOpen) => {
+  if (!isOpen) discoveryDialogAutoOpened.value = false
+})
+
+// Auto-close the discovery dialog if the vehicle comes online while it's open, but only when the
+// dialog was opened automatically (not when the user explicitly opened it). Handles cases where the
+// first heartbeat arrives late (e.g. slow mDNS resolution of `blueos-avahi.local`), so the dialog
+// gets auto-opened even though the configured address would have connected on its own.
+watch(
+  () => vehicleStore.isVehicleOnline,
+  (isOnline) => {
+    if (isOnline && showDiscoveryDialog.value && discoveryDialogAutoOpened.value) {
+      showDiscoveryDialog.value = false
+    }
+  }
+)
 </script>
 
 <style>
@@ -425,6 +392,35 @@ body.hide-cursor {
   top: -11%;
 }
 
+.vehicle-connection-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  /* Matches the rounded corners of the OS window so the border is not clipped at the vertices. */
+  border-radius: 0 0 12px 12px;
+  box-shadow: inset 0 0 0 0 transparent;
+  transition: box-shadow 1s ease-out;
+}
+
+.vehicle-connection-overlay.is-disconnected {
+  animation: vehicle-disconnected-pulse 1.6s ease-in-out infinite;
+}
+
+.vehicle-connection-overlay.is-reconnected {
+  box-shadow: inset 0 0 0 3px rgb(34, 197, 94), inset 0 0 24px 4px rgba(34, 197, 94, 0.45);
+}
+
+@keyframes vehicle-disconnected-pulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 3px rgba(239, 68, 68, 0), inset 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px rgb(239, 68, 68), inset 0 0 32px 6px rgba(239, 68, 68, 0.65);
+  }
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.3s cubic-bezier(0.55, 0, 0.1, 1);
@@ -446,32 +442,10 @@ body.hide-cursor {
   z-index: 60;
 }
 
-.bar {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  z-index: 60;
-  position: absolute;
-}
-
 .menu-trigger {
   position: fixed;
   left: 0;
   transform: translateY(-50%);
   z-index: 1050;
-}
-
-.bottom-bar {
-  bottom: 0;
-  height: v-bind('currentBottomBarHeightPixels');
-}
-
-.top-bar {
-  top: 0;
-  height: v-bind('currentTopBarHeightPixels');
-}
-
-.top-bar-hamburger {
-  outline: none;
 }
 </style>

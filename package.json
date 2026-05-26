@@ -10,18 +10,18 @@
     "build:serve": "vite build && vite preview",
     "coverage": "vitest --coverage",
     "deploy:electron:dir": "ELECTRON=true electron-builder --dir",
-    "deploy:electron": "ELECTRON=true electron-builder --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
-    "deploy:electron:mac:x64": "ELECTRON=true electron-builder --mac --x64 --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
-    "deploy:electron:mac:arm64": "ELECTRON=true electron-builder --mac --arm64 --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
-    "deploy:electron:mac:x64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
-    "deploy:electron:mac:arm64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
-    "deploy:electron:windows": "powershell -Command \"$v = ((git describe --tags --abbrev=0) -replace '^v','').Trim(); electron-builder --win --publish=never --config.extraMetadata.version=$v\"",
-    "deploy:flatpak": "ELECTRON=true electron-builder --linux flatpak --publish=never -c.extraMetadata.version=$(git describe --tags --abbrev=0 | sed 's/^v//')",
+    "deploy:electron": "ELECTRON=true electron-builder --publish=never -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
+    "deploy:electron:mac:x64": "ELECTRON=true electron-builder --mac --x64 --publish=never -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
+    "deploy:electron:mac:arm64": "ELECTRON=true electron-builder --mac --arm64 --publish=never -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
+    "deploy:electron:mac:x64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
+    "deploy:electron:mac:arm64:pr": "ELECTRON=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --publish=never -c.mac.identity=null -c.afterSign=scripts/notarize-noop.mjs -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
+    "deploy:electron:windows": "powershell -Command \"$v = if ($env:COCKPIT_VERSION) { $env:COCKPIT_VERSION } else { ((git describe --tags --abbrev=0) -replace '^v','').Trim() }; electron-builder --win --publish=never --config.extraMetadata.version=$v\"",
+    "deploy:flatpak": "ELECTRON=true electron-builder --linux flatpak --publish=never -c.extraMetadata.version=${COCKPIT_VERSION:-$(git describe --tags --abbrev=0 | sed 's/^v//')}",
     "dev": "vite --host",
     "dev:electron": "cross-env ELECTRON=true vite --host",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
     "lint:fix": "eslint --fix . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
-    "postinstall": "node scripts/download-ffmpeg.js",
+    "postinstall": "node scripts/download-ffmpeg.js && node scripts/download-go2rtc.js && node scripts/verify-sdl.js",
     "preview": "vite preview --port 5050",
     "serve": "vite preview",
     "test:ci": "vitest --coverage --run",
@@ -35,7 +35,7 @@
     "@fortawesome/free-solid-svg-icons": "^6.4.0",
     "@fortawesome/vue-fontawesome": "^3.0.3",
     "@j2only/slide-unlock": "^0.5.5",
-    "@kmamal/sdl": "0.11.9",
+    "@kmamal/sdl": "github:rafaellehmkuhl/node-sdl#dd1b97aa75bb84a2c899be40b0c48fcb135a4f88",
     "@mdi/font": "^7.4.47",
     "@mdi/js": "^7.4.47",
     "@peermetrics/webrtc-stats": "^5.7.1",
@@ -49,6 +49,7 @@
     "@vueuse/math": "^10.1.2",
     "@zip.js/zip.js": "^2.7.34",
     "browser-or-node": "^2.0.0",
+    "camelcase-keys": "^10.0.1",
     "colord": "^2.9.3",
     "date-fns": "^2.29.3",
     "electron-log": "^5.2.0",
@@ -65,6 +66,7 @@
     "jest-diff": "^29.7.0",
     "ky": "^1.2.0",
     "leaflet": "1.9.3",
+    "leaflet-edgebuffer": "^1.0.7",
     "leaflet.offline": "^3.1.0",
     "localforage": "^1.10.0",
     "mathjs": "^13.0.3",
@@ -80,6 +82,7 @@
     "slugify": "^1.6.6",
     "strip-ansi": "^6.0.1",
     "sweetalert2": "^11.7.1",
+    "systeminformation": "^5.31.5",
     "tailwind-scrollbar-hide": "^1.1.7",
     "uuid": "^8.3.2",
     "vue": "^3.4.21",
@@ -92,7 +95,8 @@
     "webfontloader": "^1.0.0",
     "webrtc-adapter": "^8.2.0",
     "yauzl": "^3.2.0",
-    "yazl": "^3.3.1"
+    "yazl": "^3.3.1",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@electron/notarize": "^3.0.1",
@@ -138,7 +142,8 @@
     "vuetify-loader": "^2.0.0-alpha.0"
   },
   "resolutions": {
-    "strip-ansi": "6.0.1"
+    "strip-ansi": "6.0.1",
+    "tar": "^7.5.4"
   },
   "prettier": {
     "semi": false,
@@ -157,6 +162,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "binaries/go2rtc/",
+        "to": "go2rtc/",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "appId": "org.bluerobotics.cockpit",
@@ -168,7 +180,7 @@
     "artifactName": "${productName}-${os}-${arch}-${version}.${ext}",
     "mac": {
       "category": "public.app-category.utilities",
-      "icon": "public/pwa-512x512.png",
+      "icon": "public/icon-mac-512x512.png",
       "hardenedRuntime": true,
       "entitlements": "./src/assets/entitlements.mac.plist",
       "entitlementsInherit": "./src/assets/entitlements.mac.plist"

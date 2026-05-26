@@ -2,23 +2,37 @@
   <BaseConfigurationView>
     <template #title>MAVLink configuration</template>
     <template #content>
-      <div class="max-h-[80vh] w-[710px] overflow-y-auto">
+      <div class="max-h-[80vh] w-[730px] overflow-y-auto pr-3">
         <ExpansiblePanel no-top-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>DataLake variables creation</template>
           <template #info>
-            <p class="max-w-[500px]">
-              Enable the creation of DataLake variables from MAVLink messages originating from systems/components other
-              than the main vehicle (System ID {{ mainVehicleStore.mainVehicle?.systemId }}, Component ID 1). When
-              enabled, variables from all MAVLink systems on the network will be available in the DataLake. When
-              disabled, only variables from the main vehicle will be created.
-            </p>
+            <ul class="list-disc pl-4 space-y-2">
+              <li>
+                <strong>Variables from other systems:</strong> Enable creation of DataLake variables from MAVLink
+                messages originating from systems/components other than the main vehicle (System ID
+                {{ mainVehicleStore.mainVehicle?.systemId }}, Component ID 1). When enabled, variables from all MAVLink
+                systems on the network will be available in the DataLake.
+              </li>
+              <li>
+                <strong>Legacy variable names:</strong> Creates duplicate variables with the old naming format for
+                backward compatibility. Enabled by default - users with old devices may want to disable this to improve
+                performance. If disabled, you will need to manually replace the usage of legacy variables with the new
+                ones in your widgets (e.g.: VGI, Plotter) and scripts (e.g.: DataLake Transforming functions).
+              </li>
+            </ul>
           </template>
           <template #content>
-            <div class="flex w-full px-2 mb-3">
+            <div class="flex flex-col w-full px-2 mb-3 gap-1">
               <v-switch
                 v-model="mainVehicleStore.enableDatalakeVariablesFromOtherSystems"
                 color="white"
                 label="Enable DataLake variables from other systems"
+                hide-details
+              />
+              <v-switch
+                v-model="mainVehicleStore.enableLegacyDataLakeVariableNames"
+                color="white"
+                label="Enable legacy variable names (e.g., 'ATTITUDE/roll')"
                 hide-details
               />
             </div>
@@ -27,14 +41,14 @@
         <ExpansiblePanel no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Message intervals</template>
           <template #info>
-            <p class="max-w-[500px]">
+            <p>
               Configure the frequency at which each MAVLink message is requested from the vehicle. Higher frequencies
               provide more responsive data but increase the load on the network and in the vehicle's CPU. If the message
               is not already configured, you can add it to the interval configuration with the forms in the bottom.
             </p>
           </template>
           <template #content>
-            <div class="flex w-full -mt-4">
+            <div class="flex w-full">
               <div class="flex flex-col px-2 mb-3">
                 <div class="flex flex-row justify-between items-center w-full mb-1">
                   <v-text-field
@@ -43,7 +57,6 @@
                     variant="plain"
                     density="compact"
                     hide-details
-                    class="mt-1"
                   >
                     <template #prepend>
                       <v-icon class="ml-2 mt-[2px]">mdi-magnify</v-icon>

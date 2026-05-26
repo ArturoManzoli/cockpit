@@ -69,12 +69,12 @@
 
 <script setup lang="ts">
 import { useElementHover, useWindowSize } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref, toRefs, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
 import { constrain, round } from '@/libs/utils'
 import { useDevelopmentStore } from '@/stores/development'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
-import type { Point2D } from '@/types/general'
+import type { Point2D, SizeRect2D } from '@/types/general'
 import { type Widget, isWidgetConfigurable, widgetHasOwnContextMenu, WidgetType } from '@/types/widgets'
 
 import ContextMenu from './ContextMenu.vue'
@@ -114,10 +114,10 @@ const size = ref(widget.value.size)
 
 // Set up watchers to update position and size when widget changes
 watch(
-  () => widget.value,
-  (newWidget) => {
-    position.value = newWidget.position
-    size.value = newWidget.size
+  [() => widget.value.position, () => widget.value.size],
+  ([newPosition, newSize]) => {
+    position.value = newPosition
+    size.value = newSize
   },
   { immediate: true }
 )
@@ -184,20 +184,31 @@ watch([hoveringWidgetOrOverlay, allowMoving], () => {
 const draggingWidget = ref(false)
 const isResizing = ref(false)
 const resizeHandle = ref<EventTarget | null>(null)
-const viewSize = computed(() => ({
+const getViewSize = (): {
+  /**
+   * Width of the view
+   */
+  width: number
+  /**
+   * Height of the view
+   */
+  height: number
+} => ({
   width: widgetView.value?.getBoundingClientRect().width || 1,
   height: widgetView.value?.getBoundingClientRect().height || 1,
-}))
+})
 const initialMousePos = ref<Point2D | undefined>(undefined)
-const initialWidgetPos = ref(props.widget.position)
-const initialWidgetSize = ref(props.widget.size)
+const initialWidgetPos = ref({ ...props.widget.position })
+const initialWidgetSize = ref({ ...props.widget.size })
 
 const handleDragStart = (event: MouseEvent): void => {
-  if (!allowMoving.value || isResizing.value || !outerWidgetRef.value) return
+  const storeAllowMoving = widgetStore.widgetManagerVars(widget.value.hash).allowMoving
+  if ((!allowMoving.value && !storeAllowMoving) || isResizing.value || !outerWidgetRef.value) return
   draggingWidget.value = true
   initialMousePos.value = { x: event.clientX, y: event.clientY }
-  initialWidgetPos.value = position.value
+  initialWidgetPos.value = { x: position.value.x, y: position.value.y }
   outerWidgetRef.value.style.cursor = 'grabbing'
+  document.documentElement.classList.add('widget-dragging')
   event.stopPropagation()
   event.preventDefault()
 }
@@ -207,29 +218,56 @@ const handleResizeStart = (event: MouseEvent): void => {
   isResizing.value = true
   resizeHandle.value = event.target
   initialMousePos.value = { x: event.clientX, y: event.clientY }
-  initialWidgetPos.value = position.value
-  initialWidgetSize.value = size.value
+  initialWidgetPos.value = { x: position.value.x, y: position.value.y }
+  initialWidgetSize.value = { width: size.value.width, height: size.value.height }
   event.stopPropagation()
   event.preventDefault()
+}
+
+/**
+ * Clamps a desired position to a valid range that keeps the widget within the viewport.
+ * When the widget is taller than the visible area between bars, it cannot fit between them,
+ * so the clamp switches to [0, 1 - size.height] to avoid snapping past the viewport (issue #2608).
+ * @param {Point2D} desiredPos - The candidate position to clamp
+ * @param {SizeRect2D} widgetSize - The widget's size used for bounds calculation
+ * @returns {Point2D} The position clamped to the valid range
+ */
+const clampPositionToValidArea = (desiredPos: Point2D, widgetSize: SizeRect2D): Point2D => {
+  const topBarNormalized = widgetStore.currentTopBarHeightPixels / windowHeight.value
+  const bottomBarNormalized = widgetStore.currentBottomBarHeightPixels / windowHeight.value
+  const visibleAreaHeight = 1 - topBarNormalized - bottomBarNormalized
+
+  const widgetTallerThanVisibleArea = widgetSize.height >= visibleAreaHeight
+  const minY = widgetTallerThanVisibleArea ? 0 : topBarNormalized
+  const maxY = widgetTallerThanVisibleArea
+    ? Math.max(0, 1 - widgetSize.height)
+    : Math.max(minY, 1 - widgetSize.height - bottomBarNormalized)
+
+  return {
+    x: constrain(desiredPos.x, 0, Math.max(0, 1 - widgetSize.width)),
+    y: constrain(desiredPos.y, minY, maxY),
+  }
 }
 
 const handleDrag = (event: MouseEvent): void => {
   if (!draggingWidget.value || !initialMousePos.value) return
 
-  const dx = (event.clientX - initialMousePos.value.x) / viewSize.value.width
-  const dy = (event.clientY - initialMousePos.value.y) / viewSize.value.height
+  const viewSize = getViewSize()
+  const dx = (event.clientX - initialMousePos.value.x) / viewSize.width
+  const dy = (event.clientY - initialMousePos.value.y) / viewSize.height
 
-  position.value = {
-    x: constrain(initialWidgetPos.value.x + dx, 0, 1 - size.value.width),
-    y: constrain(initialWidgetPos.value.y + dy, 0, 1 - size.value.height),
-  }
+  position.value = clampPositionToValidArea(
+    { x: initialWidgetPos.value.x + dx, y: initialWidgetPos.value.y + dy },
+    size.value
+  )
 }
 
 const handleResize = (event: MouseEvent): void => {
   if (!isResizing.value || !initialMousePos.value || !resizeHandle.value) return
 
-  const dx = (event.clientX - initialMousePos.value.x) / viewSize.value.width
-  const dy = (event.clientY - initialMousePos.value.y) / viewSize.value.height
+  const viewSize = getViewSize()
+  const dx = (event.clientX - initialMousePos.value.x) / viewSize.width
+  const dy = (event.clientY - initialMousePos.value.y) / viewSize.height
 
   let newLeft = initialWidgetPos.value.x
   let newTop = initialWidgetPos.value.y
@@ -279,6 +317,7 @@ const handleEnd = (): void => {
   if (draggingWidget.value) {
     draggingWidget.value = false
     outerWidgetRef.value.style.cursor = 'grab'
+    document.documentElement.classList.remove('widget-dragging')
   } else if (isResizing.value) {
     isResizing.value = false
     resizeHandle.value = null
@@ -307,6 +346,14 @@ onMounted(async () => {
   }
   widgetStore.widgetManagerVars(widget.value.hash).everMounted = true
 
+  // Sanitize persisted layouts so widgets that were previously dragged past the
+  // visible area (e.g., covering the top/bottom bar) get snapped back into bounds
+  // automatically on load, without requiring the user to drag them (issue #2608).
+  const sanitizedPosition = clampPositionToValidArea(position.value, size.value)
+  if (sanitizedPosition.x !== position.value.x || sanitizedPosition.y !== position.value.y) {
+    position.value = sanitizedPosition
+  }
+
   if (widgetResizeHandles.value) {
     for (let i = 0; i < widgetResizeHandles.value.length; i++) {
       const handle = widgetResizeHandles.value[i]
@@ -326,6 +373,13 @@ onMounted(async () => {
   document.addEventListener('mouseup', handleEnd)
 })
 
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', handleDrag)
+  document.removeEventListener('mousemove', handleResize)
+  document.removeEventListener('mouseup', handleEnd)
+  document.documentElement.classList.remove('widget-dragging')
+})
+
 // Change cursor when moving is allowed or disallowed, preventing the cursor to be a grab on exit of edit-mode
 watch(allowMoving, (isAllowing, wasAllowing) => {
   if (wasAllowing && !isAllowing) {
@@ -338,22 +392,7 @@ watch(allowMoving, (isAllowing, wasAllowing) => {
 const widgetStore = useWidgetManagerStore()
 const temporaryPosition = computed(() => {
   let tempPos = { x: position.value.x, y: position.value.y }
-  const clearanceOffset = widgetStore.visibleAreaMinClearancePixels
 
-  const barClearances = widgetStore.widgetClearanceForVisibleArea(widget.value)
-
-  // If the widget is under both bars, dont touch it, as it could be full screened by purpose, and if we apply the rules below, it will keep jumping
-  if (barClearances.top < clearanceOffset && barClearances.bottom < clearanceOffset) return tempPos
-
-  // If the widget is partially under the top or bottom bar, move it so that it gets fully visible
-  if (barClearances.top < clearanceOffset) {
-    tempPos.y = (widgetStore.currentTopBarHeightPixels + clearanceOffset) / windowHeight.value
-  } else if (barClearances.bottom < clearanceOffset) {
-    const maxBottomEdgePosition = (widgetStore.currentBottomBarHeightPixels + clearanceOffset) / windowHeight.value
-    tempPos.y = 1 - maxBottomEdgePosition - size.value.height
-  }
-
-  // Use grid to snap to grid
   if (widgetStore.snapToGrid) {
     tempPos.x = Math.round(tempPos.x / widgetStore.gridInterval) * widgetStore.gridInterval
     tempPos.y = Math.round(tempPos.y / widgetStore.gridInterval) * widgetStore.gridInterval
@@ -391,6 +430,16 @@ const cursorStyle = computed(() => {
 })
 
 const devInfoBlurLevel = computed(() => `${devStore.widgetDevInfoBlurLevel}px`)
+
+const isWidgetFullScreen = computed(() => widgetStore.isFullScreen(widget.value))
+
+const handleTopOffset = computed(() =>
+  isWidgetFullScreen.value ? `${widgetStore.currentTopBarHeightPixels + 5}px` : '-5px'
+)
+const handleBottomOffset = computed(() =>
+  isWidgetFullScreen.value ? `${widgetStore.currentBottomBarHeightPixels + 5}px` : '-5px'
+)
+const handleSideOffset = computed(() => (isWidgetFullScreen.value ? '5px' : '-5px'))
 
 const highlighted = computed(() => widgetStore.widgetManagerVars(widget.value.hash).highlighted)
 </script>
@@ -473,54 +522,58 @@ const highlighted = computed(() => widgetStore.widgetManagerVars(widget.value.ha
 }
 
 .resize-handle.top-left.allowResizing {
-  top: -5px;
-  left: -5px;
+  top: v-bind('handleTopOffset');
+  left: v-bind('handleSideOffset');
   cursor: nwse-resize;
 }
 
 .resize-handle.top-right.allowResizing {
-  top: -5px;
-  right: -5px;
+  top: v-bind('handleTopOffset');
+  right: v-bind('handleSideOffset');
   cursor: nesw-resize;
 }
 
 .resize-handle.bottom-left.allowResizing {
-  bottom: -5px;
-  left: -5px;
+  bottom: v-bind('handleBottomOffset');
+  left: v-bind('handleSideOffset');
   cursor: nesw-resize;
 }
 
 .resize-handle.bottom-right.allowResizing {
-  bottom: -5px;
-  right: -5px;
+  bottom: v-bind('handleBottomOffset');
+  right: v-bind('handleSideOffset');
   cursor: nwse-resize;
 }
 
 .resize-handle.left.allowResizing {
   top: 50%;
-  left: -5px;
+  left: v-bind('handleSideOffset');
   transform: translateY(-50%);
   cursor: ew-resize;
 }
 
 .resize-handle.right.allowResizing {
   top: 50%;
-  right: -5px;
+  right: v-bind('handleSideOffset');
   transform: translateY(-50%);
   cursor: ew-resize;
 }
 
 .resize-handle.top.allowResizing {
-  top: -5px;
+  top: v-bind('handleTopOffset');
   left: 50%;
   transform: translateX(-50%);
   cursor: ns-resize;
 }
 
 .resize-handle.bottom.allowResizing {
-  bottom: -5px;
+  bottom: v-bind('handleBottomOffset');
   left: 50%;
   transform: translateX(-50%);
   cursor: ns-resize;
+}
+
+html.widget-dragging iframe {
+  pointer-events: none !important;
 }
 </style>

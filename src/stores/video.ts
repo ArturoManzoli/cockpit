@@ -7,11 +7,12 @@ import { v4 as uuid } from 'uuid'
 import { computed, ref, watch } from 'vue'
 import adapter from 'webrtc-adapter'
 
+import { Go2RTCManager } from '@/composables/go2rtc'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
 import { useSnackbar } from '@/composables/snackbar'
 import { WebRTCManager } from '@/composables/webRTC'
-import { getIpsInformationFromVehicle } from '@/libs/blueos'
+import { type ProcessedStreamInfo, getIpsInformationFromVehicle, getStreamInformationFromVehicle } from '@/libs/blueos'
 import eventTracker from '@/libs/external-telemetry/event-tracking'
 import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
 import {
@@ -20,7 +21,7 @@ import {
   LiveVideoProcessorInitializationError,
 } from '@/libs/live-video-processor'
 import { datalogger } from '@/libs/sensors-logging'
-import { isEqual, sleep } from '@/libs/utils'
+import { isElectron, isEqual, sanitizeFilenameComponent, sleep } from '@/libs/utils'
 import { tempVideoStorage, videoStorage } from '@/libs/videoStorage'
 import type { Stream } from '@/libs/webrtc/signalling_protocol'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
@@ -28,8 +29,11 @@ import { useMissionStore } from '@/stores/mission'
 import { Alert, AlertLevel } from '@/types/alert'
 import {
   type DownloadProgressCallback,
+  type Go2RTCStreamInfo,
   type StreamData,
+  type StreamPeerConnectionInfo,
   type UnprocessedVideoInfo,
+  type VideoStreamProtocol,
   FilesToZip,
   VideoExtensionContainer,
   VideoStreamCorrespondency,
@@ -42,7 +46,7 @@ const { openSnackbar } = useSnackbar()
 export const useVideoStore = defineStore('video', () => {
   const missionStore = useMissionStore()
   const alertStore = useAlertStore()
-  const { showDialog } = useInteractionDialog()
+  const { showDialog, closeDialog } = useInteractionDialog()
 
   const { globalAddress, rtcConfiguration, webRTCSignallingURI } = useMainVehicleStore()
   console.debug('[WebRTC] Using webrtc-adapter for', adapter.browserDetails)
@@ -62,9 +66,48 @@ export const useVideoStore = defineStore('video', () => {
   const liveProcessors = ref<{ [key: string]: LiveVideoProcessor }>({})
   const enableLiveProcessing = useBlueOsStorage('cockpit-enable-live-processing', true)
   const keepRawVideoChunksAsBackup = useBlueOsStorage('cockpit-keep-raw-video-chunks-as-backup', true)
+  const userRestoredStreamIds = useBlueOsStorage<string[]>('cockpit-user-restored-stream-ids', [])
   const recordingMonitors: { [key: string]: ReturnType<typeof setInterval> | undefined } = {}
+  const suppressNotGrowingDialogs = ref(false)
 
-  const namesAvailableStreams = computed(() => mainWebRTCManager.availableStreams.value.map((stream) => stream.name))
+  const streamInformation = ref<ProcessedStreamInfo[]>([])
+  const go2rtcStreamInfo = ref<Record<string, Go2RTCStreamInfo>>({})
+
+  const fetchStreamInformation = async (): Promise<void> => {
+    if (!globalAddress) return
+    try {
+      streamInformation.value = await getStreamInformationFromVehicle(globalAddress)
+    } catch (error) {
+      console.error('Failed to fetch stream information:', error)
+    }
+  }
+
+  const fetchGo2rtcStreamInfo = async (): Promise<void> => {
+    if (!window.electronAPI) return
+    try {
+      go2rtcStreamInfo.value = await window.electronAPI.go2rtcGetStreamsInfo()
+    } catch (error) {
+      console.error('Failed to fetch go2rtc stream info:', error)
+    }
+  }
+
+  setInterval(() => {
+    fetchStreamInformation()
+    fetchGo2rtcStreamInfo()
+  }, 5000)
+  fetchStreamInformation()
+  fetchGo2rtcStreamInfo()
+
+  const namesAvailableWebRTCStreams = computed(() =>
+    mainWebRTCManager.availableStreams.value.map((stream) => stream.name)
+  )
+
+  const namesAvailableStreams = computed(() => {
+    const rtspStreams = streamsCorrespondency.value
+      .filter((stream) => (stream.protocol ?? 'webrtc') === 'rtsp')
+      .map((stream) => stream.externalId)
+    return [...new Set([...namesAvailableWebRTCStreams.value, ...rtspStreams])]
+  })
 
   const namessAvailableAbstractedStreams = computed(() => {
     return streamsCorrespondency.value.map((stream) => stream.name)
@@ -75,16 +118,103 @@ export const useVideoStore = defineStore('video', () => {
     return corr ? corr.externalId : undefined
   }
 
+  const internalStreamNameFromExternal = (externalId: string): string | undefined => {
+    const corr = streamsCorrespondency.value.find((stream) => stream.externalId === externalId)
+    return corr ? corr.name : undefined
+  }
+
+  const getStreamCorrespondency = (externalId: string): VideoStreamCorrespondency | undefined => {
+    return streamsCorrespondency.value.find((stream) => stream.externalId === externalId)
+  }
+
+  const getStreamProtocol = (externalId: string): VideoStreamProtocol => {
+    return getStreamCorrespondency(externalId)?.protocol ?? 'webrtc'
+  }
+
+  const getRtspUrl = (externalId: string): string | undefined => {
+    if (getStreamProtocol(externalId) !== 'rtsp') return undefined
+    return getStreamCorrespondency(externalId)?.rtspUrl
+  }
+
+  /**
+   * Get display information for a stream (source, resolution, fps, protocol label)
+   * @param {string} externalId - External stream identifier
+   * @returns {{ source: string, resolution: string, fps: string, protocolLabel: string }}
+   */
+  const getStreamDisplayInfo = (
+    externalId: string
+  ): {
+    /** Video source description (e.g. "RTSP (H264)" or camera source name) */
+    source: string
+    /** Resolution string (e.g. "1920x1080") */
+    resolution: string
+    /** FPS string (e.g. "30fps") or empty if unknown */
+    fps: string
+    /** Protocol type label ("WebRTC" or "RTSP") */
+    protocolLabel: string
+  } => {
+    if (getStreamProtocol(externalId) === 'rtsp') {
+      const mcmInfo = streamInformation.value.find((i) => i.rtspSourceUrl === externalId)
+      const go2rtcInfo = go2rtcStreamInfo.value[externalId]
+
+      const encode = go2rtcInfo?.codec || mcmInfo?.encode
+      const width = go2rtcInfo?.width || mcmInfo?.width
+      const height = go2rtcInfo?.height || mcmInfo?.height
+      const fps = go2rtcInfo?.fps || (mcmInfo?.fps ? `${mcmInfo.fps}` : undefined)
+
+      return {
+        source: mcmInfo?.sourceName ?? (encode ? `RTSP (${encode})` : 'RTSP (...)'),
+        resolution: width ? `${width}x${height}` : '...',
+        fps: fps ? `${fps}fps` : '',
+        protocolLabel: 'RTSP',
+      }
+    }
+
+    const info = streamInformation.value.find((i) => i.name === externalId)
+    return {
+      source: info?.sourceName ?? 'Unknown',
+      resolution: info ? `${info.width}x${info.height}` : 'Unknown',
+      fps: info?.fps ? `${info.fps}fps` : '',
+      protocolLabel: 'WebRTC',
+    }
+  }
+
   const initializeStreamsCorrespondency = (): void => {
+    // Move already-mapped RadCam WebRTC streams to the ignored list
+    // TODO: This whole logic around auto-ignoring RadCam WebRTC streams should be removed once the MCM stutter problem is fixed
+    const radCamMapped = streamsCorrespondency.value.filter(
+      (corr) =>
+        (corr.protocol ?? 'webrtc') === 'webrtc' &&
+        corr.externalId.toLowerCase().includes('radcam') &&
+        !userRestoredStreamIds.value.includes(corr.externalId)
+    )
+    if (radCamMapped.length > 0) {
+      const idsToMove = radCamMapped.map((corr) => corr.externalId)
+      streamsCorrespondency.value = streamsCorrespondency.value.filter((corr) => !idsToMove.includes(corr.externalId))
+      const newIgnored = idsToMove.filter((id) => !ignoredStreamExternalIds.value.includes(id))
+      if (newIgnored.length > 0) {
+        ignoredStreamExternalIds.value = [...ignoredStreamExternalIds.value, ...newIgnored]
+      }
+    }
+
     // Get list of external streams that are already mapped
     const alreadyMappedExternalIds = streamsCorrespondency.value.map((corr) => corr.externalId)
 
-    // Find external streams that don't have a mapping yet and are not ignored
-    const unmappedExternalStreams = namesAvailableStreams.value.filter((streamName) => {
-      return !alreadyMappedExternalIds.includes(streamName) && !ignoredStreamExternalIds.value.includes(streamName)
+    const radCamToIgnore: string[] = []
+    const unmappedExternalStreams = namesAvailableWebRTCStreams.value.filter((streamName) => {
+      if (alreadyMappedExternalIds.includes(streamName)) return false
+      if (ignoredStreamExternalIds.value.includes(streamName)) return false
+      if (streamName.toLowerCase().includes('radcam') && !userRestoredStreamIds.value.includes(streamName)) {
+        radCamToIgnore.push(streamName)
+        return false
+      }
+      return true
     })
 
-    // If there are no unmapped streams, no need to add any new correspondences
+    if (radCamToIgnore.length > 0) {
+      ignoredStreamExternalIds.value = [...ignoredStreamExternalIds.value, ...radCamToIgnore]
+    }
+
     if (unmappedExternalStreams.length === 0) return
 
     // Generate internal names for new streams, making sure they don't conflict with existing ones
@@ -112,13 +242,65 @@ export const useVideoStore = defineStore('video', () => {
     streamsCorrespondency.value = [...streamsCorrespondency.value, ...newCorrespondencies]
   }
 
+  const initializeRtspStreamsCorrespondency = (): void => {
+    if (!isElectron()) return
+
+    const allRtspSourceUrls: string[] = []
+    for (const stream of streamInformation.value) {
+      if (stream.rtspSourceUrl) {
+        allRtspSourceUrls.push(stream.rtspSourceUrl)
+      }
+    }
+
+    const alreadyMappedRtspUrls = streamsCorrespondency.value
+      .filter((corr) => corr.protocol === 'rtsp')
+      .map((corr) => corr.rtspUrl)
+
+    const unmappedRtspUrls = allRtspSourceUrls.filter((url) => {
+      return !alreadyMappedRtspUrls.includes(url) && !ignoredStreamExternalIds.value.includes(url)
+    })
+
+    if (unmappedRtspUrls.length === 0) return
+
+    const existingInternalNames = streamsCorrespondency.value.map((corr) => corr.name)
+    const newCorrespondencies: VideoStreamCorrespondency[] = []
+
+    let i = 1
+    for (const rtspUrl of unmappedRtspUrls) {
+      let internalName = `RTSP Stream ${i}`
+      while (existingInternalNames.includes(internalName)) {
+        i++
+        internalName = `RTSP Stream ${i}`
+      }
+
+      newCorrespondencies.push({
+        name: internalName,
+        externalId: rtspUrl,
+        protocol: 'rtsp',
+        rtspUrl,
+        autoDiscovered: true,
+      })
+      existingInternalNames.push(internalName)
+      i++
+    }
+
+    streamsCorrespondency.value = [...streamsCorrespondency.value, ...newCorrespondencies]
+  }
+
   watch(namesAvailableStreams, () => {
     initializeStreamsCorrespondency()
   })
 
-  // If the allowed ICE IPs are updated, all the streams should be reconnected
+  watch(streamInformation, () => {
+    initializeRtspStreamsCorrespondency()
+  })
+
+  // If the allowed ICE IPs are updated, all WebRTC streams should be reconnected (not RTSP/go2rtc)
   watch([allowedIceIps, allowedIceProtocols], () => {
-    Object.keys(activeStreams.value).forEach((streamName) => (activeStreams.value[streamName] = undefined))
+    Object.keys(activeStreams.value).forEach((streamName) => {
+      if (getStreamProtocol(streamName) !== 'webrtc') return
+      activeStreams.value[streamName] = undefined
+    })
   })
 
   /**
@@ -153,6 +335,11 @@ export const useVideoStore = defineStore('video', () => {
   setInterval(() => {
     Object.keys(activeStreams.value).forEach((streamName) => {
       if (activeStreams.value[streamName] === undefined) return
+
+      // If the stream is an RTSP stream, skip the update
+      if (getStreamProtocol(streamName) === 'rtsp') return
+      if (!activeStreams.value[streamName]?.webRtcManager) return
+
       // Update the list of available remote ICE Ips with those available for each stream
       // @ts-ignore: availableICEIPs is not reactive here, for some yet to know reason
       const newIps = activeStreams.value[streamName].webRtcManager.availableICEIPs.filter(
@@ -189,6 +376,9 @@ export const useVideoStore = defineStore('video', () => {
     })
   }, 300)
 
+  const rtspActivating = new Set<string>()
+  let rtspUnsupportedWarned = false
+
   /**
    * Activates a stream by starting it and storing it's variables inside a common object.
    * This way multiple consumers will always access the same resource, so we don't consume unnecessary
@@ -196,6 +386,62 @@ export const useVideoStore = defineStore('video', () => {
    * @param {string} streamName - Unique name for the stream, common between the multiple consumers
    */
   const activateStream = (streamName: string): void => {
+    if (getStreamProtocol(streamName) === 'rtsp') {
+      if (rtspActivating.has(streamName)) return
+      if (activeStreams.value[streamName]?.go2rtcManager) return
+
+      const rtspUrl = getRtspUrl(streamName)
+      if (!rtspUrl) {
+        showDialog({ message: `RTSP URL for stream '${streamName}' is missing.`, variant: 'error' })
+        return
+      }
+      if (!window.electronAPI) {
+        // Activation is attempted repeatedly (e.g. via VideoPlayer's 1s polling), so guard the dialog
+        // to a single notification per session to avoid spamming the user during boot.
+        if (!rtspUnsupportedWarned) {
+          rtspUnsupportedWarned = true
+          showDialog({
+            message:
+              'It looks like some of your video-related widgets (e.g.: video player, mini video recorder, snapshot tool)' +
+              ' are connected to RTSP streams, which are not supported in Cockpit Lite. To make sure those widgets work,' +
+              ' re-configure them to only use WebRTC, or upgrade to Cockpit Standalone, which supports both WebRTC and RTSP streams.',
+            variant: 'error',
+          })
+        }
+        return
+      }
+
+      rtspActivating.add(streamName)
+
+      void (async () => {
+        try {
+          const port = await window.electronAPI!.go2rtcGetPort()
+          await window.electronAPI!.go2rtcAddStream(streamName, rtspUrl)
+
+          const manager = new Go2RTCManager(port, streamName)
+          const { mediaStream, connected } = manager.start()
+
+          activeStreams.value[streamName] = {
+            stream: undefined,
+            go2rtcManager: manager,
+            // @ts-ignore: This is actually not reactive
+            mediaStream: mediaStream,
+            // @ts-ignore: This is actually not reactive
+            connected: connected,
+            mediaRecorder: undefined,
+            timeRecordingStart: undefined,
+          }
+          console.debug(`Activated RTSP stream '${streamName}' via go2rtc.`)
+        } catch (error) {
+          console.error(`Failed to activate RTSP stream '${streamName}':`, error)
+          showDialog({ message: `Failed to start RTSP stream '${streamName}'.`, variant: 'error' })
+        } finally {
+          rtspActivating.delete(streamName)
+        }
+      })()
+      return
+    }
+
     const stream = ref()
     const webRtcManager = new WebRTCManager(webRTCSignallingURI, rtcConfiguration)
     const { mediaStream, connected } = webRtcManager.startStream(
@@ -231,6 +477,41 @@ export const useVideoStore = defineStore('video', () => {
   }
 
   /**
+   * Get the signaller/connection status string for a stream, abstracting over manager type
+   * @param {string} streamName - Name of the stream
+   * @returns {string} Human-readable signaller status
+   */
+  const getSignallerStatus = (streamName: string): string => {
+    const data = getStreamData(streamName)
+    return data?.go2rtcManager?.signallerStatus.value ?? data?.webRtcManager?.signallerStatus.value ?? 'Unknown.'
+  }
+
+  /**
+   * Get the stream status string for a stream, abstracting over manager type
+   * @param {string} streamName - Name of the stream
+   * @returns {string} Human-readable stream status
+   */
+  const getStreamStatus = (streamName: string): string => {
+    const data = getStreamData(streamName)
+    if (data?.go2rtcManager) return data.go2rtcManager.streamStatus.value ?? 'Unknown.'
+    return data?.webRtcManager?.streamStatus.value ?? 'Unknown.'
+  }
+
+  /**
+   * Get the RTCPeerConnection for stats monitoring, if available
+   * @param {string} streamName - Name of the stream
+   * @returns {StreamPeerConnectionInfo | undefined}
+   */
+  const getStreamPeerConnection = (streamName: string): StreamPeerConnectionInfo | undefined => {
+    const data = activeStreams.value[streamName]
+    const session = data?.webRtcManager?.session
+    if (session?.peerConnection) {
+      return { peerConnection: session.peerConnection, peerId: session.consumerId, sessionId: session.id }
+    }
+    return undefined
+  }
+
+  /**
    * Generate .ass telemetry overlay file for a video recording
    * @param {string} recordingHash - The hash of the recording
    */
@@ -241,7 +522,8 @@ export const useVideoStore = defineStore('video', () => {
         throw new Error(`Recording '${recordingHash}' not found.`)
       }
 
-      // Generate telemetry log
+      console.info(`Generating telemetry overlay for recording '${recordingHash}'...`)
+
       const telemetryLog = await datalogger.generateLog(recordingData.dateStart!, recordingData.dateFinish!)
 
       if (telemetryLog !== undefined) {
@@ -253,8 +535,9 @@ export const useVideoStore = defineStore('video', () => {
         )
         const logBlob = new Blob([assLog], { type: 'text/plain' })
 
-        // Save the .ass file
-        await videoStorage.setItem(videoSubtitlesFilename(recordingData.fileName), logBlob)
+        const subtitlesFileName = videoSubtitlesFilename(recordingData.fileName)
+        await videoStorage.setItem(subtitlesFileName, logBlob)
+        console.info(`Telemetry overlay saved as '${subtitlesFileName}' (${logBlob.size} bytes).`)
       }
     } catch (error) {
       throw new Error(`Failed to generate telemetry for recording '${recordingHash}': ${error}`)
@@ -354,7 +637,8 @@ export const useVideoStore = defineStore('video', () => {
       refreshHash = hashOnDB || hashOnRegistry
     }
 
-    const fileName = videoFilename(recordingHash, streamData.timeRecordingStart!, missionStore.missionName || 'Cockpit')
+    const safeMissionName = sanitizeFilenameComponent(missionStore.missionName) || 'Cockpit'
+    const fileName = videoFilename(recordingHash, streamData.timeRecordingStart!, safeMissionName)
     activeStreams.value[streamName]!.mediaRecorder = new MediaRecorder(streamData.mediaStream!)
 
     const videoTrack = streamData.mediaStream!.getVideoTracks()[0]
@@ -374,6 +658,19 @@ export const useVideoStore = defineStore('video', () => {
       lastKnownNumberOfChunks: 0,
     }
     unprocessedVideos.value = { ...unprocessedVideos.value, ...{ [recordingHash]: videoInfo } }
+
+    // Common configuration for the not growing dialogs
+    const suppressNotGrowingDialog = (): void => {
+      suppressNotGrowingDialogs.value = true
+      closeDialog()
+    }
+    const notGrowingDialogConfig = {
+      variant: 'error',
+      actions: [
+        { text: "Don't show again during this session", size: 'small', action: suppressNotGrowingDialog },
+        { text: 'Close', size: 'small', action: closeDialog },
+      ],
+    }
 
     // On Electron, we can get the size of the video output file in real time
     // This is useful to detect if the output file is growing, which is an indication that the recording is still ongoing.
@@ -401,8 +698,10 @@ export const useVideoStore = defineStore('video', () => {
         }
         const lastKnownFileSize = unprocessedVideos.value[recordingHash].lastKnownFileSize
         if (fileStats.size! <= lastKnownFileSize!) {
-          const msg = 'The video output file is not growing. This can indicate a problem with the recording.'
-          showDialog({ message: msg, variant: 'error' })
+          if (!suppressNotGrowingDialogs.value) {
+            const msg = 'The video output file is not growing. This can indicate a problem with the recording.'
+            showDialog({ ...notGrowingDialogConfig, message: msg })
+          }
           return
         }
         unprocessedVideos.value[recordingHash].lastKnownFileSize = fileStats.size
@@ -423,8 +722,10 @@ export const useVideoStore = defineStore('video', () => {
         const numberOfChunks = await tempVideoStorage.localForage.length()
         const lastKnownNumberOfChunks = unprocessedVideos.value[recordingHash].lastKnownNumberOfChunks
         if (numberOfChunks <= lastKnownNumberOfChunks!) {
-          const msg = 'The number of video chunks is not growing. This can indicate a problem with the recording.'
-          showDialog({ message: msg, variant: 'error' })
+          if (!suppressNotGrowingDialogs.value) {
+            const msg = 'The number of video chunks is not growing. This can indicate a problem with the recording.'
+            showDialog({ ...notGrowingDialogConfig, message: msg })
+          }
           return
         }
         unprocessedVideos.value[recordingHash].lastKnownNumberOfChunks = numberOfChunks
@@ -567,6 +868,15 @@ export const useVideoStore = defineStore('video', () => {
 
     activeStreams.value[streamName]!.mediaRecorder!.onstop = async () => {
       const info = unprocessedVideos.value[recordingHash]
+      if (!info) {
+        const errorMessage = `Failed to generate telemetry overlay: recording metadata for '${recordingHash}' not found.`
+        openSnackbar({ message: errorMessage, variant: 'error' })
+        delete liveProcessors.value[recordingHash]
+        if (activeStreams.value[streamName]) {
+          activeStreams.value[streamName]!.mediaRecorder = undefined
+        }
+        return
+      }
 
       // Register that the recording finished
       info.dateFinish = new Date()
@@ -588,8 +898,6 @@ export const useVideoStore = defineStore('video', () => {
           alertStore.pushAlert(new Alert(AlertLevel.Error, `Failed to process video for stream ${streamName}.`))
         } finally {
           delete liveProcessors.value[recordingHash]
-
-          activeStreams.value[streamName]!.mediaRecorder = undefined
         }
       }
 
@@ -597,10 +905,14 @@ export const useVideoStore = defineStore('video', () => {
       try {
         await generateTelemetryOverlay(recordingHash)
       } catch (telemetryError) {
-        openSnackbar({ message: 'Failed to generate telemetry overlay.', variant: 'error' })
+        openSnackbar({ message: `Failed to generate telemetry overlay: ${telemetryError}`, variant: 'error' })
       }
 
-      activeStreams.value[streamName]!.mediaRecorder = undefined
+      if (activeStreams.value[streamName]) {
+        activeStreams.value[streamName]!.mediaRecorder = undefined
+      } else {
+        console.warn(`Stream '${streamName}' was removed during video processing finalization.`)
+      }
     }
 
     alertStore.pushAlert(new Alert(AlertLevel.Success, `Started recording stream ${streamName}.`))
@@ -810,10 +1122,11 @@ export const useVideoStore = defineStore('video', () => {
     if (streamIndex !== -1) {
       const stream = streamsCorrespondency.value[streamIndex]
 
-      // Add to ignored list
+      // Add to ignored list and clear user-restored status so auto-ignore can re-apply
       if (!ignoredStreamExternalIds.value.includes(externalId)) {
         ignoredStreamExternalIds.value = [...ignoredStreamExternalIds.value, externalId]
       }
+      userRestoredStreamIds.value = userRestoredStreamIds.value.filter((id) => id !== externalId)
 
       // Remove from correspondency list
       streamsCorrespondency.value.splice(streamIndex, 1)
@@ -838,10 +1151,23 @@ export const useVideoStore = defineStore('video', () => {
         // Close WebRTC connection
         if (externalStreamData?.webRtcManager) {
           try {
+            const session = externalStreamData.webRtcManager.session
+            if (session?.peerConnection) {
+              session.peerConnection.close()
+            }
             externalStreamData.webRtcManager.close(`External stream '${externalId}' was ignored by user`)
             console.log(`Stopped WebRTC manager for external stream '${externalId}'`)
           } catch (error) {
             console.warn(`Error stopping WebRTC manager for external stream '${externalId}':`, error)
+          }
+        }
+
+        if (externalStreamData?.go2rtcManager) {
+          externalStreamData.go2rtcManager.close(`Stream '${externalId}' deleted by user`)
+          if (window.electronAPI) {
+            void window.electronAPI.go2rtcRemoveStream(externalId).catch((error) => {
+              console.warn(`Error removing go2rtc stream '${externalId}':`, error)
+            })
           }
         }
 
@@ -862,8 +1188,15 @@ export const useVideoStore = defineStore('video', () => {
       // Remove from ignored list
       ignoredStreamExternalIds.value.splice(ignoredIndex, 1)
 
-      if (namesAvailableStreams.value.includes(externalId)) {
-        // Trigger re-initialization to add it back to correspondency if it's still available
+      // Track that the user explicitly restored this stream so auto-ignore won't re-ignore it
+      if (!userRestoredStreamIds.value.includes(externalId)) {
+        userRestoredStreamIds.value = [...userRestoredStreamIds.value, externalId]
+      }
+
+      const isRtsp = externalId.startsWith('rtsp://') || externalId.startsWith('rtsps://')
+      if (isRtsp) {
+        initializeRtspStreamsCorrespondency()
+      } else if (namesAvailableStreams.value.includes(externalId)) {
         initializeStreamsCorrespondency()
       } else {
         openSnackbar({ variant: 'warning', message: `Stream '${externalId}' not available anymore.` })
@@ -873,6 +1206,51 @@ export const useVideoStore = defineStore('video', () => {
     } else {
       openSnackbar({ variant: 'warning', message: `Stream with external ID '${externalId}' not on ignored list.` })
     }
+  }
+
+  /**
+   * Add a new RTSP stream to the correspondency list (Electron/standalone only)
+   * @param {string} rtspUrl - Full RTSP URL
+   * @returns {VideoStreamCorrespondency} The created correspondency entry
+   */
+  const addRtspStreamCorrespondency = (rtspUrl: string): VideoStreamCorrespondency => {
+    if (!window.electronAPI) {
+      throw new Error('RTSP streams are only available in the standalone version.')
+    }
+
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(rtspUrl)
+    } catch {
+      throw new Error('Invalid RTSP URL.')
+    }
+
+    if (!['rtsp:', 'rtsps:'].includes(parsedUrl.protocol)) {
+      throw new Error('RTSP URL must start with rtsp:// or rtsps://')
+    }
+
+    const normalizedRtspUrl = rtspUrl.trim()
+    const duplicate = streamsCorrespondency.value.find((stream) => stream.rtspUrl === normalizedRtspUrl)
+    if (duplicate) {
+      throw new Error('This RTSP URL is already added.')
+    }
+
+    const existingInternalNames = streamsCorrespondency.value.map((corr) => corr.name)
+    let i = 1
+    let internalName = `RTSP Stream ${i}`
+    while (existingInternalNames.includes(internalName)) {
+      i++
+      internalName = `RTSP Stream ${i}`
+    }
+
+    const newCorrespondency: VideoStreamCorrespondency = {
+      name: internalName,
+      externalId: normalizedRtspUrl,
+      protocol: 'rtsp',
+      rtspUrl: normalizedRtspUrl,
+    }
+    streamsCorrespondency.value = [...streamsCorrespondency.value, newCorrespondency]
+    return newCorrespondency
   }
 
   registerActionCallback(
@@ -895,15 +1273,25 @@ export const useVideoStore = defineStore('video', () => {
     allowedIceProtocols,
     jitterBufferTarget,
     namesAvailableStreams,
+    namesAvailableWebRTCStreams,
     videoStorage,
     tempVideoStorage,
     streamsCorrespondency,
     ignoredStreamExternalIds,
     namessAvailableAbstractedStreams,
     externalStreamId,
+    internalStreamNameFromExternal,
+    getStreamProtocol,
+    getStreamDisplayInfo,
+    getRtspUrl,
+    streamInformation,
+    go2rtcStreamInfo,
     discardProcessedFilesFromVideoDB,
     getMediaStream,
     getStreamData,
+    getSignallerStatus,
+    getStreamStatus,
+    getStreamPeerConnection,
     isRecording,
     stopRecording,
     startRecording,
@@ -916,6 +1304,7 @@ export const useVideoStore = defineStore('video', () => {
     lastRenamedStreamName,
     deleteStreamCorrespondency,
     restoreIgnoredStream,
+    addRtspStreamCorrespondency,
     enableLiveProcessing,
     keepRawVideoChunksAsBackup,
   }

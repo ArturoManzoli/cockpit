@@ -5,15 +5,19 @@
       <div
         :class="interfaceStore.isOnSmallScreen ? 'max-w-[88vw] max-h-[95vh]' : 'max-w-[880px] max-h-[80vh]'"
         class="overflow-y-auto"
+        style="scrollbar-gutter: stable"
       >
         <div
-          v-if="controllerStore.joysticks && !controllerStore.joysticks.size"
+          v-if="!controllerStore.joysticks.size"
           class="px-6 pb-2 flex-centered flex-column position-relative"
           :class="interfaceStore.isOnSmallScreen ? 'pt-1' : 'pt-3'"
         >
-          <p class="text-base text-center font-bold mt-6 mb-4">Connect a joystick and press any key.</p>
+          <p class="text-sm text-center opacity-80 mt-2 mb-1">
+            No joystick connected. Live input is unavailable, but you can still configure mappings, import defaults, and
+            import or export joystick configurations below.
+          </p>
         </div>
-        <div v-else>
+        <div>
           <ExpansiblePanel no-top-divider no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen" compact>
             <template #title>General settings</template>
             <template #info>
@@ -60,19 +64,6 @@
                   </div>
 
                   <div v-if="availableModifierKeys" class="flex flex-row items-center mt-2 mb-3">
-                    <v-combobox
-                      v-model="vehicleTypesAssignedToCurrentProfile"
-                      :items="availableVehicleTypes"
-                      label="Vehicle types that use this profile by default:"
-                      chips
-                      multiple
-                      density="compact"
-                      hide-details
-                      variant="outlined"
-                      class="w-10/12 scale-90"
-                      theme="dark"
-                    />
-
                     <v-switch
                       v-model="controllerStore.holdLastInputWhenWindowHidden"
                       label="Hold last joystick input when window is hidden (tab changed or window minimized)"
@@ -80,57 +71,9 @@
                     />
                   </div>
                   <div class="flex w-full justify-center mb-2">
-                    <div
-                      v-for="functionMapping in controllerStore.protocolMappings"
-                      :key="functionMapping.name"
-                      class="relative mx-2"
-                    >
-                      <!-- Container for active profile -->
-                      <div
-                        v-if="activeProfileName === functionMapping.name"
-                        class="flex flex-col items-center bg-[#FFFFFF15] rounded-lg p-2 border border-[#FFFFFF30]"
-                      >
-                        <v-btn
-                          class="text-md bg-[#FFFFFF23]"
-                          :class="{
-                            'bg-[#FFFFFF43]': selectedProfile.name === functionMapping.name,
-                            'text-sm': interfaceStore.isOnSmallScreen,
-                          }"
-                          @click="selectProfile(functionMapping)"
-                        >
-                          {{ functionMapping.name }}
-                        </v-btn>
-                        <span class="text-xs text-gray-300 mt-1">Currently Active Profile</span>
-                      </div>
-
-                      <!-- Regular profile button -->
-                      <div v-else class="relative mt-2">
-                        <v-btn
-                          class="text-md bg-[#FFFFFF23] px-6"
-                          :class="{
-                            'bg-[#FFFFFF43]': selectedProfile.name === functionMapping.name,
-                            'text-sm': interfaceStore.isOnSmallScreen,
-                          }"
-                          @click="selectProfile(functionMapping)"
-                        >
-                          {{ functionMapping.name }}
-                        </v-btn>
-
-                        <!-- Small switch button for selected non-active profile -->
-                        <v-btn
-                          v-if="selectedProfile.name === functionMapping.name && isSelectedProfileDifferentFromActive"
-                          icon
-                          size="x-small"
-                          class="absolute top-3 -right-3 text-white bg-[#51565B] rounded-full"
-                          @click.stop="switchToSelectedProfile"
-                        >
-                          <v-icon size="14">mdi-swap-horizontal</v-icon>
-                          <v-tooltip activator="parent" location="top">
-                            Switch to "{{ selectedProfile.name }}" profile
-                          </v-tooltip>
-                        </v-btn>
-                      </div>
-                    </div>
+                    <span class="text-lg font-medium" :class="{ 'text-sm': interfaceStore.isOnSmallScreen }">
+                      {{ controllerStore.protocolMapping.name }}
+                    </span>
                   </div>
                 </div>
                 <div class="flex w-full h-[47px]">
@@ -195,19 +138,34 @@
                             </label>
                           </template>
                         </v-tooltip>
+                        <v-divider vertical />
+                        <v-tooltip location="top" text="Import default mapping for this vehicle">
+                          <template #activator="{ props }">
+                            <v-btn
+                              v-bind="props"
+                              icon="mdi-import"
+                              variant="text"
+                              size="24"
+                              class="text-[12px] mx-3 mt-[2px] mb-[1px]"
+                              @click="openVehicleDefaultsImportModal"
+                          /></template>
+                        </v-tooltip>
                       </div>
                     </div>
                   </v-tabs>
                 </div>
               </div>
-              <div v-if="currentTabVIew === 'svg'" class="flex flex-col justify-between mt-5">
+              <div v-if="currentTabVIew === 'svg'" class="flex flex-col justify-between">
+                <div v-if="!controllerStore.joysticks.size" class="text-center py-12 opacity-70 text-sm">
+                  Connect a joystick to see its visual layout and live input.
+                </div>
                 <div
                   v-for="[key, joystick] in controllerStore.joysticks"
                   :key="key"
-                  class="w-[95%] h-full flex-centered flex-column position-relative"
+                  class="w-[95%] h-full mx-auto flex-centered flex-column position-relative"
                 >
-                  <p class="text-md font-semibold">{{ joystick.model }} controller</p>
-                  <div class="flex items-center gap-2 -mb-4">
+                  <p class="text-md font-semibold -mt-8">{{ joystick.model }} controller</p>
+                  <div class="flex items-center gap-2 -mb-8">
                     <v-switch
                       :model-value="!controllerStore.disabledJoysticks.includes(joystick.model)"
                       :label="controllerStore.disabledJoysticks.includes(joystick.model) ? 'Disabled' : 'Enabled'"
@@ -251,16 +209,81 @@
                       @click="(e) => setCurrentInputs(joystick, e)"
                     />
                   </div>
+                  <div
+                    v-if="getButtonsNotInSvg(joystick).length || getAxesNotInSvg(joystick).length"
+                    class="flex flex-row items-start justify-end w-full gap-4 -mr-8 mb-[20px]"
+                  >
+                    <div class="flex w-[60%] flex-col items-center">
+                      <p class="text-xs font-semibold opacity-80 mb-2">Additional buttons</p>
+                      <div class="grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-3 w-full">
+                        <div
+                          v-for="buttonId in getButtonsNotInSvg(joystick)"
+                          :key="buttonId"
+                          class="flex items-center gap-2 px-2 py-2 rounded-md border border-[#FFFFFF22] bg-[#FFFFFF12] cursor-pointer hover:border-[#FFFFFF55]"
+                          @click="
+                            setCurrentInputs(joystick, [{ type: InputType.Button, id: buttonId as JoystickButton }])
+                          "
+                        >
+                          <v-icon
+                            :icon="isExtraButtonPressed(joystick, buttonId) ? 'mdi-circle' : 'mdi-circle-outline'"
+                            :class="[
+                              'text-[22px]',
+                              isExtraButtonPressed(joystick, buttonId) ? 'text-[#5089b4]' : 'text-[#5089b4] opacity-50',
+                            ]"
+                          />
+                          <div class="flex flex-col leading-4">
+                            <span class="text-xs font-semibold">Button {{ buttonId }}</span>
+                            <v-tooltip location="top" :text="getButtonActionName(buttonId)">
+                              <template #activator="{ props }">
+                                <span
+                                  v-bind="props"
+                                  class="text-[11px] opacity-70 max-w-[110px] truncate cursor-pointer"
+                                >
+                                  {{ getButtonActionName(buttonId) }}
+                                </span>
+                              </template>
+                            </v-tooltip>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <v-divider vertical />
+                    <div v-if="getAxesNotInSvg(joystick).length" class="flex-1 w-1 /5 flex flex-col items-center">
+                      <p class="text-xs font-semibold opacity-80 mb-2">Additional axes</p>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                        <div
+                          v-for="axisId in getAxesNotInSvg(joystick)"
+                          :key="axisId"
+                          class="flex items-center gap-3 px-3 py-2 rounded-md border border-[#FFFFFF22] bg-[#FFFFFF12] cursor-pointer hover:border-[#FFFFFF55]"
+                          @click="setCurrentInputs(joystick, [{ type: InputType.Axis, id: axisId as JoystickAxis }])"
+                        >
+                          <div class="flex flex-col text-xs font-semibold w-[72px]">
+                            <span>Axis {{ axisId }}</span>
+                            <span class="text-[11px] opacity-70 max-w-[160px] truncate">{{
+                              getAxisActionName(axisId)
+                            }}</span>
+                          </div>
+                          <AxisVisualization
+                            class="flex-1"
+                            :raw-value="joystick.state.axes[axisId] || 0"
+                            :processed-value="scaledAxisValue(joystick, axisId as JoystickAxis)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div v-if="currentTabVIew === 'table'" class="flex flex-col justify-between mt-5">
+              <div v-if="currentTabVIew === 'table'" class="w-full flex-centered flex-column position-relative">
+                <!-- Per-joystick header (model name + enable switch). Skipped entirely when no joystick is
+                     connected so the mapping editor below still renders. -->
                 <div
                   v-for="[key, joystick] in controllerStore.joysticks"
                   :key="key"
-                  class="w-full flex-centered flex-column position-relative"
+                  class="w-full flex-centered flex-column"
                 >
-                  <span class="text-lg font-bold w-full text-center">{{ joystick.model }} controller</span>
-                  <div class="flex items-center gap-2 -mb-4">
+                  <span class="text-md font-semibold w-full text-center -mt-8">{{ joystick.model }} controller</span>
+                  <div class="flex items-center gap-2">
                     <v-switch
                       :model-value="!controllerStore.disabledJoysticks.includes(joystick.model)"
                       :label="controllerStore.disabledJoysticks.includes(joystick.model) ? 'Disabled' : 'Enabled'"
@@ -269,9 +292,11 @@
                       @update:model-value="toggleJoystickEnabling(joystick.model)"
                     />
                   </div>
+                </div>
+
+                <div class="w-full flex-centered flex-column">
                   <p class="text-start text-sm font-bold w-[93%] mb-1">Axes</p>
                   <v-data-table
-                    v-if="controllerStore.joysticks && controllerStore.joysticks.size"
                     :items="tableItems"
                     class="elevation-1 bg-transparent rounded-lg mb-[20px]"
                     theme="dark"
@@ -301,10 +326,11 @@
                         </td>
                         <td class="w-[120px] text-center">
                           <AxisVisualization
-                            v-if="item.type === 'axis' && joystick.state.axes"
-                            :raw-value="joystick.state.axes[item.id as JoystickAxis] || 0"
-                            :processed-value="scaledAxisValue(joystick, item.id as JoystickAxis)"
+                            v-if="item.type === 'axis' && currentJoystick && currentJoystick.state.axes"
+                            :raw-value="currentJoystick.state.axes[item.id as JoystickAxis] || 0"
+                            :processed-value="scaledAxisValue(currentJoystick, item.id as JoystickAxis)"
                           />
+                          <span v-else class="text-xs opacity-50">—</span>
                         </td>
                         <td class="w-[50px] text-center">
                           <v-icon v-if="item.type === 'axis'">
@@ -368,10 +394,9 @@
 
                   <p class="text-start text-sm font-bold w-[93%] mb-1">Buttons</p>
                   <v-data-table
-                    v-if="currentJoystick && currentJoystick?.gamepadToCockpitMap?.buttons"
                     :headers="headers"
                     :items="tableItems"
-                    :items-per-page="64"
+                    :items-per-page="128"
                     class="elevation-1 bg-transparent rounded-lg mt-2 mb-10"
                     theme="dark"
                     :style="interfaceStore.globalGlassMenuStyles"
@@ -437,7 +462,7 @@
                             icon="mdi-circle-edit-outline"
                             variant="text"
                             class="text-[16px]"
-                            @click="setCurrentInputFromTable(joystick, item as JoystickInput)"
+                            @click="setCurrentInputFromTable(currentJoystick ?? null, item as JoystickInput)"
                           >
                           </v-btn>
                         </td>
@@ -471,18 +496,13 @@
     </template>
   </BaseConfigurationView>
   <teleport to="body">
-    <InteractionDialog
-      v-show="currentJoystick"
-      :show-dialog="inputClickedDialog"
-      max-width="auto"
-      variant="text-only"
-      persistent
-    >
+    <InteractionDialog :show-dialog="inputClickedDialog" max-width="auto" variant="text-only" persistent>
       <template #title>
         <div class="flex justify-center w-full font-bold mt-1">Input mapping</div>
       </template>
       <template #content>
-        <div class="flex flex-col mb-3" :class="currentAxisInputs.length > 0 ? 'h-[600px]' : 'h-[430px]'">
+        <v-icon class="fixed top-3 right-3 cursor-pointer" @click="closeInputMappingDialog">mdi-close</v-icon>
+        <div class="flex flex-col mb-3 -mt-4">
           <div
             v-for="input in currentButtonInputs"
             :key="input.id"
@@ -508,14 +528,14 @@
                   Unmap Input
                 </v-btn>
               </div>
-              <div class="flex-1"></div>
+              <div class="flex-1 my-4"></div>
               <div class="flex flex-col items-start text-sm font-semibold gap-y-1">
                 <div class="flex items-center">
-                  <img src="@/assets/cockpit-logo.png" class="w-4 h-4 mr-2" alt="Cockpit" />
+                  <img src="@/assets/cockpit-logo.avif" class="w-4 h-4 mr-2" alt="Cockpit" />
                   <span>Cockpit Action</span>
                 </div>
                 <div class="flex items-center">
-                  <img src="@/assets/mavlink-logo.png" class="w-4 h-4 mr-2 ml-[1px] mt-[4px]" alt="MAVLink" />
+                  <img src="@/assets/mavlink-logo.avif" class="w-4 h-4 mr-2 ml-[1px] mt-[4px]" alt="MAVLink" />
                   <span>MAVLink Manual Control</span>
                 </div>
                 <div class="flex items-center">
@@ -547,13 +567,13 @@
                     <div class="absolute left-3 top-1/2 -translate-y-1/2">
                       <img
                         v-if="action.protocol === JoystickProtocol.CockpitAction"
-                        src="@/assets/cockpit-logo.png"
+                        src="@/assets/cockpit-logo.avif"
                         class="w-4 h-4"
                         alt="Cockpit"
                       />
                       <img
                         v-else-if="action.protocol === JoystickProtocol.MAVLinkManualControl"
-                        src="@/assets/mavlink-logo.png"
+                        src="@/assets/mavlink-logo.avif"
                         class="w-4 h-4 ml-[2px] mt-[3px]"
                         alt="MAVLink"
                       />
@@ -572,7 +592,7 @@
             </div>
           </div>
           <template v-if="currentAxisInputs.length > 0">
-            <p class="flex items-center justify-center w-full text-lg font-semibold mt-8">Axis mapping</p>
+            <p class="flex items-center justify-center w-full text-lg font-semibold mb-2 mt-2">Axis mapping</p>
           </template>
           <div class="flex flex-col items-center justify-between my-2">
             <Transition>
@@ -629,55 +649,6 @@
       </template>
     </InteractionDialog>
   </teleport>
-
-  <!-- Profile Switch Confirmation Dialog -->
-  <InteractionDialog
-    v-model:show-dialog="showProfileSwitchDialog"
-    title="Confirm Joystick Profile Switch"
-    variant="text-only"
-    :max-width="820"
-    :persistent="true"
-  >
-    <template #content>
-      <div class="flex items-center justify-center">
-        <v-icon icon="mdi-alert-rhombus" size="60px" color="yellow" class="mx-4" />
-        <div class="flex flex-col items-start px-5 font-medium gap-y-3 mb-6">
-          <p>
-            Switching joystick configuration from "{{ activeProfileName }}" (<span class="font-bold">{{
-              getVehicleTypesForProfile(activeProfileHash)
-                .join(', ')
-                .replace('MAV_TYPE_', '')
-                .replace('_', ' ')
-                .toLowerCase()
-            }}</span
-            >) to "{{ selectedProfile.name }}" (<span class="font-bold">{{
-              getVehicleTypesForProfile(selectedProfile.hash)
-                .join(', ')
-                .replace('MAV_TYPE_', '')
-                .replace('_', ' ')
-                .toLowerCase()
-            }}</span
-            >), while connected to a
-            <span class="font-bold">{{ vehicleType.replace('MAV_TYPE_', '').replace('_', ' ').toLowerCase() }}</span>
-            vehicle.
-          </p>
-          <p v-if="getVehicleTypesForProfile(selectedProfile.hash).includes(vehicleType)">
-            As the selected mapping set matches your vehicle type, it's probably safe to switch.
-          </p>
-          <p v-else>
-            As the selected mapping set does not match your vehicle type, your motors will likely start spinning as soon
-            as you close this configuration page!
-          </p>
-        </div>
-      </div>
-    </template>
-    <template #actions>
-      <div class="flex justify-between w-full">
-        <v-btn variant="text" class="m-1" @click="cancelProfileSwitch"> Cancel </v-btn>
-        <v-btn variant="text" class="m-1" @click="confirmProfileSwitch"> Switch </v-btn>
-      </div>
-    </template>
-  </InteractionDialog>
 </template>
 
 <script setup lang="ts">
@@ -694,7 +665,6 @@ import { useSnackbar } from '@/composables/snackbar'
 import { getDataLakeVariableInfo } from '@/libs/actions/data-lake'
 import { getAllTransformingFunctions } from '@/libs/actions/data-lake-transformations'
 import { getArdupilotVersion, getMavlink2RestVersion } from '@/libs/blueos'
-import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { JoystickModel } from '@/libs/joystick/manager'
 import { MAVLinkButtonFunction } from '@/libs/joystick/protocols/mavlink-manual-control'
 import { modifierKeyActions } from '@/libs/joystick/protocols/other'
@@ -720,14 +690,12 @@ import {
 import BaseConfigurationView from './BaseConfigurationView.vue'
 
 const controllerStore = useControllerStore()
-const { globalAddress, vehicleType } = useMainVehicleStore()
+const { globalAddress } = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
 const { openSnackbar } = useSnackbar()
 
 const showJoystickWarningMessage = ref(false)
 const searchText = ref('')
-
-const showProfileSwitchDialog = ref(false)
 
 onMounted(async () => {
   controllerStore.enableForwarding = false
@@ -754,9 +722,11 @@ const currentModifierKey: Ref<ProtocolAction> = ref(modifierKeyActions.regular)
 const availableModifierKeys: ProtocolAction[] = Object.values(modifierKeyActions)
 const showJoystickLayout = ref(true)
 const currentTabVIew = ref('table')
+const maxVisibleInputs = 64
 
-// Track the currently selected profile (for viewing) vs the active profile (for actual joystick control)
-const selectedProfileIndex = ref(0)
+// Track buttons and axes that are represented in the SVG joystick layouts
+const svgButtons = new Set<number>(Object.values(JoystickButton).filter((btn) => typeof btn === 'number') as number[])
+const svgAxes = new Set<JoystickAxis>([JoystickAxis.A0, JoystickAxis.A1, JoystickAxis.A2, JoystickAxis.A3])
 
 // Throttled button states implementation for performance optimization
 const throttledButtonStates = ref<Record<number, number | undefined>>({})
@@ -789,6 +759,30 @@ watch(
 
 const isButtonPressed = (buttonId: JoystickButton): boolean => {
   return (throttledButtonStates.value[buttonId] ?? 0) > 0.5
+}
+
+const getButtonsNotInSvg = (joystick: Joystick): number[] => {
+  if (!joystick?.state?.buttons?.length) return []
+  return joystick.state.buttons.map((_, index) => index).filter((buttonId) => !svgButtons.has(buttonId))
+}
+
+const isExtraButtonPressed = (joystick: Joystick, buttonId: number): boolean => {
+  return (joystick.state.buttons[buttonId] ?? 0) > 0.5
+}
+
+const getButtonActionName = (buttonId: number): string => {
+  const action = currentButtonActions.value[buttonId as JoystickButton]?.action
+  return action?.name ?? 'unassigned'
+}
+
+const getAxesNotInSvg = (joystick: Joystick): number[] => {
+  if (!joystick?.state?.axes?.length) return []
+  return joystick.state.axes.map((_, index) => index).filter((axisId) => !svgAxes.has(axisId as JoystickAxis))
+}
+
+const getAxisActionName = (axisId: number): string => {
+  const action = selectedProfileAxesCorrespondencies.value[axisId as JoystickAxis]?.action
+  return action?.name ?? 'unassigned'
 }
 
 const shiftFunction = {
@@ -877,15 +871,24 @@ const tableItemsCache = ref<{
 } | null>(null)
 
 /**
- * Optimized table items with memoization to reduce object creation
+ * Optimized table items with memoization to reduce object creation. When a joystick is connected
+ * we use its actual axes/buttons counts; otherwise we fall back to the protocol mapping's known
+ * axes/buttons so the mapping editor still renders and is editable without a joystick.
  */
 const tableItems = computed(() => {
-  if (currentJoystick.value === undefined) {
-    return []
+  let axesLength: number
+  let buttonsLength: number
+
+  if (currentJoystick.value) {
+    axesLength = currentJoystick.value.state.axes.length
+    buttonsLength = currentJoystick.value.state.buttons.length
+  } else {
+    axesLength = Object.keys(selectedProfileAxesCorrespondencies.value).length
+    const buttons =
+      selectedProfileButtonsCorrespondencies.value[currentModifierKey.value.id as CockpitModifierKeyOption]
+    buttonsLength = buttons ? Object.keys(buttons).length : 0
   }
 
-  const axesLength = currentJoystick.value.state.axes.length
-  const buttonsLength = currentJoystick.value.state.buttons.length
   const cacheKey = `${axesLength}-${buttonsLength}`
 
   // Check if we can use cached items
@@ -894,9 +897,15 @@ const tableItems = computed(() => {
   }
 
   // Create new items if cache is not defined yet
-  const axesItems = Array.from({ length: Math.min(31, axesLength) }, (_, index) => ({ type: 'axis', id: index }))
+  const axesItems = Array.from({ length: Math.min(maxVisibleInputs, axesLength) }, (_, index) => ({
+    type: 'axis',
+    id: index,
+  }))
 
-  const buttonItems = Array.from({ length: Math.min(31, buttonsLength) }, (_, index) => ({ type: 'button', id: index }))
+  const buttonItems = Array.from({ length: Math.min(maxVisibleInputs, buttonsLength) }, (_, index) => ({
+    type: 'button',
+    id: index,
+  }))
 
   const items = [...axesItems, ...buttonItems]
 
@@ -917,13 +926,15 @@ watch(inputClickedDialog, () => {
   justRemappedAxisInput.value = undefined
 })
 
-const setCurrentInputFromTable = (joystick: Joystick, input: JoystickInput): void => {
+const setCurrentInputFromTable = (joystick: Joystick | null, input: JoystickInput): void => {
   const inputs = [input]
   setCurrentInputs(joystick, inputs)
 }
 
-const setCurrentInputs = (joystick: Joystick, inputs: JoystickInput[]): void => {
-  currentJoystick.value = joystick
+const setCurrentInputs = (joystick: Joystick | null, inputs: JoystickInput[]): void => {
+  // Keep the previously-set currentJoystick (if any) when called without one, so the live joystick
+  // reference is preserved across mapping-editor interactions that don't carry a joystick context.
+  if (joystick) currentJoystick.value = joystick
 
   currentButtonInputs.value = inputs
     .filter((i) => i.type === InputType.Button)
@@ -1004,52 +1015,8 @@ const buttonActionsToShow = computed(() =>
   })
 )
 
-const availableVehicleTypes = computed(() => Object.keys(MavType))
-
-// Get the currently selected profile for viewing (not necessarily the active one)
-const selectedProfile = computed(() => controllerStore.protocolMappings[selectedProfileIndex.value])
-
-// Get the currently active profile name and hash
-const activeProfileName = computed(() => controllerStore.protocolMapping.name)
-const activeProfileHash = computed(() => controllerStore.protocolMapping.hash)
-
-// Check if the selected profile is different from the active one
-const isSelectedProfileDifferentFromActive = computed(() => selectedProfile.value.name !== activeProfileName.value)
-
-// Initialize selected profile to match active profile
-watch(
-  () => controllerStore.protocolMappingIndex,
-  (newIndex) => {
-    selectedProfileIndex.value = newIndex
-  },
-  { immediate: true }
-)
-
-// Computed properties for the selected profile data
-const selectedProfileAxesCorrespondencies = computed(() => selectedProfile.value.axesCorrespondencies)
-const selectedProfileButtonsCorrespondencies = computed(() => selectedProfile.value.buttonsCorrespondencies)
-
-const vehicleTypesAssignedToCurrentProfile = computed({
-  get() {
-    return Object.keys(controllerStore.vehicleTypeProtocolMappingCorrespondency).filter((vType) => {
-      // @ts-ignore: Enums in TS such
-      return controllerStore.vehicleTypeProtocolMappingCorrespondency[vType] === selectedProfile.value.hash
-    })
-  },
-  set(selectedVehicleTypes: string[]) {
-    availableVehicleTypes.value.forEach((vType) => {
-      // @ts-ignore: Enums in TS such
-      if (controllerStore.vehicleTypeProtocolMappingCorrespondency[vType] === selectedProfile.value.hash) {
-        // @ts-ignore: Enums in TS such
-        controllerStore.vehicleTypeProtocolMappingCorrespondency[vType] = undefined
-      }
-      if (selectedVehicleTypes.includes(vType)) {
-        // @ts-ignore: Enums in TS such
-        controllerStore.vehicleTypeProtocolMappingCorrespondency[vType] = selectedProfile.value.hash
-      }
-    })
-  },
-})
+const selectedProfileAxesCorrespondencies = computed(() => controllerStore.protocolMapping.axesCorrespondencies)
+const selectedProfileButtonsCorrespondencies = computed(() => controllerStore.protocolMapping.buttonsCorrespondencies)
 
 const closeInputMappingDialog = (): void => {
   inputClickedDialog.value = false
@@ -1062,40 +1029,15 @@ const scaledAxisValue = (joystick: Joystick, axisId: JoystickAxis): number => {
   return scale(rawValue, -1, 1, min, max)
 }
 
+const openVehicleDefaultsImportModal = (): void => {
+  interfaceStore.openVehicleDefaultsJoystickImport()
+}
+
 const toggleJoystickEnabling = (joystickModel: string): void => {
   if (controllerStore.disabledJoysticks.includes(joystickModel)) {
     controllerStore.disabledJoysticks = controllerStore.disabledJoysticks.filter((model) => model !== joystickModel)
   } else {
     controllerStore.disabledJoysticks.push(joystickModel)
   }
-}
-
-// Select a profile for viewing without activating it
-const selectProfile = (functionMapping: any): void => {
-  const mappingIndex = controllerStore.protocolMappings.findIndex((p) => p.name === functionMapping.name)
-  if (mappingIndex !== -1) {
-    selectedProfileIndex.value = mappingIndex
-  }
-}
-
-const getVehicleTypesForProfile = (profileHash: string): string[] => {
-  return Object.keys(controllerStore.vehicleTypeProtocolMappingCorrespondency).filter((vType) => {
-    // @ts-ignore: Enums in TS such
-    return controllerStore.vehicleTypeProtocolMappingCorrespondency[vType] === profileHash
-  })
-}
-
-const switchToSelectedProfile = (): void => {
-  showProfileSwitchDialog.value = true
-}
-
-const confirmProfileSwitch = (): void => {
-  controllerStore.loadProtocolMapping(selectedProfile.value)
-  openSnackbar({ message: `Switched to profile '${selectedProfile.value.name}'.`, variant: 'success' })
-  showProfileSwitchDialog.value = false
-}
-
-const cancelProfileSwitch = (): void => {
-  showProfileSwitchDialog.value = false
 }
 </script>

@@ -40,18 +40,9 @@
                 </div>
               </div>
               <v-divider class="w-full opacity-[0.08]" />
-              <div class="flex flex-row w-full items-center justify-between py-5 gap-x-2">
+              <div class="flex flex-row w-full items-center justify-between py-3 gap-x-2 gap-y-3 flex-wrap">
                 <v-btn size="x-small" class="bg-[#FFFFFF22] shadow-1" variant="flat" @click="openTutorial">
                   Show tutorial
-                </v-btn>
-                <v-btn
-                  v-if="isElectron()"
-                  size="x-small"
-                  class="bg-[#FFFFFF22] shadow-1"
-                  variant="flat"
-                  @click="openCockpitFolder"
-                >
-                  Open Cockpit folder
                 </v-btn>
                 <v-btn
                   size="x-small"
@@ -69,6 +60,63 @@
                 >
                   {{ interfaceStore.pirateMode ? 'Disable pirate mode' : 'Enable pirate mode' }}
                 </v-btn>
+                <v-btn size="x-small" class="bg-[#FFFFFF22] shadow-1" variant="flat" @click="openExternalFeaturesModal">
+                  Extension features
+                </v-btn>
+                <v-btn
+                  size="x-small"
+                  class="bg-[#FFFFFF22] shadow-1"
+                  variant="flat"
+                  prepend-icon="mdi-shield-lock-outline"
+                  @click="interfaceStore.isDataPrivacyModalVisible = true"
+                >
+                  Shared Data
+                </v-btn>
+              </div>
+              <v-divider v-if="isElectron()" class="w-full opacity-[0.08]" />
+              <div v-if="isElectron()" class="flex flex-col w-full py-4 gap-1">
+                <span class="text-md mb-1 text-slate-200">Cockpit folder location:</span>
+                <div class="flex items-center gap-6">
+                  <v-tooltip
+                    :text="cockpitFolderPath"
+                    :disabled="cockpitFolderPath !== defaultCockpitFolderPath"
+                    location="bottom"
+                    open-delay="300"
+                  >
+                    <template #activator="{ props: tooltipProps }">
+                      <v-text-field
+                        v-bind="tooltipProps"
+                        :model-value="cockpitFolderPath"
+                        variant="filled"
+                        density="compact"
+                        hide-details
+                        readonly
+                        class="cursor-pointer"
+                        @click="browseCockpitFolder"
+                      >
+                        <template #append-inner>
+                          <v-icon
+                            v-if="cockpitFolderPath !== defaultCockpitFolderPath"
+                            v-tooltip.bottom="'Reset to default folder location'"
+                            color="white"
+                            @click.stop="resetCockpitFolderPath"
+                          >
+                            mdi-restore
+                          </v-icon>
+                        </template>
+                      </v-text-field>
+                    </template>
+                  </v-tooltip>
+                  <v-btn
+                    size="small"
+                    append-icon="mdi-folder-open-outline"
+                    class="bg-[#FFFFFF22] shadow-2"
+                    variant="flat"
+                    @click="openCockpitFolder"
+                  >
+                    Open folder
+                  </v-btn>
+                </div>
               </div>
             </div>
           </template>
@@ -117,7 +165,7 @@
                 >
                   <template #append-inner>
                     <v-icon v-tooltip.bottom="'Reset global address'" color="white" @click="resetGlobalAddress">
-                      mdi-refresh
+                      mdi-restore
                     </v-icon>
                   </template>
                 </v-text-field>
@@ -173,7 +221,7 @@
                         :disabled="!mainVehicleStore.customMAVLink2RestWebsocketURI.enabled"
                         @click="resetMainVehicleConnectionURI"
                       >
-                        mdi-refresh
+                        mdi-restore
                       </v-icon>
                     </template>
                   </v-text-field>
@@ -239,7 +287,7 @@
                         :disabled="!mainVehicleStore.customWebRTCSignallingURI.enabled"
                         @click="resetWebRTCSignallingURI"
                       >
-                        mdi-refresh
+                        mdi-restore
                       </v-icon>
                     </template>
                   </v-text-field>
@@ -274,7 +322,7 @@
             </v-form>
           </template>
         </ExpansiblePanel>
-        <ExpansiblePanel no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
+        <ExpansiblePanel :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Custom WebRTC configuration</template>
           <template #content>
             <div class="flex justify-between mt-2 w-full">
@@ -316,6 +364,167 @@
             </div>
           </template>
         </ExpansiblePanel>
+        <ExpansiblePanel :is-expanded="!interfaceStore.isOnPhoneScreen">
+          <template #title>Generic WebSocket connections</template>
+          <template #info>
+            <div class="w-full">
+              <p>Connect to external WebSocket servers to receive data and inject it into the data-lake.</p>
+              <ul class="list-disc list-inside mt-2">
+                <li>
+                  Messages should be in the format <span class="font-mono">variableName=value</span>, one per message.
+                </li>
+                <li>
+                  You can use data-lake variables to compose the URL, for example:
+                  <span class="font-mono">{{ exampleGenericWebSocketUrl }}</span>
+                </li>
+              </ul>
+            </div>
+          </template>
+          <template #content>
+            <div class="flex flex-col w-full mt-2 pb-8">
+              <!-- Existing connections list -->
+              <div v-if="Object.keys(genericWebSocketConnections).length > 0" class="mb-4">
+                <div
+                  v-for="(conn, url) in genericWebSocketConnections"
+                  :key="url"
+                  class="flex items-center justify-between py-2 px-3 mb-2 rounded bg-[#FFFFFF11]"
+                >
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <v-icon :color="getLoadingStatusColor(conn.status)" size="small">
+                      {{ getLoadingStatusIcon(conn.status) }}
+                    </v-icon>
+                    <span class="truncate text-sm" :title="url">{{ replaceDataLakeInputsInString(url) }}</span>
+                    <span class="text-xs opacity-60">({{ conn.status }})</span>
+                  </div>
+                  <v-btn icon="mdi-close" size="x-small" variant="text" @click="removeGenericWebSocket(url)" />
+                </div>
+              </div>
+              <div v-else class="text-sm opacity-60 mb-4">No connections configured.</div>
+
+              <!-- Add new connection -->
+              <div class="flex justify-start items-center">
+                <v-text-field
+                  v-model="newGenericWebSocketUrl"
+                  variant="outlined"
+                  type="input"
+                  density="compact"
+                  :hint="exampleGenericWebSocketUrl"
+                  hide-details
+                  @keyup.enter="addGenericWebSocket"
+                />
+                <v-btn
+                  :size="interfaceStore.isOnSmallScreen ? 'small' : 'default'"
+                  :disabled="!newGenericWebSocketUrl.trim()"
+                  class="bg-transparent"
+                  :class="interfaceStore.isOnSmallScreen ? 'ml-1' : 'ml-5'"
+                  variant="text"
+                  @click="addGenericWebSocket"
+                >
+                  Add connection
+                </v-btn>
+              </div>
+            </div>
+          </template>
+        </ExpansiblePanel>
+        <ExpansiblePanel no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
+          <template #title>Vehicle connection timeouts</template>
+          <template #info>
+            <p class="w-full">
+              Heartbeat timeout: Time without heartbeats before Cockpit considers the vehicle offline. Increase this
+              value when using high-latency or lossy links (e.g. cellular modems) where heartbeat packets may take
+              longer than the default 5 seconds to arrive. Unrelated to the autopilot's GCS (heartbeat) failsafe.
+            </p>
+            <br />
+            <p class="w-full">
+              Watchdog timeout: Time the MAVLink websocket may stay open without receiving any message before Cockpit
+              forcibly recycles it and reconnects. This is the recovery threshold, not the offline indicator: setting it
+              lower than the heartbeat timeout (above) means a brief link drop can be silently recovered before Cockpit
+              ever flips to "vehicle offline". On high-latency links where short stalls are normal, raise this value so
+              the socket is not torn down on every minor delivery delay.
+            </p>
+          </template>
+          <template #content>
+            <div
+              class="grid w-full mt-2 pb-2 gap-12"
+              :class="interfaceStore.isOnPhoneScreen ? 'grid-cols-1' : 'grid-cols-2'"
+            >
+              <div class="min-w-0">
+                <div class="mb-1 text-sm">Heartbeat timeout</div>
+                <v-form
+                  ref="connectionTimeoutForm"
+                  v-model="connectionTimeoutFormValid"
+                  class="w-full"
+                  @submit.prevent="setConnectionTimeout"
+                >
+                  <div class="flex items-start gap-2">
+                    <v-text-field
+                      v-model.number="newVehicleConnectionTimeoutSeconds"
+                      variant="filled"
+                      type="number"
+                      density="compact"
+                      theme="dark"
+                      class="flex-1"
+                      suffix="s"
+                      :rules="[isValidConnectionTimeout]"
+                    >
+                      <template #append-inner>
+                        <v-icon v-tooltip.bottom="'Reset to default'" color="white" @click="resetConnectionTimeout">
+                          mdi-restore
+                        </v-icon>
+                      </template>
+                    </v-text-field>
+                    <v-btn
+                      :size="interfaceStore.isOnSmallScreen ? 'small' : 'default'"
+                      :disabled="!connectionTimeoutFormValid"
+                      class="bg-transparent mt-1"
+                      variant="text"
+                      type="submit"
+                    >
+                      Apply
+                    </v-btn>
+                  </div>
+                </v-form>
+              </div>
+              <div class="min-w-0">
+                <div class="mb-1 text-sm">Watchdog timeout</div>
+                <v-form
+                  ref="watchdogTimeoutForm"
+                  v-model="watchdogTimeoutFormValid"
+                  class="w-full"
+                  @submit.prevent="setWatchdogTimeout"
+                >
+                  <div class="flex items-start gap-2">
+                    <v-text-field
+                      v-model.number="newVehicleConnectionWatchdogTimeoutSeconds"
+                      variant="filled"
+                      type="number"
+                      density="compact"
+                      theme="dark"
+                      class="flex-1"
+                      suffix="s"
+                      :rules="[isValidWatchdogTimeout]"
+                    >
+                      <template #append-inner>
+                        <v-icon v-tooltip.bottom="'Reset to default'" color="white" @click="resetWatchdogTimeout">
+                          mdi-restore
+                        </v-icon>
+                      </template>
+                    </v-text-field>
+                    <v-btn
+                      :size="interfaceStore.isOnSmallScreen ? 'small' : 'default'"
+                      :disabled="!watchdogTimeoutFormValid"
+                      class="bg-transparent mt-1"
+                      variant="text"
+                      type="submit"
+                    >
+                      Apply
+                    </v-btn>
+                  </div>
+                </v-form>
+              </div>
+            </div>
+          </template>
+        </ExpansiblePanel>
       </div>
     </template>
   </BaseConfigurationView>
@@ -324,17 +533,25 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { defaultGlobalAddress } from '@/assets/defaults'
 import ManageCockpitSettings from '@/components/configuration/CockpitSettingsManager.vue'
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import VehicleDiscoveryDialog from '@/components/VehicleDiscoveryDialog.vue'
+import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useSnackbar } from '@/composables/snackbar'
 import * as Connection from '@/libs/connection/connection'
 import { ConnectionManager } from '@/libs/connection/connection-manager'
-import { isValidNetworkAddress } from '@/libs/utils'
-import { isElectron } from '@/libs/utils'
+import {
+  addGenericWebSocketConnection,
+  GenericWebSocketConnection,
+  listenToGenericWebSocketConnections,
+  removeGenericWebSocketConnection,
+} from '@/libs/generic-websocket'
+import { isElectron, isValidNetworkAddress } from '@/libs/utils'
+import { getLoadingStatusColor, getLoadingStatusIcon } from '@/libs/utils/ui'
+import { replaceDataLakeInputsInString } from '@/libs/utils-data-lake'
 import { reloadCockpitAndWarnUser } from '@/libs/utils-vue'
 import * as Protocol from '@/libs/vehicle/protocol/protocol'
 import { useAppInterfaceStore } from '@/stores/appInterface'
@@ -347,11 +564,75 @@ const mainVehicleStore = useMainVehicleStore()
 const interfaceStore = useAppInterfaceStore()
 const missionStore = useMissionStore()
 const { openSnackbar } = useSnackbar()
+const { showDialog, closeDialog } = useInteractionDialog()
 
 const globalAddressForm = ref()
 const globalAddressFormValid = ref(false)
 const newGlobalAddress = ref(mainVehicleStore.globalAddress)
 const showCockpitSettingsDialog = ref(false)
+
+const cockpitFolderPath = ref('')
+const defaultCockpitFolderPath = ref('')
+
+const loadCockpitFolderPath = async (): Promise<void> => {
+  if (!isElectron() || !window.electronAPI) return
+  cockpitFolderPath.value = await window.electronAPI.getCockpitFolderPath()
+  defaultCockpitFolderPath.value = await window.electronAPI.getDefaultCockpitFolderPath()
+}
+
+const applyFolderPath = async (path: string): Promise<void> => {
+  if (!window.electronAPI) return
+  await window.electronAPI.setCockpitFolderPath(path)
+  cockpitFolderPath.value = path
+}
+
+const browseCockpitFolder = async (): Promise<void> => {
+  if (!window.electronAPI) return
+  const selected = await window.electronAPI.selectCockpitFolder()
+  if (!selected) return
+
+  const folderName = selected.split(/[/\\]/).filter(Boolean).pop()
+  if (folderName === 'Cockpit') {
+    await applyFolderPath(selected)
+    return
+  }
+
+  const selectedName = selected.split(/[/\\]/).filter(Boolean).pop() ?? ''
+  showDialog({
+    title: 'Cockpit folder location',
+    message:
+      `The selected folder is not named "Cockpit". Would you like to use ` +
+      `${selected} directly, or create and use a Cockpit subfolder inside it?`,
+    variant: 'info',
+    persistent: true,
+    maxWidth: 700,
+    actions: [
+      { text: 'Cancel', size: 'small', action: () => closeDialog() },
+      {
+        text: `Use ${selectedName}`,
+        size: 'small',
+        action: () => {
+          closeDialog()
+          applyFolderPath(selected)
+        },
+      },
+      {
+        text: `Use ${selectedName}/Cockpit`,
+        size: 'small',
+        action: () => {
+          closeDialog()
+          applyFolderPath(`${selected}/Cockpit`)
+        },
+      },
+    ],
+  })
+}
+
+const resetCockpitFolderPath = async (): Promise<void> => {
+  if (!window.electronAPI) return
+  await window.electronAPI.setCockpitFolderPath(defaultCockpitFolderPath.value)
+  cockpitFolderPath.value = defaultCockpitFolderPath.value
+}
 
 const setGlobalAddress = async (): Promise<void> => {
   await globalAddressForm.value.validate()
@@ -366,7 +647,7 @@ const setGlobalAddress = async (): Promise<void> => {
 
   // Temporary solution to actually set the address and connect the vehicle, since this is non-reactive today.
   // TODO: Modify the store variables to be reactive.
-  reloadCockpitAndWarnUser(3000)
+  reloadCockpitAndWarnUser()
 }
 
 const resetGlobalAddress = async (): Promise<void> => {
@@ -398,7 +679,9 @@ const addNewVehicleConnection = async (conn: Connection.URI): Promise<void> => {
   vehicleConnected.value = undefined
   setTimeout(() => (vehicleConnected.value ??= false), 5000)
   try {
-    ConnectionManager.addConnection(new Connection.URI(conn), Protocol.Type.MAVLink)
+    ConnectionManager.addConnection(new Connection.URI(conn), Protocol.Type.MAVLink, {
+      websocket: { getWatchdogTimeoutMs: () => mainVehicleStore.vehicleConnectionWatchdogTimeoutMs },
+    })
   } catch (error) {
     console.error(error)
     alert(`Could not update main connection. ${error}.`)
@@ -456,7 +739,7 @@ const addWebRTCConnection = async (conn: Connection.URI): Promise<void> => {
   // Temporary solution to actually set WebRTC URI, since right now we cannot just make reactive because streams will
   // be kept open.
   // TODO: handle video stream re connection
-  reloadCockpitAndWarnUser(3000)
+  reloadCockpitAndWarnUser()
 }
 
 watch(
@@ -490,6 +773,78 @@ const resetWebRTCSignallingURI = (): void => {
     enabled: false,
     data: mainVehicleStore.defaultWebRTCSignallingURI.toString(),
   }
+}
+
+/** Vehicle connection timeout */
+
+const defaultVehicleConnectionTimeoutSeconds = 5
+const minVehicleConnectionTimeoutSeconds = 1
+
+const connectionTimeoutForm = ref()
+const connectionTimeoutFormValid = ref(true)
+const vehicleConnectionTimeoutSeconds = computed(
+  () => Math.round(mainVehicleStore.vehicleConnectionTimeoutMs / 100) / 10
+)
+const newVehicleConnectionTimeoutSeconds = ref<number>(vehicleConnectionTimeoutSeconds.value)
+
+watch(vehicleConnectionTimeoutSeconds, (value) => (newVehicleConnectionTimeoutSeconds.value = value))
+
+const isValidConnectionTimeout = (value: number | string): boolean | string => {
+  const numericValue = typeof value === 'string' ? Number(value) : value
+  if (!Number.isFinite(numericValue)) return 'Timeout must be a valid number.'
+  if (numericValue < minVehicleConnectionTimeoutSeconds) {
+    return `Minimum timeout is ${minVehicleConnectionTimeoutSeconds} s.`
+  }
+  return true
+}
+
+const setConnectionTimeout = async (): Promise<void> => {
+  const validation = await connectionTimeoutForm.value.validate()
+  if (!validation.valid) return
+
+  mainVehicleStore.vehicleConnectionTimeoutMs = Math.round(newVehicleConnectionTimeoutSeconds.value * 1000)
+}
+
+const resetConnectionTimeout = (): void => {
+  newVehicleConnectionTimeoutSeconds.value = defaultVehicleConnectionTimeoutSeconds
+  mainVehicleStore.vehicleConnectionTimeoutMs = defaultVehicleConnectionTimeoutSeconds * 1000
+}
+
+/** Reconnection watchdog timeout */
+
+const defaultVehicleConnectionWatchdogTimeoutSeconds = 4
+const minVehicleConnectionWatchdogTimeoutSeconds = 1
+
+const watchdogTimeoutForm = ref()
+const watchdogTimeoutFormValid = ref(true)
+const vehicleConnectionWatchdogTimeoutSeconds = computed(
+  () => Math.round(mainVehicleStore.vehicleConnectionWatchdogTimeoutMs / 100) / 10
+)
+const newVehicleConnectionWatchdogTimeoutSeconds = ref<number>(vehicleConnectionWatchdogTimeoutSeconds.value)
+
+watch(vehicleConnectionWatchdogTimeoutSeconds, (value) => (newVehicleConnectionWatchdogTimeoutSeconds.value = value))
+
+const isValidWatchdogTimeout = (value: number | string): boolean | string => {
+  const numericValue = typeof value === 'string' ? Number(value) : value
+  if (!Number.isFinite(numericValue)) return 'Must be a valid number.'
+  if (numericValue < minVehicleConnectionWatchdogTimeoutSeconds) {
+    return `Minimum timeout is ${minVehicleConnectionWatchdogTimeoutSeconds} s.`
+  }
+  return true
+}
+
+const setWatchdogTimeout = async (): Promise<void> => {
+  const validation = await watchdogTimeoutForm.value.validate()
+  if (!validation.valid) return
+
+  mainVehicleStore.vehicleConnectionWatchdogTimeoutMs = Math.round(
+    newVehicleConnectionWatchdogTimeoutSeconds.value * 1000
+  )
+}
+
+const resetWatchdogTimeout = (): void => {
+  newVehicleConnectionWatchdogTimeoutSeconds.value = defaultVehicleConnectionWatchdogTimeoutSeconds
+  mainVehicleStore.vehicleConnectionWatchdogTimeoutMs = defaultVehicleConnectionWatchdogTimeoutSeconds * 1000
 }
 
 const isValidHostAddress = (value: string): boolean | string => {
@@ -539,7 +894,7 @@ const updateWebRtcConfiguration = (): void => {
   try {
     const newConfig = JSON.parse(customRtcConfiguration.value)
     mainVehicleStore.customWebRTCConfiguration.data = newConfig
-    reloadCockpitAndWarnUser(3000)
+    reloadCockpitAndWarnUser()
   } catch (error) {
     alert(`Could not update WebRTC configuration. ${error}.`)
   }
@@ -563,13 +918,49 @@ const openTutorial = (): void => {
   interfaceStore.isTutorialVisible = true
 }
 
+const openExternalFeaturesModal = (): void => {
+  interfaceStore.isMainMenuVisible = false
+  interfaceStore.mainMenuCurrentStep = 1
+  interfaceStore.currentSubMenuName = null
+  interfaceStore.currentSubMenuComponentName = null
+  interfaceStore.isExternalFeaturesModalVisible = true
+}
+
 watch(customRtcConfiguration, () => tryToPrettifyRtcConfig())
 
+const showDiscoveryDialog = ref(false)
+
+// Generic WebSocket connections
+const exampleGenericWebSocketUrl = 'ws://{{ vehicle-address }}:1234'
+const genericWebSocketConnections = ref<Record<string, GenericWebSocketConnection>>({})
+const newGenericWebSocketUrl = ref(exampleGenericWebSocketUrl)
+let unsubscribeGenericWebSocket: (() => void) | null = null
+
 onMounted(() => {
+  loadCockpitFolderPath()
   tryToPrettifyRtcConfig()
+  unsubscribeGenericWebSocket = listenToGenericWebSocketConnections((connections) => {
+    genericWebSocketConnections.value = connections
+  })
 })
 
-const showDiscoveryDialog = ref(false)
+onUnmounted(() => {
+  if (unsubscribeGenericWebSocket) {
+    unsubscribeGenericWebSocket()
+  }
+})
+
+const addGenericWebSocket = (): void => {
+  const url = newGenericWebSocketUrl.value.trim()
+  if (!url) return
+
+  addGenericWebSocketConnection(url)
+  newGenericWebSocketUrl.value = ''
+}
+
+const removeGenericWebSocket = (url: string): void => {
+  removeGenericWebSocketConnection(url)
+}
 
 const openCockpitFolder = (): void => {
   if (isElectron() && window.electronAPI) {

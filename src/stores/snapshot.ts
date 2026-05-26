@@ -9,10 +9,11 @@ import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
 import { app_version } from '@/libs/cosmos'
 import { availableCockpitActions, registerActionCallback } from '@/libs/joystick/protocols/cockpit-actions'
-import { isElectron } from '@/libs/utils'
+import { isElectron, sanitizeFilenameComponent } from '@/libs/utils'
 import { snapshotStorage, snapshotThumbStorage } from '@/libs/videoStorage'
+import { useMissionStore } from '@/stores/mission'
 import { StorageDB } from '@/types/general'
-import { EIXFType, SnapshotExif, SnapshotFileDescriptor } from '@/types/snapshot'
+import { EIXFType, SnapshotExif, SnapshotFileDescriptor, SnapshotResult } from '@/types/snapshot'
 import { DownloadProgressCallback, FileDescriptor } from '@/types/video'
 
 import { useMainVehicleStore } from './mainVehicle'
@@ -21,6 +22,7 @@ import { useVideoStore } from './video'
 export const useSnapshotStore = defineStore('snapshot', () => {
   const videoStore = useVideoStore()
   const vehicleStore = useMainVehicleStore()
+  const missionStore = useMissionStore()
   const { showDialog } = useInteractionDialog()
 
   const zipMultipleFiles = useBlueOsStorage('cockpit-zip-multiple-video-files', false)
@@ -106,6 +108,15 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     const mediaStream = videoStore.getMediaStream(streamName)
     if (!mediaStream) return Promise.reject(new Error(`Media stream not found for stream name: ${streamName}`))
 
+    const track = mediaStream.getVideoTracks()[0]
+    if (!track) return Promise.reject(new Error(`No video track found for stream '${streamName}'`))
+    if (track.readyState === 'ended') {
+      return Promise.reject(new Error(`Video track for stream '${streamName}' has ended`))
+    }
+    if (track.muted) {
+      return Promise.reject(new Error(`Video track for stream '${streamName}' is muted (no data flowing)`))
+    }
+
     const video = document.createElement('video')
     video.srcObject = mediaStream
     video.playsInline = true
@@ -114,7 +125,6 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     document.body.appendChild(video)
 
     await video.play()
-    const track = mediaStream.getVideoTracks()[0]
     const { width = video.videoWidth, height = video.videoHeight } = track.getSettings()
     video.width = width
     video.height = height
@@ -149,9 +159,11 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     return new Blob([pngBuffer], { type: 'image/png' })
   }
 
-  const snapshotFilename = (streamName: string): string => {
-    const timestamp = format(new Date(), 'LLL dd, yyyy - HH꞉mm꞉ss O')
-    return `(${timestamp})_Cockpit_${streamName}.jpeg`
+  const snapshotFilename = (streamName: string, missionName = 'Cockpit'): string => {
+    const timeString = format(new Date(), 'LLL dd, yyyy - HH꞉mm꞉ss O')
+    const safeMissionName = sanitizeFilenameComponent(missionName) || 'Cockpit'
+    const safeStreamName = sanitizeFilenameComponent(streamName) || 'workspace'
+    return `${safeMissionName} (${timeString}) #${safeStreamName}.jpeg`
   }
 
   const createThumbnail = (blob: Blob, width: number, height: number): Promise<Blob> => {
@@ -185,9 +197,19 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     })
   }
 
-  const takeSnapshot = async (streamNames: string[], captureWorkspace?: boolean): Promise<void> => {
+  /**
+   * Captures snapshots from the given streams and optionally the workspace.
+   * @param {string[]} streamNames - Names of the video streams to capture
+   * @param {boolean} captureWorkspace - Whether to also capture the Cockpit workspace
+   * @returns {{ succeeded: string[]; failed: string[] }} Per-source capture results
+   */
+  const takeSnapshot = async (streamNames: string[], captureWorkspace?: boolean): Promise<SnapshotResult> => {
     const { yaw, pitch, roll } = vehicleStore.attitude
     const { latitude, longitude } = vehicleStore.coordinates
+    const missionName = missionStore.missionName || 'Cockpit'
+
+    const succeeded: string[] = []
+    const failed: string[] = []
 
     if (captureWorkspace) {
       if (isElectron() && window.electronAPI) {
@@ -203,33 +225,40 @@ export const useSnapshotStore = defineStore('snapshot', () => {
             height: window.innerHeight,
           })
           wsBlob = await maybeEmbedExif(wsBlob, wsExif)
-          await snapshotStorage.setItem(snapshotFilename('workspace'), wsBlob)
-        } catch (err) {
-          throw err as Error
-        }
-      } else {
-        throw new Error('Workspace capture requires Electron')
-      }
-    }
-
-    if (streamNames.length > 0) {
-      for (const streamName of streamNames) {
-        try {
-          let stBlob = await captureStreamFrame(streamName)
-          const thumbBlob = await createThumbnail(stBlob, 200, 113)
-          const { width, height } = videoStore.getMediaStream(streamName)?.getVideoTracks()[0].getSettings() || {}
-          const stExif = buildExif({ latitude, longitude, yaw, pitch, roll, width, height })
-          stBlob = await maybeEmbedExif(stBlob, stExif)
-          const filename = snapshotFilename(streamName.replace(/[\\/]/g, '_') || 'workspace')
-          const thumbFilename = snapshotFilename(streamName.replace(/[\\/]/g, '_') || 'workspace') + '-thumb'
-
-          await snapshotStorage.setItem(filename, stBlob)
+          const thumbBlob = await createThumbnail(wsBlob, 200, 113)
+          const filename = snapshotFilename('workspace', missionName)
+          const thumbFilename = filename + '-thumb'
+          await snapshotStorage.setItem(filename, wsBlob)
           await snapshotThumbStorage.setItem(thumbFilename, thumbBlob)
+          succeeded.push('workspace')
         } catch (err) {
-          throw err as Error
+          console.error('Failed to capture workspace snapshot:', err)
+          failed.push('workspace')
         }
       }
     }
+
+    for (const streamName of streamNames) {
+      try {
+        let stBlob = await captureStreamFrame(streamName)
+        const thumbBlob = await createThumbnail(stBlob, 200, 113)
+        const { width, height } = videoStore.getMediaStream(streamName)?.getVideoTracks()[0].getSettings() || {}
+        const stExif = buildExif({ latitude, longitude, yaw, pitch, roll, width, height })
+        stBlob = await maybeEmbedExif(stBlob, stExif)
+        const internalStreamName = videoStore.internalStreamNameFromExternal(streamName) ?? streamName
+        const filename = snapshotFilename(internalStreamName, missionName)
+        const thumbFilename = filename + '-thumb'
+
+        await snapshotStorage.setItem(filename, stBlob)
+        await snapshotThumbStorage.setItem(thumbFilename, thumbBlob)
+        succeeded.push(streamName)
+      } catch (err) {
+        console.error(`Failed to capture snapshot for stream '${streamName}':`, err)
+        failed.push(streamName)
+      }
+    }
+
+    return { succeeded, failed }
   }
 
   const createZipAndDownload = async (
@@ -295,12 +324,15 @@ export const useSnapshotStore = defineStore('snapshot', () => {
   }
 
   const takeSnapshotAction = async (): Promise<void> => {
-    try {
-      // Take a snapshot of all available streams
-      await takeSnapshot(videoStore.namesAvailableStreams, isElectron())
-      console.log('Snapshot taken successfully via action')
-    } catch (error) {
-      console.error('Error taking snapshot via action:', error)
+    const activeStreams = videoStore.namesAvailableStreams.filter(
+      (name: string) => !videoStore.ignoredStreamExternalIds.includes(name)
+    )
+    const { succeeded, failed } = await takeSnapshot(activeStreams, isElectron())
+    if (failed.length > 0) {
+      console.error(`Snapshot action failed for: ${failed.join(', ')}`)
+    }
+    if (succeeded.length > 0) {
+      console.log(`Snapshot taken successfully via action for: ${succeeded.join(', ')}`)
     }
   }
 
@@ -310,6 +342,7 @@ export const useSnapshotStore = defineStore('snapshot', () => {
   return {
     snapshotStorage,
     snapshotThumbStorage,
+    createThumbnail,
     downloadFilesFromSnapshotDB,
     snapshotFilename,
     takeSnapshot,

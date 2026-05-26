@@ -3,7 +3,7 @@
     <template #title>Development configuration</template>
     <template #content>
       <div
-        class="max-h-[85vh] overflow-y-auto -mr-4"
+        class="max-h-[85vh] overflow-y-auto -mr-2 mb-2"
         :class="interfaceStore.isOnSmallScreen ? 'max-w-[85vw]' : 'max-w-[50vw]'"
       >
         <div
@@ -24,15 +24,7 @@
               color="white"
               hide-details
               class="min-w-[155px]"
-              @update:model-value="reloadCockpitAndWarnUser"
-            />
-            <v-switch
-              v-model="devStore.enableUsageStatisticsTelemetry"
-              label="Usage statistics telemetry"
-              color="white"
-              hide-details
-              class="min-w-[155px]"
-              @update:model-value="reloadCockpitAndWarnUser"
+              @update:model-value="reloadCockpitAndWarnUser()"
             />
             <v-switch
               v-model="devStore.enableSystemLogging"
@@ -40,7 +32,7 @@
               color="white"
               hide-details
               class="min-w-[155px]"
-              @update:model-value="reloadCockpitAndWarnUser"
+              @update:model-value="reloadCockpitAndWarnUser()"
             />
           </div>
           <div class="flex flex-row w-full justify-start gap-x-[40px]">
@@ -63,7 +55,7 @@
             thumb-label="hover"
           />
         </div>
-        <ExpansiblePanel :is-expanded="!interfaceStore.isOnPhoneScreen">
+        <ExpansiblePanel :is-expanded="!interfaceStore.isOnPhoneScreen" no-bottom-divider>
           <template #title>
             <div class="flex justify-between">
               <span>System logs</span>
@@ -82,8 +74,20 @@
               density="compact"
               theme="dark"
               :headers="headers"
-              class="w-full max-h-[60%] rounded-md bg-[#FFFFFF11]"
+              class="bg-[#FFFFFF11] rounded-lg"
             >
+              <template #item.name="{ item }">
+                <div class="flex items-center gap-2">
+                  <span>{{ item.name }}</span>
+                  <div v-if="item.isCurrentSession" class="current-session-indicator" />
+                </div>
+              </template>
+              <template #item.dateTimeMs="{ item }">
+                {{ item.dateTimeFormatted }}
+              </template>
+              <template #item.sizeBytes="{ item }">
+                {{ item.sizeFormatted }}
+              </template>
               <template #item.actions="{ item }">
                 <div class="flex justify-center space-x-2">
                   <div class="cursor-pointer icon-btn mdi mdi-download" @click="downloadLog(item.name)" />
@@ -104,12 +108,18 @@
 
 import { parse } from 'date-fns'
 import { saveAs } from 'file-saver'
-import { onBeforeMount } from 'vue'
+import { onBeforeMount, onBeforeUnmount } from 'vue'
 import { ref } from 'vue'
 
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
-import { type SystemLog, cockpitSytemLogsDB, systemLogDateTimeFormat } from '@/libs/system-logging'
-import { isElectron } from '@/libs/utils'
+import {
+  type SystemLog,
+  cockpitSytemLogsDB,
+  getCurrentSessionLogFileName,
+  getCurrentSessionLogInfo,
+  systemLogDateTimeFormat,
+} from '@/libs/system-logging'
+import { formatBytes, isElectron } from '@/libs/utils'
 import { reloadCockpitAndWarnUser } from '@/libs/utils-vue'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useDevelopmentStore } from '@/stores/development'
@@ -121,28 +131,86 @@ const interfaceStore = useAppInterfaceStore()
 /* eslint-disable jsdoc/require-jsdoc */
 interface SystemLogsData {
   name: string
-  initialTime: string
-  initialDate: string
-  nEvents: number
+  dateTimeFormatted: string
+  sizeFormatted: string
+  sizeBytes: number
+  dateTimeMs: number
+  isCurrentSession: boolean
 }
 /* eslint-enable jsdoc/require-jsdoc */
 
 const systemLogsData = ref<SystemLogsData[]>([])
 const isRunningInElectron = isElectron()
+const currentSessionLogFileName = ref<string | null>(null)
+let updateInterval: ReturnType<typeof setInterval> | null = null
+
+/* eslint-disable jsdoc/require-jsdoc */
+interface CurrentLogInfo {
+  fileName: string
+  size: number
+}
+/* eslint-enable jsdoc/require-jsdoc */
 
 const headers = [
-  { title: 'Name', value: 'name' },
-  { title: 'Time (initial)', value: 'initialTime' },
-  { title: 'Date (initial)', value: 'initialDate' },
-  { title: 'events', value: 'nEvents' },
-  { title: 'Download', value: 'actions' },
+  { title: 'Name', key: 'name', sortable: false },
+  { title: 'Date/Time', key: 'dateTimeMs', sortable: true },
+  { title: 'Size', key: 'sizeBytes', sortable: true },
+  { title: 'Actions', key: 'actions', sortable: false },
 ]
 
+const updateCurrentSessionLogSize = async (): Promise<void> => {
+  if (!currentSessionLogFileName.value) {
+    return
+  }
+
+  try {
+    let logInfo: CurrentLogInfo | null = null
+
+    if (isRunningInElectron) {
+      // Get current log info (name and size) directly
+      logInfo = (await window.electronAPI?.getCurrentElectronLogInfo()) ?? null
+    } else {
+      // Get current log info from IndexedDB
+      logInfo = await getCurrentSessionLogInfo()
+    }
+
+    if (logInfo && logInfo.fileName === currentSessionLogFileName.value) {
+      // Update the size in systemLogsData
+      const index = systemLogsData.value.findIndex((log) => log.name === currentSessionLogFileName.value)
+      if (index !== -1) {
+        systemLogsData.value[index].sizeBytes = logInfo.size
+        if (isRunningInElectron) {
+          systemLogsData.value[index].sizeFormatted = formatBytes(logInfo.size)
+        } else {
+          // For web version, show event count
+          systemLogsData.value[index].sizeFormatted = `${logInfo.size} event${logInfo.size !== 1 ? 's' : ''}`
+        }
+      }
+    }
+  } catch (error) {
+    // Silently fail - don't spam console with errors
+  }
+}
+
 onBeforeMount(async () => {
+  // Get the current session's log file name
   if (isRunningInElectron) {
+    const logInfo = await window.electronAPI?.getCurrentElectronLogInfo()
+    currentSessionLogFileName.value = logInfo?.fileName ?? null
     await loadElectronLogs()
   } else {
+    currentSessionLogFileName.value = getCurrentSessionLogFileName()
     await loadIndexedDBLogs()
+  }
+
+  // Start updating the current session log size every second
+  updateInterval = setInterval(updateCurrentSessionLogSize, 1000)
+})
+
+onBeforeUnmount(() => {
+  if (updateInterval) {
+    clearInterval(updateInterval)
+    updateInterval = null
   }
 })
 
@@ -150,12 +218,19 @@ const loadElectronLogs = async (): Promise<void> => {
   try {
     const electronLogs = await window.electronAPI?.getElectronLogs()
     if (electronLogs) {
-      const logs = electronLogs.map((log) => ({
-        name: log.path,
-        initialTime: log.initialTime,
-        initialDate: log.initialDate,
-        nEvents: log.content.split('\n').filter((line) => line.trim()).length,
-      }))
+      const dateTimeFormatWithoutOffset = systemLogDateTimeFormat.replace(' O', '')
+      const logs = electronLogs.map((log) => {
+        const dateTimeString = log.path.split('(')[1]?.split(' GMT')[0] ?? ''
+        const dateTime = parse(dateTimeString, dateTimeFormatWithoutOffset, new Date())
+        return {
+          name: log.path,
+          dateTimeFormatted: `${log.initialDate} - ${log.initialTime}`,
+          sizeFormatted: formatBytes(log.size),
+          sizeBytes: log.size,
+          dateTimeMs: dateTime.getTime(),
+          isCurrentSession: log.path === currentSessionLogFileName.value,
+        }
+      })
       systemLogsData.value = getSortedLogs(logs)
     }
   } catch (error) {
@@ -164,27 +239,27 @@ const loadElectronLogs = async (): Promise<void> => {
 }
 
 const loadIndexedDBLogs = async (): Promise<void> => {
-  const logs = []
+  const logs: SystemLogsData[] = []
+  const dateTimeFormatWithoutOffset = systemLogDateTimeFormat.replace(' O', '')
   await cockpitSytemLogsDB.iterate((log: SystemLog, logName) => {
+    // Use event count for web version (lighter than estimating size)
+    const eventCount = log.events.length
+    const dateTimeString = logName.split('(')[1]?.split(' GMT')[0] ?? ''
+    const dateTime = parse(dateTimeString, dateTimeFormatWithoutOffset, new Date())
     logs.push({
       name: logName,
-      initialTime: log.initialTime,
-      initialDate: log.initialDate,
-      nEvents: log.events.length,
+      dateTimeFormatted: `${log.initialDate} - ${log.initialTime}`,
+      sizeFormatted: `${eventCount} event${eventCount !== 1 ? 's' : ''}`,
+      sizeBytes: eventCount, // Use event count for sorting
+      dateTimeMs: dateTime.getTime(),
+      isCurrentSession: logName === currentSessionLogFileName.value,
     })
   })
   systemLogsData.value = getSortedLogs(logs)
 }
 
 const getSortedLogs = (logs: SystemLogsData[]): SystemLogsData[] => {
-  return logs.sort((a, b) => {
-    const dateTimeFormatWithoutOffset = systemLogDateTimeFormat.replace(' O', '')
-    const stringDateTimeA = a.name.split('(')[1].split(' GMT')[0]
-    const stringDateTimeB = b.name.split('(')[1].split(' GMT')[0]
-    const dateTimeA = parse(stringDateTimeA, dateTimeFormatWithoutOffset, new Date())
-    const dateTimeB = parse(stringDateTimeB, dateTimeFormatWithoutOffset, new Date())
-    return dateTimeB.getTime() - dateTimeA.getTime()
-  })
+  return logs.sort((a, b) => b.dateTimeMs - a.dateTimeMs)
 }
 
 const downloadLog = async (logName: string): Promise<void> => {
@@ -279,5 +354,24 @@ const deleteOldLogsFromDB = async (): Promise<void> => {
 .custom-header {
   background-color: #333 !important;
   color: #fff;
+}
+
+.current-session-indicator {
+  width: 8px;
+  height: 8px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 </style>

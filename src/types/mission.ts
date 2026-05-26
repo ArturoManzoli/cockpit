@@ -147,6 +147,10 @@ export type CockpitMission = {
    * The waypoints of the mission
    */
   waypoints: Waypoint[]
+  /**
+   * Survey data associated with this mission.
+   */
+  surveys?: Survey[]
 }
 
 /**
@@ -170,9 +174,30 @@ export interface Survey {
    */
   surveyLinesAngle: number
   /**
+   * Distance in meters to extend (positive) or inset (negative) from the polygon boundary before
+   * the vehicle turns. Positive values fly past the edges; negative values keep the vehicle away.
+   */
+  turnaroundDistance: number
+  /**
    * Executable mission waypoints.
    */
   waypoints: Waypoint[]
+}
+
+/**
+ * Result of survey path generation, containing the full flight path
+ * and optional turnaround segments at the polygon boundary.
+ */
+export interface SurveyPath {
+  /**
+   * The full continuous flight path including turnaround extensions or insets.
+   */
+  path: L.LatLng[]
+  /**
+   * Polyline segments representing the turnaround portions at the polygon boundary.
+   * Each entry is a polyline connecting boundary ↔ turnaround points.
+   */
+  turnaroundSegments: L.LatLng[][]
 }
 
 // TODO - Replace leaflet types with agnostic types
@@ -258,6 +283,120 @@ export interface PointOfInterest {
   timestamp: number
 }
 
+/**
+ * CSS style properties for positioning a POI marker inside HUD components
+ */
+export interface PoiMarkerStyle {
+  /**
+   * Left position in pixels
+   */
+  left: string
+  /**
+   * Top position in pixels
+   */
+  top: string
+  /**
+   * CSS transform property
+   */
+  transform: string
+  /**
+   * Z-index for the marker
+   */
+  zIndex?: string
+}
+
+/**
+ * Extended PointOfInterest interface with UI-specific rendering properties for use on HUD components
+ */
+export interface PoiMarker extends Omit<PointOfInterest, 'id' | 'description' | 'timestamp' | 'coordinates'> {
+  /**
+   * POI identifier (alias for PointOfInterest.id)
+   */
+  poiId: string
+  /**
+   * Size of the marker icon in pixels
+   */
+  size: number
+  /**
+   * Text to display for the distance to the POI
+   */
+  distanceText: string
+  /**
+   * Font size for the distance label in pixels
+   */
+  distanceFontSize: number
+  /**
+   * Opacity of the distance label (0-1 as string)
+   */
+  distanceLabelOpacity?: string
+  /**
+   * Z-index of the distance label
+   */
+  distanceLabelZIndex?: string
+  /**
+   * Whether the POI has been reached (within 1 meter)
+   */
+  isReached?: boolean
+  /**
+   * CSS style properties for positioning the marker on the HUD
+   */
+  style: PoiMarkerStyle
+}
+
+/**
+ * Information about a highlighted POI marker
+ */
+export interface HighlightedPoiMarker {
+  /**
+   * POI identifier
+   */
+  poiId: string
+  /**
+   * Timestamp when the marker was highlighted
+   */
+  highlightedAt: number
+  /**
+   * Timestamp when the highlight expires
+   */
+  expiresAt: number
+}
+
+/**
+ * Display information for a highlighted POI marker shown on the HUD side
+ */
+export interface HighlightedPoiMarkerDisplay {
+  /**
+   * Name of the POI
+   */
+  name: string
+  /**
+   * Text to display for the distance to the POI
+   */
+  distanceText: string
+  /**
+   * Whether the POI has been reached (within 1 meter)
+   */
+  isReached?: boolean
+}
+
+/**
+ * Information about a reached POI marker
+ */
+export interface ReachedPoiMarker {
+  /**
+   * POI identifier
+   */
+  poiId: string
+  /**
+   * Timestamp when the POI was reached
+   */
+  reachedAt: number
+  /**
+   * Timestamp when the reached status expires
+   */
+  expiresAt: number
+}
+
 export type ClosestSegmentInfo = {
   /**
    * Index of the segment in the polyline.
@@ -339,3 +478,122 @@ export interface VehicleMissionEstimate {
  * Types of map tile providers supported.
  */
 export type MapTileProvider = 'Esri World Imagery' | 'OpenStreetMap'
+
+/**
+ * User preference for the default map tile provider.
+ * When set to 'Use last selected', the map opens with the last provider the user picked via the map's layer control.
+ * Otherwise, the map is forced to open with the specified provider.
+ */
+export type MapTileProviderPreference = MapTileProvider | 'Use last selected'
+
+export type IconDimensions = {
+  /**
+   * The size of the icon in pixels
+   */
+  iconSize: [number, number]
+  /**
+   * The anchor point of the icon in pixels
+   */
+  iconAnchor: [number, number]
+}
+
+export type MarkerSizes = 'xs' | 'sm' | 'md'
+// POI Edge Arrows - Show arrows for POIs that are out of view
+/**
+ *
+ */
+export interface PoiEdgeArrow {
+  /**
+   * Unique identification for the POI.
+   */
+  poiId: string
+  /**
+   * CSS style object for the arrow.
+   */
+  style: {
+    /**
+     * Top position of the arrow.
+     */
+    top?: string
+    /**
+     * Bottom position of the arrow.
+     */
+    bottom?: string
+    /**
+     * Left position of the arrow.
+     */
+    left?: string
+    /**
+     * Right position of the arrow.
+     */
+    right?: string
+    /**
+     * Transform property for the arrow.
+     */
+    transform?: string
+    /**
+     * Margin around the arrow.
+     */
+    margin?: string
+  }
+  /**
+   * Angle of the arrow.
+   */
+  angle: number
+  /**
+   * Tooltip text for the arrow.
+   */
+  tooltipText: string
+  /**
+   *
+   */
+  color: string
+  /**
+   * MDI icon class for the POI.
+   */
+  icon: string
+}
+
+export type Edge = 'top' | 'bottom' | 'left' | 'right'
+
+// Edge intersection type for the edges of the map
+export type EdgeIntersection = {
+  /**
+   * Intersection parameter
+   */
+  t: number
+  /**
+   * Edge name
+   */
+  edge: Edge
+  /**
+   * X coordinate
+   */
+  x: number
+  /**
+   * Y coordinate
+   */
+  y: number
+}
+
+/**
+ * Edge arrow for a generic target (vehicle, home waypoint, or a second vehicle).
+ */
+export interface TargetEdgeArrow {
+  /**
+   * CSS style object for the arrow.
+   */
+  style: PoiEdgeArrow['style']
+  /**
+   * Angle of the arrow in degrees.
+   */
+  angle: number
+  /**
+   * Tooltip text for the arrow.
+   */
+  tooltipText: string
+  /**
+   * Color of the arrow.
+   */
+  color: string
+}

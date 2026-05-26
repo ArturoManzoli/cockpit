@@ -2,9 +2,26 @@ import ky from 'ky'
 import localforage from 'localforage'
 import posthog from 'posthog-js'
 
-import { settingsManager } from '../settings-management'
+import type { TelemetrySystemHardwareInfo } from '@/types/platform'
 
-const cockpitTelemetryEnabledKey = 'cockpit-enable-usage-statistics-telemetry'
+import { app_version } from '../cosmos'
+import { isElectron } from '../utils'
+
+/**
+ * Storage key tracking whether detailed hardware specifications are sent alongside the
+ * always-on basic telemetry baseline.
+ */
+export const shareHardwareDetailsKey = 'cockpit-share-hardware-details'
+
+/**
+ * Default state for sharing detailed hardware specifications. Enabled by default;
+ */
+export const defaultShareHardwareDetails = true
+
+/**
+ * Documentation reference shown from the data privacy modal's "View documentation" action.
+ */
+export const telemetryDataPrivacyDocsUrl = 'https://blueos.cloud/cockpit/docs/latest/usage/privacy/'
 
 type EventPayload = {
   /**
@@ -37,10 +54,9 @@ class EventTracker {
    * Initialize the event tracking system
    */
   constructor() {
-    // Only track usage statistics if the user has not opted out and the app is not in development mode
-    const isRunningInProduction = import.meta.env.PROD
-    const userHasExternalTelemetryEnabled = settingsManager.getKeyValue(cockpitTelemetryEnabledKey)
-    EventTracker.enableEventTracking = isRunningInProduction && userHasExternalTelemetryEnabled
+    // The basic telemetry baseline cannot be opted out of, so the tracker is enabled in every
+    // production build. Detailed hardware specifications are gated separately at the call site.
+    EventTracker.enableEventTracking = import.meta.env.PROD
 
     if (!EventTracker.enableEventTracking) {
       console.info('Event tracking is disabled. Not initializing event tracker.')
@@ -131,4 +147,115 @@ class EventTracker {
 }
 
 const eventTracker = new EventTracker()
+
+/**
+ * Telemetry data about the system for analytics
+ */
+export interface SystemTelemetryInfo {
+  /**
+   * The version of the application
+   */
+  appVersion: string
+  /**
+   * Whether the application is running in Electron
+   */
+  isElectron: boolean
+  /**
+   * The platform of the system. Possibilities can be found in the Platform enum.
+   */
+  platform: string | null
+  /**
+   * The architecture of the system. Possibilities can be found in the Architecture enum.
+   */
+  arch: string | null
+  /**
+   * The width of the window in pixels
+   */
+  windowWidth: number
+  /**
+   * The height of the window in pixels
+   */
+  windowHeight: number
+  /**
+   * Information about all connected displays
+   */
+  displays: Array<{
+    /**
+     * The width of the display in pixels
+     */
+    width: number
+    /**
+     * The height of the display in pixels
+     */
+    height: number
+    /**
+     * The scale factor of the display (DPI scaling)
+     */
+    scaleFactor?: number
+  }>
+  /**
+   * The locale of the system
+   */
+  locale: string
+  /**
+   * Whether the host reports touch input capability (touchscreen, tablet, etc.)
+   */
+  hasTouchSupport: boolean
+  /**
+   * Hardware details from the Electron main process; null in the web build
+   */
+  hardware: TelemetrySystemHardwareInfo | null
+}
+
+/**
+ * Get system information for telemetry purposes
+ * @returns {Promise<SystemTelemetryInfo>} System information for analytics
+ */
+export const getSystemInfoForTelemetry = async (): Promise<SystemTelemetryInfo> => {
+  const runningInElectron = isElectron()
+
+  let platform: string | null = null
+  let arch: string | null = null
+  let displays: SystemTelemetryInfo['displays'] = []
+
+  if (runningInElectron && window.electronAPI?.getSystemInfo) {
+    const systemInfo = await window.electronAPI.getSystemInfo()
+    platform = systemInfo.platform
+    arch = systemInfo.arch
+    displays = systemInfo.displays
+  } else {
+    platform = navigator.userAgentData?.platform ?? navigator.platform ?? null
+    try {
+      const uaData = await navigator.userAgentData?.getHighEntropyValues(['architecture'])
+      arch = uaData?.architecture ?? null
+    } catch {
+      arch = null
+    }
+  }
+
+  const hasTouchSupport = navigator.maxTouchPoints > 0 || window.matchMedia('(any-pointer: coarse)').matches
+
+  let hardware: TelemetrySystemHardwareInfo | null = null
+  if (runningInElectron && window.electronAPI?.getHardwareTelemetryInfo) {
+    try {
+      hardware = await window.electronAPI.getHardwareTelemetryInfo()
+    } catch {
+      hardware = null
+    }
+  }
+
+  return {
+    appVersion: app_version.version,
+    isElectron: runningInElectron,
+    platform,
+    arch,
+    windowWidth: window.innerWidth,
+    windowHeight: window.innerHeight,
+    displays,
+    locale: navigator.language,
+    hasTouchSupport,
+    hardware,
+  }
+}
+
 export default eventTracker

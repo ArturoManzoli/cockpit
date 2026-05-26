@@ -1,75 +1,21 @@
 import ky, { HTTPError } from 'ky'
+import { z } from 'zod'
 
-import { type ActionConfig } from '@/libs/joystick/protocols/cockpit-actions'
+import { ExtrasJsonSchema, ServiceSchema } from '@/libs/blueos/schemas'
 import { sleep } from '@/libs/utils'
-import { type RawCpuLoadInfo, type RawCpuTempInfo, type RawNetworkInfo } from '@/types/blueos'
+import {
+  type ActionsFromExtension,
+  type BagOfHoldingsError,
+  type ExtrasJson,
+  type RawCpuLoadInfo,
+  type RawCpuTempInfo,
+  type RawNetworkInfo,
+  type Service,
+  JoystickMapSuggestionGroupsFromExtension,
+  NoPathInBlueOsErrorName,
+} from '@/types/blueos'
+import { vehicleNewStyleSettingsKey } from '@/types/settings-management'
 import { ExternalWidgetSetupInfo } from '@/types/widgets'
-
-/**
- * Cockpits extra json format. Taken from extensions in BlueOS and (eventually) other places
- */
-interface ExtrasJson {
-  /**
-   *  The version of the cockpit API that the extra json is compatible with
-   */
-  target_cockpit_api_version: string
-  /**
-   *  The target system that the extra json is compatible with, in our case, "cockpit"
-   */
-  target_system: string
-  /**
-   *  A list of widgets that the extra json contains. src/types/widgets.ts
-   */
-  widgets: ExternalWidgetSetupInfo[]
-  /**
-   * A list of available cockpit actions offered by the extension.
-   */
-  actions: ActionConfig[]
-}
-
-/**
- * Service object from BlueOS
- */
-interface Service {
-  /**
-   * Metadata of the service
-   */
-  metadata?: {
-    /**
-     * Extras of the service
-     */
-    extras?: {
-      /**
-       * Cockpit extra json url
-       */
-      cockpit?: string
-    }
-    /**
-     * Works in relative paths
-     */
-    works_in_relative_paths?: boolean
-    /**
-     * Sanitized name of the service
-     */
-    sanitized_name?: string
-  }
-  /**
-   * Port of the service
-   */
-  port?: number
-}
-
-export const NoPathInBlueOsErrorName = 'NoPathInBlueOS'
-
-/**
- * Error returned by BlueOS when a bag of holdings is not found
- */
-export interface BagOfHoldingsError extends Error {
-  /**
-   * Details about the error
-   */
-  detail: string
-}
 
 const defaultTimeout = 10000
 const quickStatusTimeout = 3000
@@ -102,19 +48,17 @@ export const getKeyDataFromCockpitVehicleStorage = async (
 }
 
 const blueOsServiceUrl = (vehicleAddress: string, service: Service): string => {
-  const worksInRelativePaths = service.metadata?.works_in_relative_paths
-  const sanitizedName = service.metadata?.sanitized_name
   const port = service.port
-  return worksInRelativePaths
-    ? `${protocol}//${vehicleAddress}/extensionv2/${sanitizedName}`
+  return service.metadata?.worksInRelativePaths
+    ? `${protocol}//${vehicleAddress}/extensionv2/${service.metadata?.sanitizedName}`
     : `${protocol}//${vehicleAddress}:${port}`
 }
 
 const getServicesFromBlueOS = async (vehicleAddress: string): Promise<Service[]> => {
   const options = { timeout: defaultTimeout, retry: 0 }
-  const services = (await ky
-    .get(`${protocol}//${vehicleAddress}/helper/v1.0/web_services`, options)
-    .json()) as Service[]
+  const rawData = await ky.get(`${protocol}//${vehicleAddress}/helper/v1.0/web_services`, options).json()
+
+  const services: Service[] = z.array(ServiceSchema).parse(rawData)
   return services
 }
 
@@ -128,7 +72,10 @@ export const getExtrasJsonFromBlueOsService = async (
   }
   const baseUrl = blueOsServiceUrl(vehicleAddress, service)
   const fullUrl = baseUrl + service.metadata?.extras?.cockpit
-  const extraJson: ExtrasJson = await ky.get(fullUrl, options).json()
+  const rawData = await ky.get(fullUrl, options).json()
+
+  const extraJson: ExtrasJson = ExtrasJsonSchema.parse(rawData)
+
   return extraJson
 }
 
@@ -141,18 +88,22 @@ export const getWidgetsFromBlueOS = async (vehicleAddress: string): Promise<Exte
         const extraJson = await getExtrasJsonFromBlueOsService(vehicleAddress, service)
         const baseUrl = blueOsServiceUrl(vehicleAddress, service)
         if (extraJson !== null) {
+          const extensionPath = new URL(baseUrl).pathname
           widgets.push(
             ...extraJson.widgets.map((widget) => {
+              const useExtPath = widget.useExtensionPathAsBaseUrl ?? false
+              const iconUrl = widget.iconUrl ?? widget.iframeIcon ?? ''
+
               return {
                 ...widget,
-                iframe_url: baseUrl + widget.iframe_url,
-                iframe_icon: baseUrl + widget.iframe_icon,
+                iframeUrl: useExtPath ? extensionPath + widget.iframeUrl : widget.iframeUrl,
+                iframeIcon: useExtPath ? baseUrl + iconUrl : iconUrl,
               }
             })
           )
         }
       } catch (error) {
-        console.error(`Could not get widgets from BlueOS service ${service.metadata?.sanitized_name}. ${error}`)
+        console.error(`Could not get widgets from BlueOS service ${service.metadata?.sanitizedName}. ${error}`)
       }
     })
   )
@@ -160,23 +111,54 @@ export const getWidgetsFromBlueOS = async (vehicleAddress: string): Promise<Exte
   return widgets
 }
 
-export const getActionsFromBlueOS = async (vehicleAddress: string): Promise<ActionConfig[]> => {
+export const getActionsFromBlueOS = async (vehicleAddress: string): Promise<ActionsFromExtension[]> => {
   const services = await getServicesFromBlueOS(vehicleAddress)
-  const actions: ActionConfig[] = []
+  const actionsFromExtensions: ActionsFromExtension[] = []
+
   await Promise.all(
     services.map(async (service) => {
       try {
         const extraJson = await getExtrasJsonFromBlueOsService(vehicleAddress, service)
-        if (extraJson !== null) {
-          actions.push(...extraJson.actions)
+        if (extraJson !== null && extraJson.actions) {
+          const extensionName = service.metadata?.sanitizedName || 'Unknown Extension'
+          actionsFromExtensions.push({ extensionName, actionConfigs: extraJson.actions })
         }
       } catch (error) {
-        console.error(`Could not get actions from BlueOS service ${service.metadata?.sanitized_name}. ${error}`)
+        console.error(`Could not get actions from BlueOS service ${service.metadata?.sanitizedName}. ${error}`)
       }
     })
   )
 
-  return actions
+  return actionsFromExtensions
+}
+
+export const getJoystickSuggestionsFromBlueOS = async (
+  vehicleAddress: string
+): Promise<JoystickMapSuggestionGroupsFromExtension[]> => {
+  const services = await getServicesFromBlueOS(vehicleAddress)
+  const suggestionsMap = new Map<string, JoystickMapSuggestionGroupsFromExtension>()
+
+  await Promise.all(
+    services.map(async (service) => {
+      try {
+        const extraJson = await getExtrasJsonFromBlueOsService(vehicleAddress, service)
+        if (extraJson !== null && extraJson.joystickSuggestions) {
+          const extensionName = service.metadata?.sanitizedName || 'Unknown Extension'
+
+          suggestionsMap.set(extensionName, {
+            extensionName,
+            suggestionGroups: extraJson.joystickSuggestions,
+          })
+        }
+      } catch (error) {
+        console.error(
+          `Could not get joystick suggestions from BlueOS service ${service.metadata?.sanitizedName}. ${error}`
+        )
+      }
+    })
+  )
+
+  return Array.from(suggestionsMap.values())
 }
 
 export const setBagOfHoldingOnVehicle = async (
@@ -214,18 +196,21 @@ type StreamConfiguration = {
   }
 }
 
+type VideoSourceEntry = {
+  name: string
+  source?: Record<string, string>
+  device_path?: string
+  type?: any
+}
+
 type VideoSource = {
-  [key: string]: {
-    name: string
-    source?: any
-    device_path?: string
-    type?: any
-  }
+  [key: string]: VideoSourceEntry
 }
 
 type StreamInfo = {
   id: string
   running: boolean
+  state?: string
   error: string | null
   video_and_stream: {
     name: string
@@ -241,10 +226,12 @@ type StreamInfo = {
 export type ProcessedStreamInfo = {
   name: string
   sourceName: string
+  encode: string
   width: number
   height: number
   fps: number
   running: boolean
+  rtspSourceUrl: string | undefined
 }
 /* eslint-enable jsdoc/require-jsdoc */
 
@@ -382,14 +369,25 @@ export const checkBlueOsUserDataSimilarity = async (vehicleAddress: string, user
 }
 
 export const getSettingsUsernamesFromBlueOS = async (vehicleAddress: string): Promise<string[]> => {
-  const usernames = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, 'settings')
-  return Object.keys(usernames as string[])
+  const usernames = await getKeyDataFromCockpitVehicleStorage(vehicleAddress, vehicleNewStyleSettingsKey)
+  // `getKeyDataFromCockpitVehicleStorage` returns `undefined` when the bag does not exist yet
+  // (fresh vehicle, never written to). That is a legitimate "no users yet" state, not a failure.
+  if (usernames === undefined) return []
+  // Anything else that isn't a plain object is an unexpected payload shape; surface it as an
+  // error so the caller can distinguish it from a real empty result.
+  if (typeof usernames !== 'object' || usernames === null || Array.isArray(usernames)) {
+    throw new Error(`Unexpected '${vehicleNewStyleSettingsKey}' payload shape on vehicle '${vehicleAddress}'.`)
+  }
+  return Object.keys(usernames)
 }
 
 export const deleteUsernameOnBlueOS = async (vehicleAddress: string, username: string): Promise<void> => {
   let allSettings: Record<string, any> = {}
   try {
-    allSettings = (await getKeyDataFromCockpitVehicleStorage(vehicleAddress, 'settings')) as Record<string, any>
+    allSettings = (await getKeyDataFromCockpitVehicleStorage(vehicleAddress, vehicleNewStyleSettingsKey)) as Record<
+      string,
+      any
+    >
   } catch (err) {
     if ((err as Error).name === NoPathInBlueOsErrorName) return
     throw err
@@ -398,7 +396,7 @@ export const deleteUsernameOnBlueOS = async (vehicleAddress: string, username: s
   if (!(username in allSettings)) return
   delete allSettings[username]
 
-  await setKeyDataOnCockpitVehicleStorage(vehicleAddress, 'settings', allSettings)
+  await setKeyDataOnCockpitVehicleStorage(vehicleAddress, vehicleNewStyleSettingsKey, allSettings)
 }
 
 /**
@@ -484,13 +482,30 @@ export const getStreamInformationFromVehicle = async (vehicleAddress: string): P
         fps = config.frame_interval.denominator / config.frame_interval.numerator
       }
 
+      // Extract the direct RTSP source URL from the video source (the camera's own feed).
+      // The source field is a type-keyed object, e.g. { "Onvif": "rtsp://192.168.0.10:554/stream_0" }
+      let rtspSourceUrl: string | undefined
+      if (sourceKeys.length > 0) {
+        const sourceObj = videoSource[sourceKeys[0]].source
+        if (sourceObj) {
+          for (const sourceUrl of Object.values(sourceObj)) {
+            if (sourceUrl.startsWith('rtsp://') || sourceUrl.startsWith('rtsps://')) {
+              rtspSourceUrl = sourceUrl
+              break
+            }
+          }
+        }
+      }
+
       return {
         name: stream.video_and_stream.name,
         sourceName,
+        encode: config.encode,
         width: config.width,
         height: config.height,
         fps,
-        running: stream.running,
+        running: stream.running || stream.state === 'idle' || stream.state === 'running',
+        rtspSourceUrl,
       }
     })
   } catch (error) {

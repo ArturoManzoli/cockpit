@@ -1,5 +1,5 @@
-import { DataLakeVariable } from '@/libs/actions/data-lake'
-import { CockpitAction } from '@/libs/joystick/protocols/cockpit-actions'
+import { DataLakeVariable } from '@/types/data-lake'
+import { ProtocolAction } from '@/types/joystick'
 
 import type { Point2D, SizeRect2D } from './general'
 
@@ -15,12 +15,39 @@ export interface ExternalWidgetSetupInfo {
    * The URL at which the widget is located
    * This is expected to be an absolute url
    */
-  iframe_url: string
+  iframeUrl: string
 
   /**
-   * The icon of the widget, this is displayed on the widget browser
+   * The icon URL of the widget, displayed on the widget browser
    */
-  iframe_icon: string
+  iconUrl?: string
+
+  /**
+   * @deprecated Use iconUrl instead
+   */
+  iframeIcon?: string
+
+  /**
+   * The name of the collapsed container, this is displayed on the widget browser
+   */
+  collapsibleContainerName?: string
+
+  /**
+   * Version of the widget (optional)
+   */
+  version?: string
+
+  /**
+   * Whether the widget should start collapsed (optional)
+   */
+  startCollapsed?: boolean
+
+  /**
+   * Whether to prepend the extension's service path to the widget URLs (optional).
+   * When true, the extension path (e.g. /extensionv2/servicename) is prepended to iframeUrl and the icon URL,
+   * and the IFrame widget's useVehicleAddressAsBase option is set to true.
+   */
+  useExtensionPathAsBaseUrl?: boolean
 }
 
 /**
@@ -42,6 +69,14 @@ export interface ExternalWidgetSetupInfo {
    *  Widget icon, this is the icon that will be displayed on the widget browser
    */
   icon: string
+  /**
+   *  Default size for the widget when first added (optional)
+   */
+  defaultSize?: SizeRect2D
+  /**
+   *  Default position for the widget when first added (optional)
+   */
+  defaultPosition?: Point2D
 }
 
 /**
@@ -50,15 +85,16 @@ export interface ExternalWidgetSetupInfo {
  */
 export enum WidgetType {
   Attitude = 'Attitude',
+  CollapsibleContainer = 'CollapsibleContainer',
   Compass = 'Compass',
   CompassHUD = 'CompassHUD',
-  CollapsibleContainer = 'CollapsibleContainer',
   DepthHUD = 'DepthHUD',
   DoItYourself = 'DoItYourself',
   IFrame = 'IFrame',
   ImageView = 'ImageView',
   Map = 'Map',
   MiniWidgetsBar = 'MiniWidgetsBar',
+  MissionControlPanel = 'MissionControlPanel',
   Plotter = 'Plotter',
   URLVideoPlayer = 'URLVideoPlayer',
   VideoPlayer = 'VideoPlayer',
@@ -76,20 +112,21 @@ export enum MiniWidgetType {
   BatteryIndicator = 'BatteryIndicator',
   ChangeAltitudeCommander = 'ChangeAltitudeCommander',
   Clock = 'Clock',
-  GoFullScreen = 'GoFullScreen',
-  EnterEditMode = 'EnterEditMode',
   DepthIndicator = 'DepthIndicator',
+  EkfStateIndicator = 'EkfStateIndicator',
+  EnterEditMode = 'EnterEditMode',
+  GoFullScreen = 'GoFullScreen',
+  JoystickCommIndicator = 'JoystickCommIndicator',
+  MiniMissionControlPanel = 'MiniMissionControlPanel',
+  MiniVideoRecorder = 'MiniVideoRecorder',
   MissionIdentifier = 'MissionIdentifier',
+  ModeSelector = 'ModeSelector',
   RelativeAltitudeIndicator = 'RelativeAltitudeIndicator',
+  SatelliteIndicator = 'SatelliteIndicator',
+  SnapshotTool = 'SnapshotTool',
   TakeoffLandCommander = 'TakeoffLandCommander',
   VeryGenericIndicator = 'VeryGenericIndicator',
-  JoystickCommIndicator = 'JoystickCommIndicator',
-  MiniVideoRecorder = 'MiniVideoRecorder',
-  ModeSelector = 'ModeSelector',
-  EkfStateIndicator = 'EkfStateIndicator',
-  SatelliteIndicator = 'SatelliteIndicator',
   ViewSelector = 'ViewSelector',
-  SnapshotTool = 'SnapshotTool',
 }
 
 /**
@@ -233,7 +270,7 @@ export type CustomWidgetElementOptions = {
       /**
        * Action parameter
        */
-      cockpitAction: CockpitAction
+      cockpitAction: ProtocolAction
       /**
        * Layout options
        */
@@ -563,6 +600,10 @@ export type WidgetManagerVars = {
    */
   allowMoving: boolean
   /**
+   * If the widget should be allowed to resize
+   */
+  allowResizing: boolean
+  /**
    * Last widget X position when it wasn't maximized
    */
   lastNonMaximizedX: number
@@ -624,9 +665,14 @@ export type Widget = {
    */
   name: string
   /**
-   * Internal options of the widget
+   * User-facing configuration options of the widget
    */
   options: Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+  /**
+   * Persisted internal state managed by the widget itself (not user-facing).
+   * Use this for values that must survive page refreshes but are not user settings.
+   */
+  persistentInternalState?: Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export type MiniWidget = {
@@ -751,6 +797,17 @@ export type DraggableEvent = {
   item: HTMLElement
 }
 
+export type DragState = {
+  /**
+   * The widget being dragged
+   */
+  widget: InternalWidgetSetupInfo | null
+  /**
+   * The position where the widget would be dropped (normalized 0-1 coordinates)
+   */
+  position: Point2D | null
+}
+
 export type View = {
   /**
    * Unique identifier for the view
@@ -809,6 +866,7 @@ export const isWidgetConfigurable: Record<WidgetType, boolean> = {
   [WidgetType.URLVideoPlayer]: true,
   [WidgetType.VideoPlayer]: true,
   [WidgetType.VirtualHorizon]: false,
+  [WidgetType.MissionControlPanel]: false,
 }
 
 export const isMiniWidgetConfigurable: Record<MiniWidgetType, boolean> = {
@@ -832,6 +890,7 @@ export const isMiniWidgetConfigurable: Record<MiniWidgetType, boolean> = {
   [MiniWidgetType.SatelliteIndicator]: false,
   [MiniWidgetType.ViewSelector]: false,
   [MiniWidgetType.SnapshotTool]: true,
+  [MiniWidgetType.MiniMissionControlPanel]: false,
 }
 
 export const widgetHasOwnContextMenu: Record<WidgetType, boolean> = {
@@ -849,6 +908,27 @@ export const widgetHasOwnContextMenu: Record<WidgetType, boolean> = {
   [WidgetType.URLVideoPlayer]: false,
   [WidgetType.VideoPlayer]: false,
   [WidgetType.VirtualHorizon]: false,
+  [WidgetType.MissionControlPanel]: false,
+}
+
+/**
+ * Default sizes for widgets when first added to a view
+ */
+export const widgetDefaultSizes: Partial<Record<WidgetType, SizeRect2D>> = {
+  [WidgetType.Attitude]: { width: 0.6, height: 0.8 },
+  [WidgetType.Compass]: { width: 0.062, height: 0.118 },
+  [WidgetType.CompassHUD]: { width: 0.56, height: 0.062 },
+  [WidgetType.CollapsibleContainer]: { width: 0.3, height: 0.4 },
+  [WidgetType.DepthHUD]: { width: 0.05, height: 0.7 },
+  [WidgetType.DoItYourself]: { width: 0.3, height: 0.3 },
+  [WidgetType.IFrame]: { width: 0.4, height: 0.4 },
+  [WidgetType.ImageView]: { width: 0.3, height: 0.3 },
+  [WidgetType.Map]: { width: 1, height: 1 },
+  [WidgetType.MiniWidgetsBar]: { width: 0.2, height: 0.1 },
+  [WidgetType.Plotter]: { width: 0.4, height: 0.3 },
+  [WidgetType.URLVideoPlayer]: { width: 0.5, height: 0.4 },
+  [WidgetType.VideoPlayer]: { width: 1, height: 1 },
+  [WidgetType.VirtualHorizon]: { width: 0.062, height: 0.118 },
 }
 
 export const validateWidget = (maybeWidget: Widget): maybeWidget is Widget => {

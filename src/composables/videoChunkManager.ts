@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 
 import { LiveVideoProcessor } from '@/libs/live-video-processor'
+import { datalogger } from '@/libs/sensors-logging'
 import { formatBytes, isElectron } from '@/libs/utils'
 import { useVideoStore } from '@/stores/video'
 import { type FileDescriptor } from '@/types/video'
@@ -403,46 +404,174 @@ export const useVideoChunkManager = (): {
   }
 
   /**
-   * Process a ZIP file containing video chunks using the live streaming pipeline
-   * @param {() => Promise<void>} onComplete
+   * Resolve the final list of ZIPs to process from the user's selection.
+   * When the user picks a single part-zip we look for sibling part-zips with the same
+   * recording hash in the same folder and include them automatically; otherwise the
+   * user's selection is used as-is.
+   * @param {string[]} selectedPaths - Paths returned by the file dialog
+   * @returns {Promise<string[]>} Final list of ZIP paths to process
+   */
+  const resolveZipPathsToProcess = async (selectedPaths: string[]): Promise<string[]> => {
+    if (selectedPaths.length !== 1 || !window.electronAPI?.findSiblingChunkZips) {
+      return selectedPaths
+    }
+
+    try {
+      const siblings = await window.electronAPI.findSiblingChunkZips(selectedPaths[0])
+      if (siblings && siblings.length > 1) {
+        const siblingCount = siblings.length - 1
+        openSnackbar({
+          message: `Detected ${siblingCount} sibling part-zip(s) for this recording — they will be processed together.`,
+          variant: 'info',
+        })
+        return siblings
+      }
+    } catch (error) {
+      console.warn('Failed to look up sibling chunk ZIPs, proceeding with the selected file only:', error)
+    }
+    return selectedPaths
+  }
+
+  /**
+   * Process one or more ZIP files containing video chunks using the live streaming pipeline.
+   * Allows the user to select multiple ZIPs (e.g. the multi-part archives produced by
+   * Cockpit Lite when chunk groups exceed 1GB). When the user picks a single part-zip
+   * we automatically include any sibling part-zips with the same recording hash that live
+   * in the same folder, so all chunks of a recording are processed together.
+   * @param {() => Promise<void>} onComplete - Optional callback invoked after a successful run
    * @returns {Promise<void>} Promise that resolves when processing is complete
    */
   const processVideoChunksZip = async (onComplete?: () => Promise<void>): Promise<void> => {
     if (isProcessingZip.value || !isElectron()) return
 
     try {
-      const zipFilePath = await window.electronAPI?.getPathOfSelectedFile({
-        title: 'Select Video ZIP File',
+      const selectedPaths = await window.electronAPI?.getPathsOfSelectedFiles({
+        title: 'Select Video ZIP File(s)',
         filters: [{ name: 'ZIP Files', extensions: ['zip'] }],
       })
 
-      if (!zipFilePath) return
+      if (!selectedPaths || selectedPaths.length === 0) return
+
+      const zipPathsToProcess = await resolveZipPathsToProcess(selectedPaths)
 
       isProcessingZip.value = true
       zipProcessingComplete.value = false
       zipProcessingProgress.value = 0
-      zipProcessingMessage.value = 'Starting ZIP processing...'
+      zipProcessingMessage.value =
+        zipPathsToProcess.length > 1
+          ? `Starting processing of ${zipPathsToProcess.length} ZIP files...`
+          : 'Starting ZIP processing...'
 
-      // Use the new LiveVideoProcessor static method
-      await LiveVideoProcessor.processZipFile(zipFilePath, (progress: number, message: string) => {
+      await LiveVideoProcessor.processZipFiles(zipPathsToProcess, (progress: number, message: string) => {
         zipProcessingProgress.value = progress
         zipProcessingMessage.value = message
       })
 
-      const msg = 'ZIP file processed successfully! Video is now available in the Videos tab.'
-      openSnackbar({ message: msg, variant: 'success' })
+      const successMessage =
+        zipPathsToProcess.length > 1
+          ? `${zipPathsToProcess.length} ZIP files processed successfully! Video is now available in the Videos tab.`
+          : 'ZIP file processed successfully! Video is now available in the Videos tab.'
+      openSnackbar({ message: successMessage, variant: 'success' })
 
       if (onComplete) await onComplete()
 
       zipProcessingComplete.value = true
     } catch (error) {
-      const msg = `Failed to process ZIP file: ${error instanceof Error ? error.message : 'Unknown error'}`
+      const msg = `Failed to process ZIP file(s): ${error instanceof Error ? error.message : 'Unknown error'}`
       openSnackbar({ message: msg, variant: 'error' })
     } finally {
       isProcessingZip.value = false
       zipProcessingProgress.value = 0
       zipProcessingMessage.value = ''
     }
+  }
+
+  /**
+   * Generate an .ass telemetry blob from a datalogger log, save it to video storage, and copy it
+   * to the output path on the filesystem.
+   * @param {Awaited<ReturnType<typeof datalogger.generateLog>>} telemetryLog - The generated log
+   * @param {number} videoWidth - Video width in pixels
+   * @param {number} videoHeight - Video height in pixels
+   * @param {number} startEpoch - Video start epoch in milliseconds
+   * @param {string} subtitlesFileName - The filename (key) under which to store the .ass file
+   * @param {string} outputPath - Full filesystem path of the processed video
+   * @returns {Promise<void>}
+   */
+  const saveAndCopyTelemetry = async (
+    telemetryLog: Awaited<ReturnType<typeof datalogger.generateLog>>,
+    videoWidth: number,
+    videoHeight: number,
+    startEpoch: number,
+    subtitlesFileName: string,
+    outputPath: string
+  ): Promise<void> => {
+    const assContent = datalogger.toAssOverlay(telemetryLog, videoWidth, videoHeight, startEpoch)
+    const logBlob = new Blob([assContent], { type: 'text/plain' })
+    await videoStore.videoStorage.setItem(subtitlesFileName, logBlob)
+    await window.electronAPI!.copyTelemetryFile(subtitlesFileName, videoSubtitlesFilename(outputPath))
+  }
+
+  /**
+   * Attempts to resolve telemetry for a processed chunk group using a 3-tier fallback:
+   *   1. Copy an existing .ass file from video storage
+   *   2. Generate from unprocessedVideos metadata (dateStart/dateFinish/resolution)
+   *   3. Reconstruct the time range from chunk timestamps
+   * Throws if all tiers fail.
+   * @param {ChunkGroup} group - The chunk group being processed
+   * @param {string} outputPath - Full filesystem path of the processed video
+   * @returns {Promise<void>}
+   */
+  const copyOrGenerateTelemetryOverlayFile = async (group: ChunkGroup, outputPath: string): Promise<void> => {
+    const subtitlesFileName = videoSubtitlesFilename(group.fileName || videoFilename(group.hash, group.firstChunkDate))
+
+    // Tier 1: Try to find and copy an existing .ass file
+    try {
+      const videoKeys = await videoStore.videoStorage.keys()
+      const existingAssFile = videoKeys.find((key) => key.includes(group.hash) && key.endsWith('.ass'))
+      if (existingAssFile) {
+        await window.electronAPI!.copyTelemetryFile(existingAssFile, videoSubtitlesFilename(outputPath))
+        console.info(`Tier 1: Copied existing telemetry file for ${group.hash}.`)
+        return
+      }
+      console.info(`Tier 1: No existing .ass file found for ${group.hash}. Trying metadata generation...`)
+    } catch (error) {
+      console.warn(`Tier 1: Failed to copy existing telemetry for ${group.hash}:`, error)
+    }
+
+    // Tier 2: Try to generate from unprocessedVideos metadata
+    try {
+      const recordingData = videoStore.unprocessedVideos[group.hash]
+      if (recordingData?.dateStart && recordingData?.dateFinish) {
+        const dateStart = new Date(recordingData.dateStart)
+        const dateFinish = new Date(recordingData.dateFinish)
+        console.info(`Tier 2: Generating telemetry from recording metadata for ${group.hash}...`)
+
+        const telemetryLog = await datalogger.generateLog(dateStart, dateFinish)
+        const vWidth = recordingData.vWidth ?? 1920
+        const vHeight = recordingData.vHeight ?? 1080
+        await saveAndCopyTelemetry(telemetryLog, vWidth, vHeight, dateStart.getTime(), subtitlesFileName, outputPath)
+        console.info(`Tier 2: Telemetry generated from metadata for ${group.hash}.`)
+        return
+      }
+      console.info(`Tier 2: No recording metadata found for ${group.hash}. Trying timestamp reconstruction...`)
+    } catch (error) {
+      console.warn(`Tier 2: Failed to generate telemetry from metadata for ${group.hash}:`, error)
+    }
+
+    // Tier 3: Reconstruct time range from chunk timestamps
+    const validChunks = group.chunks.filter((c) => c.timestamp.getTime() > 0)
+    if (validChunks.length === 0) {
+      throw new Error(`No valid chunk timestamps available for ${group.hash}`)
+    }
+
+    const sortedByTime = [...validChunks].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    const estimatedStart = sortedByTime[0].timestamp
+    const estimatedEnd = new Date(sortedByTime[sortedByTime.length - 1].timestamp.getTime() + 1000)
+    console.info(`Tier 3: Reconstructing telemetry from chunk timestamps for ${group.hash}...`)
+
+    const telemetryLog = await datalogger.generateLog(estimatedStart, estimatedEnd)
+    await saveAndCopyTelemetry(telemetryLog, 1920, 1080, estimatedStart.getTime(), subtitlesFileName, outputPath)
+    console.info(`Tier 3: Telemetry reconstructed from chunk timestamps for ${group.hash}.`)
   }
 
   /**
@@ -501,15 +630,12 @@ export const useVideoChunkManager = (): {
       // Finalize the streaming process
       await window.electronAPI.finalizeVideoRecording(processId)
 
-      // Find and copy telemetry file if it exists
+      // Find and copy (if it exists) or generate (if it doesn't) telemetry overlay file
       try {
-        const videoKeys = await videoStore.videoStorage.keys()
-        const assFile = videoKeys.find((key) => key.includes(group.hash) && key.endsWith('.ass'))
-        if (assFile) {
-          await window.electronAPI.copyTelemetryFile(assFile, videoSubtitlesFilename(outputPath))
-        }
-      } catch (error) {
-        console.warn('Failed to copy telemetry file:', error)
+        await copyOrGenerateTelemetryOverlayFile(group, outputPath)
+      } catch (telemetryError) {
+        const errorMessage = `Could not generate telemetry overlay for the processed video: ${telemetryError}`
+        openSnackbar({ message: errorMessage, variant: 'error' })
       }
 
       openSnackbar({

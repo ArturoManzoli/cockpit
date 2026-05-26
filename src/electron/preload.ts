@@ -5,6 +5,9 @@ import type { FileDialogOptions, FileStats } from '@/types/storage'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getInfoOnSubnets: () => ipcRenderer.invoke('get-info-on-subnets'),
+  checkTcpPortOpen: (host: string, port: number, timeoutMs: number) =>
+    ipcRenderer.invoke('check-tcp-port-open', host, port, timeoutMs),
+  abortTcpPortProbes: () => ipcRenderer.invoke('abort-tcp-port-probes'),
   getResourceUsage: () => ipcRenderer.invoke('get-resource-usage'),
   onUpdateAvailable: (callback: (info: any) => void) =>
     ipcRenderer.on('update-available', (_event, info) => callback(info)),
@@ -39,12 +42,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return await ipcRenderer.invoke('keys', { subFolders })
   },
   openCockpitFolder: () => ipcRenderer.invoke('open-cockpit-folder'),
+  getCockpitFolderPath: (): Promise<string> => ipcRenderer.invoke('get-cockpit-folder-path'),
+  getDefaultCockpitFolderPath: (): Promise<string> => ipcRenderer.invoke('get-default-cockpit-folder-path'),
+  setCockpitFolderPath: (newPath: string): Promise<void> => ipcRenderer.invoke('set-cockpit-folder-path', newPath),
+  selectCockpitFolder: (): Promise<string | null> => ipcRenderer.invoke('select-cockpit-folder'),
+  openSnapshotFolder: () => ipcRenderer.invoke('open-snapshot-folder'),
   openVideoFolder: () => ipcRenderer.invoke('open-video-folder'),
   openVideoFile: (fileName: string) => ipcRenderer.invoke('open-video-file', fileName),
   openVideoChunksFolder: () => ipcRenderer.invoke('open-temp-video-chunks-folder'),
   getFileStats: (pathOrKey: string, subFolders?: string[]): Promise<FileStats> =>
     ipcRenderer.invoke('get-file-stats', pathOrKey, subFolders),
-  getPathOfSelectedFile: (options?: FileDialogOptions) => ipcRenderer.invoke('get-path-of-selected-file', options),
+  getPathsOfSelectedFiles: (options?: FileDialogOptions) => ipcRenderer.invoke('get-paths-of-selected-files', options),
   startVideoRecording: async (firstChunk: Blob, recordingHash: string, fileName: string, keepChunkBackup?: boolean) => {
     const chunkData = new Uint8Array(await firstChunk.arrayBuffer())
     return ipcRenderer.invoke('start-video-recording', chunkData, recordingHash, fileName, keepChunkBackup)
@@ -54,7 +62,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('append-chunk-to-video-recording', processId, chunkData, chunkNumber)
   },
   finalizeVideoRecording: (processId: string) => ipcRenderer.invoke('finalize-video-recording', processId),
-  extractVideoChunksZip: (zipFilePath: string) => ipcRenderer.invoke('extract-video-chunks-zip', zipFilePath),
+  go2rtcAddStream: (name: string, rtspUrl: string) => ipcRenderer.invoke('go2rtc-add-stream', name, rtspUrl),
+  go2rtcRemoveStream: (name: string) => ipcRenderer.invoke('go2rtc-remove-stream', name),
+  go2rtcGetStreamsInfo: () => ipcRenderer.invoke('go2rtc-get-streams-info'),
+  go2rtcGetPort: () => ipcRenderer.invoke('go2rtc-get-port'),
+  extractVideoChunksZips: (zipFilePaths: string[]) => ipcRenderer.invoke('extract-video-chunks-zips', zipFilePaths),
+  findSiblingChunkZips: (zipFilePath: string) => ipcRenderer.invoke('find-sibling-chunk-zips', zipFilePath),
   readChunkFile: (chunkPath: string) => ipcRenderer.invoke('read-chunk-file', chunkPath),
   copyTelemetryFile: (assFilePath: string, outputVideoPath: string) =>
     ipcRenderer.invoke('copy-telemetry-file', assFilePath, outputVideoPath),
@@ -78,6 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   systemLog: (level: string, message: string) => ipcRenderer.send('system-log', { level, message }),
   getElectronLogs: () => ipcRenderer.invoke('get-electron-logs'),
+  getCurrentElectronLogInfo: () => ipcRenderer.invoke('get-current-electron-log-info'),
   getElectronLogContent: (logName: string) => ipcRenderer.invoke('get-electron-log-content', logName),
   deleteElectronLog: (logName: string) => ipcRenderer.invoke('delete-electron-log', logName),
   deleteOldElectronLogs: () => ipcRenderer.invoke('delete-old-electron-logs'),
@@ -85,4 +99,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restoreUserAgent: () => ipcRenderer.invoke('restore-user-agent'),
   getCurrentUserAgent: () => ipcRenderer.invoke('get-current-user-agent'),
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+  getHardwareTelemetryInfo: () => ipcRenderer.invoke('get-hardware-telemetry-info'),
 })

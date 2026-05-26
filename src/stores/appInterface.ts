@@ -43,7 +43,7 @@ export const useAppInterfaceStore = defineStore('responsive', {
     height: windowHeight.value,
     configModalVisibility: false,
     videoLibraryVisibility: false,
-    videoLibraryMode: 'video',
+    videoLibraryMode: 'videos',
     UIGlassEffect: useBlueOsStorage('cockpit-ui-glass-effect', {
       opacity: 0.9,
       bgColor: '#63636354',
@@ -59,6 +59,11 @@ export const useAppInterfaceStore = defineStore('responsive', {
     currentSubMenuComponentName: ref<SubMenuComponentName | null>(null),
     isGlassModalAlwaysOnTop: false,
     isTutorialVisible: false,
+    isExternalFeaturesModalVisible: false,
+    isDataPrivacyModalVisible: false,
+    isVehicleDefaultsAutoImportModalVisible: false,
+    isVehicleDefaultsViewsImportModalVisible: false,
+    isVehicleDefaultsJoystickImportModalVisible: false,
     userHasSeenTutorial: useBlueOsStorage('cockpit-has-seen-tutorial', false),
     configPanelVisible: false,
     showSplashScreen: true,
@@ -81,6 +86,15 @@ export const useAppInterfaceStore = defineStore('responsive', {
     hideSkullAnimation() {
       this.showSkullAnimation = false
     },
+    openVehicleDefaultsAutoImport(): void {
+      this.isVehicleDefaultsAutoImportModalVisible = true
+    },
+    openVehicleDefaultsViewsImport(): void {
+      this.isVehicleDefaultsViewsImportModalVisible = true
+    },
+    openVehicleDefaultsJoystickImport(): void {
+      this.isVehicleDefaultsJoystickImportModalVisible = true
+    },
   },
   getters: {
     isXs: (state) => state.width < 720, // Extra small devices (5-6" mobile screens in landscape)
@@ -98,7 +112,7 @@ export const useAppInterfaceStore = defineStore('responsive', {
       if (state.width >= 1920) return '2xl'
     },
     currentWindowSize: (state) => `${state.width} x ${state.height}`,
-    isOnSmallScreen: (state) => state.width < 1280,
+    isOnSmallScreen: (state) => state.width <= 1280,
     isOnPhoneScreen: (state) => state.width < 600,
     isOnVeryLargeScreen: (state) => state.width > 1920,
     mainMenuWidth: (state) => {

@@ -1,6 +1,7 @@
+import { MavlinkMessageActionConfig, MavlinkMessageConfig, MessageFieldType } from '@/types/cockpit-actions'
+
 import { sendMavlinkMessage } from '../communication/mavlink'
 import type { Message } from '../connection/m2r/messages/mavlink2rest'
-import { MAVLinkType } from '../connection/m2r/messages/mavlink2rest-enum'
 import {
   availableCockpitActions,
   CockpitAction,
@@ -19,49 +20,16 @@ import {
 import { getDataLakeVariableData } from './data-lake'
 const mavlinkMessageActionIdPrefix = 'mavlink-message-action'
 
-/**
- * Enum with the possible message field types
- */
-export enum MessageFieldType {
-  NUMBER = 'number',
-  STRING = 'string',
-  BOOLEAN = 'boolean',
-  TYPE_STRUCT_ENUM = 'type_struct_enum',
-}
-
-export type MavlinkMessageConfigField = {
-  /**
-   * The type of the field
-   * Determines how the value is processed
-   */
-  type: MessageFieldType
-  /**
-   * The value of the field
-   */
-  value: any
-}
-
-export type MavlinkMessageConfig = Record<string, MavlinkMessageConfigField> | string
-
-export type MavlinkMessageActionConfig = {
-  /**
-   * The name of the action
-   */
-  name: string
-  /**
-   * The type of MAVLink message to send
-   */
-  messageType: MAVLinkType
-  /**
-   * The key-value pairs of the message fields
-   */
-  messageConfig: MavlinkMessageConfig
-}
-
 let registeredMavlinkMessageActionConfigs: Record<string, MavlinkMessageActionConfig> = {}
 
-export const registerMavlinkMessageActionConfig = (action: MavlinkMessageActionConfig): string => {
-  const id = `${mavlinkMessageActionIdPrefix} (${action.name})`
+/**
+ * Register a new MAVLink message action config and create a cockpit action for it
+ * @param {MavlinkMessageActionConfig} action - The action config to register
+ * @param {string} customId - Optional explicit ID (e.g. from an extension manifest). Falls back to a generated ID.
+ * @returns {string} The ID under which the action was registered
+ */
+export const registerMavlinkMessageActionConfig = (action: MavlinkMessageActionConfig, customId?: string): string => {
+  const id = customId ?? `${mavlinkMessageActionIdPrefix} (${action.name})`
   registeredMavlinkMessageActionConfigs[id] = action
   saveMavlinkMessageActionConfigs()
   updateCockpitActions()
@@ -77,6 +45,7 @@ export const getAllMavlinkMessageActionConfigs = (): Record<string, MavlinkMessa
 }
 
 export const deleteMavlinkMessageActionConfig = (id: string): void => {
+  deleteAction(id as CockpitActionsFunction)
   delete registeredMavlinkMessageActionConfigs[id]
   saveMavlinkMessageActionConfigs()
   updateCockpitActions()
