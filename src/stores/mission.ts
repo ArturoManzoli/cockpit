@@ -1,21 +1,35 @@
 import * as turf from '@turf/turf'
 import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
+import { v4 as uuid } from 'uuid'
 import { computed, reactive, ref, watch } from 'vue'
 
 import { defaultMapFallbackBaseColor, defaultMapFallbackNoiseIntensity } from '@/assets/defaults'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { useBlueOsStorage } from '@/composables/settingsSyncer'
+import { useMissionThumbnails } from '@/composables/useMissionThumbnails'
 import { askForUsername } from '@/composables/usernamePrompDialog'
+import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { generateSessionSeed } from '@/libs/map/map-tile-fallback'
+import {
+  AUTOMATIC_MISSION_NAME_MIN_IDLE_MS,
+  generateAutomaticMissionName,
+  shouldRenewAutomaticMissionName,
+} from '@/libs/mission/automatic-name'
+import { generateMissionThumbnailSvg } from '@/libs/mission/library'
 import { eventCategoriesDefaultMapping } from '@/libs/slide-to-confirm'
+import { toPlain } from '@/libs/utils'
 import {
   AltitudeReferenceType,
+  CockpitMission,
+  countNavWaypointCommands,
+  isNavWaypointCommand,
+  MapOverlayMeta,
   MapTileProvider,
   MapTileProviderPreference,
   MissionCommand,
-  PointOfInterest,
-  PointOfInterestCoordinates,
+  MissionEstimatesSnapshot,
+  SavedMission,
   Survey,
   Waypoint,
   WaypointCoordinates,
@@ -35,7 +49,9 @@ export const MIN_MAX_POSITION_HISTORY_SIZE = 100
 export const useMissionStore = defineStore('mission', () => {
   const username = useStorage<string>('cockpit-username', fallbackUsername)
   const lastConnectedUser = localStorage.getItem(cockpitLastConnectedUserKey) || undefined
-  const missionName = ref('')
+  const missionName = useStorage('cockpit-mission-name', '')
+  const missionNameIsAutomatic = useStorage('cockpit-mission-name-is-automatic', true)
+  const lastOpenTime = useStorage('cockpit-last-open', Date.now())
   const slideEventsEnabled = useBlueOsStorage('cockpit-slide-events-enabled', true)
   const slideEventsCategoriesRequired = useBlueOsStorage(
     'cockpit-slide-events-categories-required',
@@ -55,8 +71,10 @@ export const useMissionStore = defineStore('mission', () => {
   const showMissionCreationTips = useBlueOsStorage('cockpit-show-mission-creation-tips', true)
   const showChecklistBeforeArm = useBlueOsStorage('cockpit-show-checklist-before-arm', true)
   const showGridOnMissionPlanning = useBlueOsStorage('cockpit-show-grid-on-mission-planning', false)
+  const alwaysShowWaypointNumbers = useBlueOsStorage('cockpit-always-show-waypoint-numbers', false, { debounceMs: 0 })
   const showMissionEstimates = useBlueOsStorage('cockpit-show-mission-estimates', true)
   const defaultCruiseSpeed = useBlueOsStorage<number>('cockpit-default-cruise-speed', 1)
+  const cruiseSpeed = ref<number>(Number(defaultCruiseSpeed.value))
   const userLastMapTileProvider = useBlueOsStorage<MapTileProvider>(
     'cockpit-user-last-map-tile-provider',
     'Esri World Imagery'
@@ -65,6 +83,8 @@ export const useMissionStore = defineStore('mission', () => {
     'cockpit-default-map-tile-provider',
     'Use last selected'
   )
+  const userLastMapShowSeamarks = useBlueOsStorage<boolean>('cockpit-user-last-map-show-seamarks', true)
+  const userLastMapShowMarineProfile = useBlueOsStorage<boolean>('cockpit-user-last-map-show-marine-profile', false)
   const mapFallbackBaseColor = useBlueOsStorage<string>('cockpit-map-fallback-base-color', defaultMapFallbackBaseColor)
   const mapFallbackNoiseIntensity = useBlueOsStorage<number>(
     'cockpit-map-fallback-noise-intensity',
@@ -82,16 +102,114 @@ export const useMissionStore = defineStore('mission', () => {
     mapFallbackSeed.value = generateSessionSeed()
   }
 
-  const mapDownloadMissionFromVehicle = ref<(() => Promise<void>) | null>(null)
-  const mapClearMapDrawing = ref<(() => void) | null>(null)
+  const mapClearRequestRevision = ref(0)
+  const mapDownloadRequestRevision = ref(0)
+  const homeMarkerPosition = ref<WaypointCoordinates | undefined>(undefined)
+  // Home position the user last commanded. Compared against homeMarkerPosition to tell a home the user placed apart
+  // from one that merely came from a mission, so any other writer invalidates it without having to know about this.
+  const userCommandedHomePosition = ref<WaypointCoordinates | undefined>(undefined)
+  // Request for any active map to center on given coordinates. Replaced (new object) on each request.
+  const mapCenterOnRequest = ref<{
+    /** Coordinates the map should center on */
+    coordinates: WaypointCoordinates
+    /** Incremented on each request so repeated centerings on the same coordinates still trigger */
+    revision: number
+  } | null>(null)
+
+  // Fallback vehicle type used by vehicle-specific planning features when no vehicle is connected.
+  const plannedVehicleType = useBlueOsStorage<MavType | undefined>('cockpit-planned-vehicle-type', undefined)
+  const savedMissions = useBlueOsStorage<SavedMission[]>('cockpit-mission-library', [])
+  // Thumbnail bytes live local-first in IndexedDB and sync to the vehicle as real files, so adding many
+  // entries never bloats the settings payload the way inlined base64 SVGs would.
+  const { urlFor: thumbnailUrlFor, setThumbnail, removeThumbnail } = useMissionThumbnails()
 
   const { showDialog } = useInteractionDialog()
 
   const mainVehicleStore = useMainVehicleStore()
 
-  const pointsOfInterest = useBlueOsStorage<PointOfInterest[]>('cockpit-points-of-interest', [])
+  // Metadata for user-loaded GeoTIFF overlays. The raster bytes live in the overlay storage
+  // (IndexedDB), keyed by each entry's `id`.
+  const mapOverlays = useBlueOsStorage<MapOverlayMeta[]>('cockpit-map-overlays-v1', [])
 
-  watch(missionName, () => (lastMissionName.value = missionName.value))
+  const addMapOverlay = (overlay: MapOverlayMeta): void => {
+    mapOverlays.value.push(overlay)
+  }
+
+  const removeMapOverlay = (id: string): void => {
+    const index = mapOverlays.value.findIndex((overlay) => overlay.id === id)
+    if (index !== -1) {
+      mapOverlays.value.splice(index, 1)
+    }
+  }
+
+  // Cross-component request to frame the active map on a given overlay. The bumped revision lets the map views
+  // react even when the same overlay is requested twice in a row.
+  const mapOverlayFocusRequest = ref<{
+    /**
+     * Id of the overlay to frame.
+     */
+    id: string
+    /**
+     * Bumped on each request so repeated focus requests still trigger the map views.
+     */
+    revision: number
+  }>({ id: '', revision: 0 })
+
+  const requestMapOverlayFocus = (id: string): void => {
+    mapOverlayFocusRequest.value = { id, revision: mapOverlayFocusRequest.value.revision + 1 }
+  }
+
+  // Only remember user-typed names so the mission-name restore button never brings back an automatic name.
+  watch(missionName, () => {
+    if (!missionNameIsAutomatic.value) lastMissionName.value = missionName.value
+  })
+
+  const applyMissionName = (
+    name: string,
+    options: {
+      /**
+       * Whether the applied name was automatically generated instead of typed by the user.
+       */
+      isAutomatic: boolean
+      /**
+       * Whether to reset the mission start time, marking the beginning of a new mission.
+       */
+      startNewMission: boolean
+    }
+  ): void => {
+    missionName.value = name
+    missionNameIsAutomatic.value = options.isAutomatic
+    if (options.startNewMission) missionStartTime.value = new Date()
+  }
+
+  const cycleAutomaticMissionName = (options: {
+    /**
+     * Whether to reset the mission start time, marking the beginning of a new mission.
+     */
+    startNewMission: boolean
+  }): void => {
+    applyMissionName(generateAutomaticMissionName(), { isAutomatic: true, startNewMission: options.startNewMission })
+  }
+
+  // Renew the automatic name only on launch, and only when a new calendar day has started after Cockpit was closed
+  // long enough to count as a separate mission. Staying open past midnight or restarting briefly keeps the mission,
+  // and custom names are left untouched. The boot value of lastOpenTime is the previous session's last-alive moment.
+  if (
+    !missionName.value ||
+    (missionNameIsAutomatic.value &&
+      shouldRenewAutomaticMissionName(new Date(lastOpenTime.value), new Date(), AUTOMATIC_MISSION_NAME_MIN_IDLE_MS))
+  ) {
+    cycleAutomaticMissionName({ startNewMission: true })
+  }
+
+  // Persist the last moment Cockpit was alive so the next launch can tell how long it was closed.
+  const updateLastOpenTime = (): void => {
+    lastOpenTime.value = Date.now()
+  }
+  const lastOpenTimeUpdateInterval = 60000
+  updateLastOpenTime()
+  setInterval(updateLastOpenTime, lastOpenTimeUpdateInterval)
+  window.addEventListener('beforeunload', updateLastOpenTime)
 
   const currentPlanningWaypoints = reactive<Waypoint[]>([])
   const currentPlanningSurveys = reactive<Survey[]>([])
@@ -118,8 +236,8 @@ export const useMissionStore = defineStore('mission', () => {
   }
 
   const takeSnapshot = (): MissionSnapshot => ({
-    waypoints: JSON.parse(JSON.stringify(currentPlanningWaypoints)) as Waypoint[],
-    surveys: JSON.parse(JSON.stringify(currentPlanningSurveys)) as Survey[],
+    waypoints: toPlain(currentPlanningWaypoints),
+    surveys: toPlain(currentPlanningSurveys),
   })
 
   /**
@@ -181,7 +299,7 @@ export const useMissionStore = defineStore('mission', () => {
     redoStack.length = 0
     syncCounts()
   }
-  const persistedPositionHistory = useBlueOsStorage<WaypointCoordinates[]>('cockpit-vehicle-position-history', [])
+  const persistedPositionHistory = useStorage<WaypointCoordinates[]>('cockpit-vehicle-position-history', [])
   const isVehiclePositionHistoryPersistent = useBlueOsStorage('cockpit-vehicle-position-history-persistent', true)
   const vehiclePositionHistory = ref<WaypointCoordinates[]>([...persistedPositionHistory.value])
   // Revision counter for `vehiclePositionHistory` mutations.
@@ -233,37 +351,10 @@ export const useMissionStore = defineStore('mission', () => {
     )
   }
 
-  const addPointOfInterest = (poi: PointOfInterest): void => {
-    pointsOfInterest.value.push(poi)
-  }
-
-  const updatePointOfInterest = (id: string, poiUpdate: Partial<PointOfInterest>): void => {
-    const index = pointsOfInterest.value.findIndex((p) => p.id === id)
-    if (index !== -1) {
-      pointsOfInterest.value[index] = { ...pointsOfInterest.value[index], ...poiUpdate, timestamp: Date.now() }
-    }
-  }
-
-  const removePointOfInterest = (id: string): void => {
-    const index = pointsOfInterest.value.findIndex((p) => p.id === id)
-    if (index !== -1) {
-      pointsOfInterest.value.splice(index, 1)
-    }
-  }
-
-  const movePointOfInterest = (id: string, newCoordinates: PointOfInterestCoordinates): void => {
-    const poi = pointsOfInterest.value.find((p) => p.id === id)
-    if (poi === undefined) {
-      throw Error(`Could not move Point of Interest. No POI with id ${id} was found.`)
-    }
-    updatePointOfInterest(id, { coordinates: newCoordinates })
-  }
-
   const clearMission = (): void => {
     currentPlanningWaypoints.splice(0)
     currentPlanningSurveys.splice(0)
-    missionName.value = ''
-    missionStartTime.value = new Date()
+    cycleAutomaticMissionName({ startNewMission: true })
   }
 
   const changeUsername = async (): Promise<void> => {
@@ -364,6 +455,10 @@ export const useMissionStore = defineStore('mission', () => {
     if (commandIndex < 0 || commandIndex >= waypoint.commands.length) {
       throw Error(`Invalid command index ${commandIndex} for waypoint ${waypointId}.`)
     }
+    // A waypoint must always keep at least one MAV_CMD_NAV_WAYPOINT, otherwise it is dropped on upload.
+    if (isNavWaypointCommand(waypoint.commands[commandIndex]) && countNavWaypointCommands(waypoint.commands) <= 1) {
+      throw Error(`Cannot remove the last MAV_CMD_NAV_WAYPOINT command from waypoint ${waypointId}.`)
+    }
     waypoint.commands.splice(commandIndex, 1)
   }
 
@@ -374,6 +469,13 @@ export const useMissionStore = defineStore('mission', () => {
     }
     if (commandIndex < 0 || commandIndex >= waypoint.commands.length) {
       throw Error(`Invalid command index ${commandIndex} for waypoint ${waypointId}.`)
+    }
+    const removesLastNavWaypoint =
+      isNavWaypointCommand(waypoint.commands[commandIndex]) &&
+      !isNavWaypointCommand(updatedCommand) &&
+      countNavWaypointCommands(waypoint.commands) <= 1
+    if (removesLastNavWaypoint) {
+      throw Error(`Cannot remove the last MAV_CMD_NAV_WAYPOINT command from waypoint ${waypointId}.`)
     }
     waypoint.commands[commandIndex] = updatedCommand
   }
@@ -495,12 +597,43 @@ export const useMissionStore = defineStore('mission', () => {
 
   let didAutoEndCurrentRun = false
 
+  // Distinguishes a cruise speed the user actually asked for from the untouched default, so a vehicle running a
+  // mission that was never planned here keeps the speed its own parameters define.
+  let cruiseSpeedWasCommanded = false
+
+  /**
+   * Applies the active cruise speed to the vehicle as a live command.
+   * @param {number} [speedMps] - Speed to apply; defaults to the current active cruise speed
+   * @returns {Promise<void>}
+   */
+  const applyCruiseSpeed = async (speedMps: number = cruiseSpeed.value): Promise<void> => {
+    const speed = Number(speedMps)
+    if (!Number.isFinite(speed) || speed <= 0) return
+    cruiseSpeed.value = speed
+    cruiseSpeedWasCommanded = true
+    if (!mainVehicleStore.isVehicleOnline) return
+    await mainVehicleStore.setCruiseSpeed(speed)
+  }
+
+  // Entering a mode resets the autopilot's desired speed to its cruise-speed parameter, and a mission resumed mid-way
+  // never replays the DO_CHANGE_SPEED uploaded with the first waypoint. Only AUTO is re-commanded, so a deliberately
+  // slower Guided leg keeps the speed the pilot chose there.
+  watch(
+    () => mainVehicleStore.mode,
+    (newMode) => {
+      if (newMode !== 'AUTO' || !cruiseSpeedWasCommanded) return
+      applyCruiseSpeed().catch((err) => console.error('Failed to re-apply cruise speed on AUTO mode:', err))
+    }
+  )
+
   // Allow executing missions
   const executeMissionOnVehicle = async (): Promise<boolean> => {
     try {
       mainVehicleStore.clearReachedMissionItems()
       didAutoEndCurrentRun = false
       await mainVehicleStore.startMission()
+      // Re-apply the cruise speed on every start/resume so it is not lost after a pause cycle.
+      await applyCruiseSpeed().catch((err) => console.error('Failed to apply cruise speed on mission start:', err))
       return true
     } catch (error) {
       return false
@@ -539,28 +672,16 @@ export const useMissionStore = defineStore('mission', () => {
     }
   )
 
-  const registerMapMissionActions = (payload: {
-    /**
-     * Download the mission from the vehicle
-     */
-    downloadMissionFromVehicle: () => Promise<void>
-    /**
-     * Clear the map drawing
-     */
-    clearMapDrawing: () => void
-  }): void => {
-    mapDownloadMissionFromVehicle.value = payload.downloadMissionFromVehicle
-    mapClearMapDrawing.value = payload.clearMapDrawing
+  const requestMapClear = (): void => {
+    mapClearRequestRevision.value += 1
   }
 
-  const callMapDownloadMissionFromVehicle = async (): Promise<void> => {
-    if (!mapDownloadMissionFromVehicle.value) return
-    await mapDownloadMissionFromVehicle.value()
+  const requestMapCenterOn = (coordinates: WaypointCoordinates): void => {
+    mapCenterOnRequest.value = { coordinates, revision: (mapCenterOnRequest.value?.revision ?? 0) + 1 }
   }
 
-  const callMapClearMapDrawing = (): void => {
-    if (!mapClearMapDrawing.value) return
-    mapClearMapDrawing.value()
+  const requestMapMissionDownload = (): void => {
+    mapDownloadRequestRevision.value += 1
   }
 
   watch(
@@ -625,11 +746,98 @@ export const useMissionStore = defineStore('mission', () => {
 
   watch(username, () => window.dispatchEvent(new CustomEvent('user-changed', { detail: { username: username.value } })))
 
+  // Prefers the connected vehicle's type and falls back to the planned type for offline planning.
+  // The fallback is gated on `isVehicleOnline` because `mainVehicleStore.vehicleType` is set on
+  // heartbeat but never cleared on disconnect, so a plain `??` would keep returning the stale
+  // last-connected type after the user goes offline.
+  const effectiveVehicleType = computed<MavType | undefined>(() => {
+    return mainVehicleStore.isVehicleOnline
+      ? (mainVehicleStore.vehicleType as MavType | undefined)
+      : plannedVehicleType.value
+  })
+
+  // When `payload.id` matches an existing entry that entry is updated in-place; otherwise a new
+  // entry is prepended.
+  const saveMissionToLibrary = (payload: {
+    /**
+     * Display name for the mission.
+     */
+    name: string
+    /**
+     * Optional description for the mission.
+     */
+    description: string
+    /**
+     * The mission data to persist.
+     */
+    mission: CockpitMission
+    /**
+     * Vehicle type the mission was planned for.
+     */
+    vehicleType?: MavType
+    /**
+     * Mission estimates captured at save time.
+     */
+    estimates?: MissionEstimatesSnapshot
+    /**
+     * Existing entry id to update, or undefined to create a new one.
+     */
+    id?: string
+  }): SavedMission => {
+    const now = Date.now()
+    const thumbnailSvg = generateMissionThumbnailSvg(payload.mission)
+    const existingIndex = payload.id ? savedMissions.value.findIndex((m) => m.id === payload.id) : -1
+
+    if (existingIndex !== -1) {
+      const existing = savedMissions.value[existingIndex]
+      const updated: SavedMission = {
+        ...payload.mission,
+        id: existing.id,
+        name: payload.name,
+        description: payload.description,
+        vehicleType: payload.vehicleType,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+        estimates: payload.estimates,
+      }
+      savedMissions.value.splice(existingIndex, 1, updated)
+      setThumbnail(updated.id, thumbnailSvg)
+      return updated
+    }
+
+    const created: SavedMission = {
+      ...payload.mission,
+      id: uuid(),
+      name: payload.name,
+      description: payload.description,
+      vehicleType: payload.vehicleType,
+      createdAt: now,
+      updatedAt: now,
+      estimates: payload.estimates,
+    }
+    savedMissions.value.unshift(created)
+    setThumbnail(created.id, thumbnailSvg)
+    return created
+  }
+
+  const deleteSavedMission = (id: string): void => {
+    const index = savedMissions.value.findIndex((m) => m.id === id)
+    if (index !== -1) savedMissions.value.splice(index, 1)
+    removeThumbnail(id)
+  }
+
+  const toggleAlwaysShowWaypointNumbers = (): void => {
+    alwaysShowWaypointNumbers.value = !alwaysShowWaypointNumbers.value
+    logUserAction(`${alwaysShowWaypointNumbers.value ? 'Enabled' : 'Disabled'} always-visible waypoint numbers`)
+  }
+
   return {
     username,
     lastConnectedUser,
     changeUsername,
     missionName,
+    missionNameIsAutomatic,
+    applyMissionName,
     lastMissionName,
     missionStartTime,
     currentPlanningWaypoints,
@@ -646,11 +854,11 @@ export const useMissionStore = defineStore('mission', () => {
     saveLastMapPosition,
     setDefaultMapPosition,
     getWaypointNumber,
-    pointsOfInterest,
-    addPointOfInterest,
-    updatePointOfInterest,
-    removePointOfInterest,
-    movePointOfInterest,
+    mapOverlays,
+    addMapOverlay,
+    removeMapOverlay,
+    mapOverlayFocusRequest,
+    requestMapOverlayFocus,
     persistDraft,
     clearDraft,
     bumpVehicleMissionRevision,
@@ -661,13 +869,19 @@ export const useMissionStore = defineStore('mission', () => {
     showMissionCreationTips,
     showChecklistBeforeArm,
     showGridOnMissionPlanning,
+    alwaysShowWaypointNumbers,
+    toggleAlwaysShowWaypointNumbers,
     showMissionEstimates,
     addCommandToWaypoint,
     removeCommandFromWaypoint,
     updateWaypointCommand,
     defaultCruiseSpeed,
+    cruiseSpeed,
+    applyCruiseSpeed,
     userLastMapTileProvider,
     defaultMapTileProvider,
+    userLastMapShowSeamarks,
+    userLastMapShowMarineProfile,
     mapFallbackBaseColor,
     mapFallbackNoiseIntensity,
     mapFallbackSeed,
@@ -681,9 +895,12 @@ export const useMissionStore = defineStore('mission', () => {
     canSkipToPrevWp,
     canSkipToNextWp,
     currentWaypointOnMission,
-    registerMapMissionActions,
-    callMapDownloadMissionFromVehicle,
-    callMapClearMapDrawing,
+    mapClearRequestRevision,
+    mapCenterOnRequest,
+    requestMapCenterOn,
+    mapDownloadRequestRevision,
+    requestMapClear,
+    requestMapMissionDownload,
     vehiclePositionHistory,
     vehiclePositionHistoryRevision,
     isVehiclePositionHistoryPersistent,
@@ -695,5 +912,13 @@ export const useMissionStore = defineStore('mission', () => {
     canUndo,
     canRedo,
     clearUndoStack,
+    homeMarkerPosition,
+    userCommandedHomePosition,
+    plannedVehicleType,
+    effectiveVehicleType,
+    savedMissions,
+    thumbnailUrlFor,
+    saveMissionToLibrary,
+    deleteSavedMission,
   }
 })

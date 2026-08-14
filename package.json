@@ -7,6 +7,7 @@
   "description": "An intuitive and customizable cross-platform ground control station for remote vehicles of all types.",
   "scripts": {
     "build": "vite build",
+    "build:piper": "node scripts/build-piper-macos-arm64.js",
     "build:serve": "vite build && vite preview",
     "coverage": "vitest --coverage",
     "deploy:electron:dir": "ELECTRON=true electron-builder --dir",
@@ -21,7 +22,7 @@
     "dev:electron": "cross-env ELECTRON=true vite --host",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
     "lint:fix": "eslint --fix . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --ignore-path .gitignore --max-warnings=0",
-    "postinstall": "node scripts/download-ffmpeg.js && node scripts/download-go2rtc.js && node scripts/verify-sdl.js",
+    "postinstall": "node scripts/download-ffmpeg.js && node scripts/download-go2rtc.js && node scripts/download-piper.js && node scripts/verify-sdl.js",
     "preview": "vite preview --port 5050",
     "serve": "vite preview",
     "test:ci": "vitest --coverage --run",
@@ -60,6 +61,9 @@
     "flowbite": "^2.2.1",
     "flowbite-vue": "^0.1.2",
     "fuse.js": "^7.0.0",
+    "geo-extent": "^1.5.0",
+    "geotiff": "^3.0.5",
+    "geotiff-epsg-code": "^0.3.1",
     "gsap": "^3.11.3",
     "hammerjs": "^2.0.8",
     "haversine-distance": "^1.2.1",
@@ -169,10 +173,20 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "binaries/piper/",
+        "to": "piper/",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "appId": "org.bluerobotics.cockpit",
     "productName": "Cockpit",
+    "extraMetadata": {
+      "description": "Cockpit"
+    },
     "publish": {
       "provider": "github",
       "owner": "bluerobotics"
@@ -195,7 +209,9 @@
       "allowToChangeInstallationDirectory": true
     },
     "linux": {
-      "icon": "public/pwa-512x512.png"
+      "icon": "public/pwa-512x512.png",
+      "target": ["AppImage"],
+      "description": "An intuitive and customizable cross-platform ground control station for remote vehicles of all types."
     },
     "flatpak": {
       "base": "org.electronjs.Electron2.BaseApp",

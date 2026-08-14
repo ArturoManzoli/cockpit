@@ -1,7 +1,7 @@
 <template>
   <div
     ref="miniMissionControlPanel"
-    class="flex justify-around px-2 py-1 text-center rounded-lg w-[220px] h-9 align-center text-white bg-slate-800/60"
+    class="flex justify-around px-2 py-1 text-center rounded-lg w-[252px] h-9 align-center text-white bg-slate-800/60"
   >
     <div
       class="flex gap-1 items-center overflow-hidden"
@@ -16,7 +16,7 @@
             variant="text"
             class="text-[16px]"
             :disabled="!missionStore.canSkipToPrevWp"
-            @click.stop="missionStore.skipToWaypoint(-1)"
+            @click.stop="skipToPreviousWaypoint"
           />
         </template>
       </v-tooltip>
@@ -46,10 +46,11 @@
             variant="text"
             class="text-[16px]"
             :disabled="!missionStore.canSkipToNextWp || !vehicleStore.isVehicleOnline"
-            @click.stop="missionStore.skipToWaypoint(1)"
+            @click.stop="skipToNextWaypoint"
           />
         </template>
       </v-tooltip>
+      <CruiseSpeedControl compact />
       <v-tooltip location="top" open-delay="800" text="Return to home">
         <template #activator="{ props: homeProps }">
           <v-btn
@@ -75,6 +76,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import CruiseSpeedControl from '@/components/mission-planning/CruiseSpeedControl.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { openSnackbar } from '@/composables/snackbar'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
@@ -88,6 +90,16 @@ const currentWaypointOnMission = computed<string>((): string => {
   const wpIndex = missionStore.currentWaypointOnMission
   return wpIndex > 0 ? wpIndex.toString() : '--'
 })
+
+const skipToPreviousWaypoint = (): void => {
+  logUserAction('Skipped to previous mission waypoint')
+  missionStore.skipToWaypoint(-1)
+}
+
+const skipToNextWaypoint = (): void => {
+  logUserAction('Skipped to next mission waypoint')
+  missionStore.skipToWaypoint(1)
+}
 
 const handleReturnHome = (): void => {
   showDialog({
@@ -104,6 +116,7 @@ const handleReturnHome = (): void => {
         text: 'Confirm',
         size: 'small',
         action: () => {
+          logUserAction('Confirmed return to home')
           closeDialog()
           vehicleStore.returnHome().catch((err) => {
             openSnackbar({
@@ -120,8 +133,10 @@ const handleReturnHome = (): void => {
 const handlePlayAndPause = async (): Promise<void> => {
   try {
     if (!missionStore.isMissionRunning) {
+      logUserAction('Started/resumed mission')
       missionStore.executeMissionOnVehicle()
     } else {
+      logUserAction('Paused mission')
       await vehicleStore.pauseMission()
     }
   } catch (err) {

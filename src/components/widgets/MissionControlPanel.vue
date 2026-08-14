@@ -1,5 +1,5 @@
 <template>
-  <div class="min-w-[280px] min-h-[95px] flex items-end">
+  <div class="min-w-[290px] min-h-[95px] flex items-end">
     <div
       class="w-full rounded-lg overflow-hidden -mt-2"
       :class="[isWrapped ? 'h-[42px]' : 'h-full']"
@@ -36,7 +36,7 @@
                     variant="text"
                     class="text-[20px]"
                     :disabled="!missionStore.canSkipToPrevWp || !vehicleStore.isVehicleOnline"
-                    @click.stop="missionStore.skipToWaypoint(-1)"
+                    @click.stop="skipToPreviousWaypoint"
                   />
                 </template>
               </v-tooltip>
@@ -66,11 +66,12 @@
                     variant="text"
                     class="text-[20px]"
                     :disabled="!missionStore.canSkipToNextWp || !vehicleStore.isVehicleOnline"
-                    @click.stop="missionStore.skipToWaypoint(1)"
+                    @click.stop="skipToNextWaypoint"
                   />
                 </template>
               </v-tooltip>
               <v-divider vertical class="h-[25px] mt-[3px] mx-1 opacity-10" />
+              <CruiseSpeedControl />
               <v-tooltip location="top" open-delay="800" text="Return to home">
                 <template #activator="{ props: homeProps }">
                   <v-btn
@@ -78,7 +79,7 @@
                     size="x-small"
                     icon="mdi-home-circle"
                     variant="text"
-                    class="text-[19px] mr-1"
+                    class="text-[18px] mr-1"
                     :disabled="!vehicleStore.isVehicleOnline"
                     @click.stop="handleReturnHome"
                   />
@@ -112,11 +113,7 @@
                     <v-list-item-title>Download mission from vehicle</v-list-item-title>
                   </v-list-item>
 
-                  <v-list-item
-                    :disabled="!vehicleStore.isVehicleOnline"
-                    class="cursor-pointer"
-                    @click="handleClearMissionOnMap"
-                  >
+                  <v-list-item class="cursor-pointer" @click="handleClearMissionOnMap">
                     <v-list-item-title>Clear mission on map</v-list-item-title>
                   </v-list-item>
                 </v-list>
@@ -132,6 +129,7 @@
 <script setup lang="ts">
 import { computed, onBeforeMount, ref, toRefs } from 'vue'
 
+import CruiseSpeedControl from '@/components/mission-planning/CruiseSpeedControl.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { openSnackbar } from '@/composables/snackbar'
 import { useAppInterfaceStore } from '@/stores/appInterface'
@@ -182,12 +180,24 @@ const widgetSize = {
   height: 0.09641222207770606,
 }
 
+const skipToPreviousWaypoint = (): void => {
+  logUserAction('Skipped to previous mission waypoint')
+  missionStore.skipToWaypoint(-1)
+}
+
+const skipToNextWaypoint = (): void => {
+  logUserAction('Skipped to next mission waypoint')
+  missionStore.skipToWaypoint(1)
+}
+
 const handleDownloadMissionOnMap = async (): Promise<void> => {
-  await missionStore.callMapDownloadMissionFromVehicle()
+  logUserAction('Requested mission download from vehicle to map')
+  missionStore.requestMapMissionDownload()
 }
 
 const handleClearMissionOnMap = (): void => {
-  missionStore.callMapClearMapDrawing()
+  logUserAction('Cleared mission drawn on map')
+  missionStore.requestMapClear()
 }
 
 onBeforeMount(() => {
@@ -210,6 +220,7 @@ const handleReturnHome = (): void => {
         text: 'Confirm',
         size: 'small',
         action: () => {
+          logUserAction('Confirmed return to home from mission control panel')
           closeDialog()
           vehicleStore.returnHome().catch((err) => {
             openSnackbar({
@@ -226,8 +237,10 @@ const handleReturnHome = (): void => {
 const handlePlayAndPause = async (): Promise<void> => {
   try {
     if (!missionStore.isMissionRunning) {
+      logUserAction('Started/resumed mission from mission control panel')
       missionStore.executeMissionOnVehicle()
     } else {
+      logUserAction('Paused mission from mission control panel')
       await vehicleStore.pauseMission()
     }
   } catch (err) {

@@ -19,6 +19,7 @@ import VueVirtualScroller from 'vue-virtual-scroller'
 
 import { initializeActionAutoRun } from '@/libs/actions/auto-run'
 import { app_version } from '@/libs/cosmos'
+import { dataLakeLogger } from '@/libs/data-lake-logging'
 import eventTracker, {
   defaultShareHardwareDetails,
   getSystemInfoForTelemetry,
@@ -26,6 +27,7 @@ import eventTracker, {
 } from '@/libs/external-telemetry/event-tracking'
 import { setupPredefinedLakeAndActionResources } from '@/libs/joystick/protocols/predefined-resources'
 import { setupPostPiniaConnections } from '@/libs/post-pinia-connections'
+import { initGnss } from '@/libs/sensors/gnss'
 import { datalogger } from '@/libs/sensors-logging'
 import { runMigrations } from '@/utils/migrations'
 
@@ -96,8 +98,14 @@ setupPredefinedLakeAndActionResources()
 // Initialize auto-run for actions
 initializeActionAutoRun()
 
+// Boot the GNSS reading pipeline so configured devices post to the data lake independently of the UI
+initGnss()
+
 // Start logging as soon as the app is loaded to always have telemetry for videos
 datalogger.startLogging('cockpit-telemetry-logging')
+
+// Start recording selected data lake variables for CSV/JSON export (seeds from the overlay on first run)
+dataLakeLogger.startLogging()
 
 // If the app has successfully loaded, announce that so the console capture can be stopped
 window.dispatchEvent(new CustomEvent('cockpit-app-loaded'))

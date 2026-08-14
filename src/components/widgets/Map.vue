@@ -33,12 +33,35 @@
           <v-list-item class="py-0" title="Save visible Seamarks tiles" @click="saveSeamarks" />
         </v-list>
       </v-menu>
+      <v-tooltip
+        location="top"
+        :text="
+          missionStore.alwaysShowWaypointNumbers
+            ? 'Hide waypoint numbers when zoomed out'
+            : 'Always show waypoint numbers'
+        "
+      >
+        <template #activator="{ props: tooltipProps }">
+          <v-btn
+            v-show="showButtons"
+            :style="interfaceStore.globalGlassMenuStyles"
+            v-bind="tooltipProps"
+            class="absolute right-[134px] m-3 bottom-button bg-slate-50 text-[14px]"
+            elevation="2"
+            size="x-small"
+            style="z-index: 1002; border-radius: 0px"
+            :color="missionStore.alwaysShowWaypointNumbers ? 'primary' : ''"
+            icon="mdi-numeric-1-circle-outline"
+            @click="missionStore.toggleAlwaysShowWaypointNumbers()"
+          />
+        </template>
+      </v-tooltip>
       <v-tooltip location="top" text="Switch to Mission Planning mode">
         <template #activator="{ props: tooltipProps }">
           <v-btn
             v-if="showButtons"
             v-bind="tooltipProps"
-            class="absolute right-[148px] w-[140px] mb-[13px] bottom-button bg-slate-50 text-[12px] font-bold"
+            class="absolute right-[193px] w-[140px] mb-[13px] bottom-button bg-slate-50 text-[12px] font-bold"
             elevation="4"
             text="Edit mission"
             append-icon="mdi-map-marker-radius-outline"
@@ -46,89 +69,23 @@
             :style="interfaceStore.globalGlassMenuStyles"
             hide-details
             size="small"
-            @click.stop="router.push('/mission-planning')"
+            @click.stop="navigateToMissionPlanning"
           />
         </template>
       </v-tooltip>
-      <v-speed-dial
-        v-model="speedDialOpen"
-        location="top center"
-        transition="slide-y-reverse-transition"
-        content-class="speed-dial-glow"
-      >
-        <template #activator="{ props: activatorProps }">
-          <v-tooltip location="top" :text="centerActivatorTooltipText" :disabled="speedDialOpen">
-            <template #activator="{ props: tooltipProps }">
-              <v-btn
-                v-if="showButtons"
-                v-bind="{ ...activatorProps, ...tooltipProps }"
-                class="absolute right-[44px] m-3 bottom-button bg-slate-50 text-[14px]"
-                :style="interfaceStore.globalGlassMenuStyles"
-                :color="followerTarget !== undefined ? 'red' : ''"
-                elevation="2"
-                style="z-index: 1002; border-radius: 0px"
-                icon="mdi-crosshairs-gps"
-                size="x-small"
-              />
-            </template>
-          </v-tooltip>
-        </template>
-        <v-tooltip location="left" :text="centerMissionButtonTooltipText">
-          <template #activator="{ props: tooltipProps }">
-            <v-btn
-              key="mission"
-              v-bind="tooltipProps"
-              class="bg-slate-50 text-[14px]"
-              :style="[interfaceStore.globalGlassMenuStyles, !hasMissionWaypoints ? { color: '#FFFFFF33' } : {}]"
-              :class="!hasMissionWaypoints ? 'active-events-on-disabled' : ''"
-              elevation="2"
-              style="border-radius: 0px"
-              icon="mdi-map-marker-path"
-              size="x-small"
-              :disabled="!hasMissionWaypoints"
-              @click.stop="centerOnMission"
-            />
-          </template>
-        </v-tooltip>
-        <v-tooltip location="left" :text="centerHomeButtonTooltipText">
-          <template #activator="{ props: tooltipProps }">
-            <v-btn
-              key="home"
-              v-bind="tooltipProps"
-              class="bg-slate-50 text-[14px]"
-              :style="[interfaceStore.globalGlassMenuStyles, !home ? { color: '#FFFFFF33' } : {}]"
-              :class="!home ? 'active-events-on-disabled' : ''"
-              :color="followerTarget == WhoToFollow.HOME ? 'red' : ''"
-              elevation="2"
-              style="border-radius: 0px"
-              icon="mdi-home-search"
-              size="x-small"
-              :disabled="!home"
-              @click.stop="targetFollower.goToTarget(WhoToFollow.HOME, true)"
-              @dblclick.stop="targetFollower.follow(WhoToFollow.HOME)"
-            />
-          </template>
-        </v-tooltip>
-        <v-tooltip location="left" :text="centerVehicleButtonTooltipText">
-          <template #activator="{ props: tooltipProps }">
-            <v-btn
-              key="vehicle"
-              v-bind="tooltipProps"
-              class="bg-slate-50 text-[14px]"
-              :style="[interfaceStore.globalGlassMenuStyles, !vehiclePosition ? { color: '#FFFFFF33' } : {}]"
-              :class="!vehiclePosition ? 'active-events-on-disabled' : ''"
-              :color="followerTarget == WhoToFollow.VEHICLE ? 'red' : ''"
-              elevation="2"
-              style="border-radius: 0px"
-              icon="mdi-airplane-marker"
-              size="x-small"
-              :disabled="!vehiclePosition"
-              @click.stop="targetFollower.goToTarget(WhoToFollow.VEHICLE, true)"
-              @dblclick.stop="targetFollower.follow(WhoToFollow.VEHICLE)"
-            />
-          </template>
-        </v-tooltip>
-      </v-speed-dial>
+      <MapCenterControl
+        v-if="showButtons"
+        v-model:open="speedDialOpen"
+        :target-follower="targetFollower"
+        :follower-target="followerTarget"
+        :home="home"
+        :vehicle-position="vehiclePosition"
+        :is-vehicle-online="vehicleStore.isVehicleOnline"
+        :has-mission-waypoints="hasMissionWaypoints"
+        :activator-style="{ bottom: bottomButtonsDisplacement }"
+        @center-on-mission="centerOnMission"
+      />
+      <MapNorthIndicator v-if="showButtons" class="north-indicator" />
       <PoiMapArrows
         :map-ready="mapReady"
         :show-poi-arrows="widget.options.showPoiArrows"
@@ -152,6 +109,15 @@
     @close="hideContextMenuAndMarker"
   >
   </ContextMenu>
+
+  <PoiActionPopup
+    ref="poiPopupRef"
+    :goto-target-id="poiGotoTargetId"
+    @goto="poiGoTo.onPoiGoTo"
+    @cancel-goto="poiGoTo.onPoiCancelGoTo"
+    @edit="onPoiEdit"
+    @delete="onPoiDelete"
+  />
 
   <v-dialog v-model="widgetStore.widgetManagerVars(widget.hash).configMenuOpen" width="auto">
     <v-card class="pa-2" :style="interfaceStore.globalGlassMenuStyles">
@@ -231,6 +197,7 @@
   </p>
 
   <PoiManager ref="poiManagerMapWidgetRef" />
+  <MapOverlaysDialog v-model="overlaysDialogOpen" :loading-ids="overlayLoadingIds" />
   <MissionChecklist
     :model-value="isMissionChecklistOpen"
     @confirmed="executeMissionOnVehicle"
@@ -243,14 +210,6 @@
     :initial-longitude="globalOriginLongitude"
     @origin-set="onGlobalOriginSet"
   />
-  <MissionControlPanel
-    v-model="widget.options.showMissionControlPanel"
-    :map-waypoints="mapWaypoints"
-    @download-mission-from-vehicle="downloadMissionFromVehicle"
-    @clear-map-drawing="clearMapDrawing"
-    @try-to-start-mission="tryToStartMission"
-    @hide-control-panel="hideControlPanel"
-  />
   <div
     v-if="isSavingOfflineTiles"
     class="absolute top-14 left-2 flex justify-start items-center text-white text-md py-2 px-4 rounded-lg"
@@ -258,19 +217,18 @@
   >
     <p>
       Saving offline map content
-      <span v-if="savingLayerName">({{ savingLayerName }})</span>:&nbsp;
-      {{ tilesTotal ? Math.round((tilesSaved / tilesTotal) * 100) : 0 }}%
+      <span v-if="savingLayerName">({{ savingLayerName }})</span>:&nbsp; {{ savePercentage }}%
+      <span v-if="estimatedDownloadedMB && estimatedTotalMB">
+        (~{{ estimatedDownloadedMB }} / {{ estimatedTotalMB }} MB)
+      </span>
     </p>
   </div>
 </template>
 
 <script setup lang="ts">
-import 'leaflet-edgebuffer'
-
 import { useDebounceFn, useElementHover } from '@vueuse/core'
 import { formatDistanceToNow } from 'date-fns'
-import L, { type LatLngTuple, LayersControlEvent, LeafletMouseEvent, Map } from 'leaflet'
-import { SaveStatus, savetiles, tileLayerOffline } from 'leaflet.offline'
+import L, { type LatLngTuple, LeafletMouseEvent, Map } from 'leaflet'
 import {
   computed,
   nextTick,
@@ -289,30 +247,48 @@ import copterMarkerImage from '@/assets/arducopter-top-view.avif'
 import blueboatMarkerImage from '@/assets/blueboat-marker.avif'
 import brov2MarkerImage from '@/assets/brov2-marker.avif'
 import genericVehicleMarkerImage from '@/assets/generic-vehicle-marker.avif'
+import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import GlobalOriginDialog from '@/components/GlobalOriginDialog.vue'
+import MapNorthIndicator from '@/components/map/MapNorthIndicator.vue'
+import MapOverlaysDialog from '@/components/map/MapOverlaysDialog.vue'
+import MapCenterControl from '@/components/MapCenterControl.vue'
 import MissionChecklist from '@/components/MissionChecklist.vue'
+import PoiActionPopup from '@/components/poi/PoiActionPopup.vue'
 import PoiManager from '@/components/poi/PoiManager.vue'
 import PoiMapArrows from '@/components/poi/PoiMapArrows.vue'
 import { useInteractionDialog } from '@/composables/interactionDialog'
 import { provideMapContext } from '@/composables/map/useMapContext'
+import { useMapOverlays } from '@/composables/map/useMapOverlays'
+import { useMapPoiGoTo } from '@/composables/map/useMapPoiGoTo'
+import { useMapPoiMarkers } from '@/composables/map/useMapPoiMarkers'
+import { useMapTileLayers } from '@/composables/map/useMapTileLayers'
+import { useMapTileLayerSelection } from '@/composables/map/useMapTileLayerSelection'
+import { useWaypointMarkerSize } from '@/composables/map/useWaypointMarkerSize'
 import { openSnackbar } from '@/composables/snackbar'
+import { useOfflineTiles } from '@/composables/useOfflineTiles'
+import { usePointsOfInterest } from '@/composables/usePointsOfInterest'
 import { MavCmd, MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import type { NoiseTileOptions } from '@/libs/map/map-tile-fallback'
 import { attachTileNoiseFallback, refreshNoiseFallbackTiles } from '@/libs/map/map-tile-fallback'
-import { createGridOverlay, fitMapToWaypoints, TargetFollower, WhoToFollow } from '@/libs/map/utils-map'
+import {
+  createGridOverlay,
+  fitMapToWaypoints,
+  persistLiveMapView,
+  singleStepZoomMapOptions,
+  TargetFollower,
+  WhoToFollow,
+} from '@/libs/map/utils-map'
 import { datalogger, DatalogVariable } from '@/libs/sensors-logging'
-import { degrees } from '@/libs/utils'
+import { copyToClipboard, degrees, messageFromError } from '@/libs/utils'
 import type { MAVLinkVehicle } from '@/libs/vehicle/mavlink/vehicle'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useMissionStore } from '@/stores/mission'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
-import { DialogActions } from '@/types/general'
 import type {
   IconDimensions,
-  MapTileProvider,
   MarkerSizes,
-  PointOfInterest,
+  ResolvedPointOfInterest,
   Waypoint,
   WaypointCoordinates,
 } from '@/types/mission'
@@ -326,11 +302,22 @@ const props = defineProps<{ widget: Widget }>()
 const widget = toRefs(props).widget
 const interfaceStore = useAppInterfaceStore()
 const { showDialog, closeDialog } = useInteractionDialog()
+const {
+  isSavingOfflineTiles,
+  savingLayerName,
+  estimatedTotalMB,
+  estimatedDownloadedMB,
+  savePercentage,
+  downloadOfflineMapTiles,
+  attachOfflineProgress,
+} = useOfflineTiles({ showDialog, closeDialog, openSnackbar })
 // Instantiate the necessary stores
 const vehicleStore = useMainVehicleStore()
 const missionStore = useMissionStore()
 const widgetStore = useWidgetManagerStore()
 const router = useRouter()
+
+const { removePointOfInterest } = usePointsOfInterest()
 
 const mapContext = provideMapContext()
 
@@ -339,10 +326,10 @@ const map = shallowRef<Map | undefined>()
 
 const zoom = ref(missionStore.userLastMapZoom ?? missionStore.defaultMapZoom)
 const mapCenter = ref<WaypointCoordinates>(missionStore.userLastMapCenter ?? missionStore.defaultMapCenter)
-const home = ref()
 const mapId = computed(() => `map-${widget.value.hash}`)
+const speedDialOpen = ref(false)
 const showButtons = computed(
-  () => isMouseOver.value || downloadMenuOpen.value || widgetStore.isFullScreen(widget.value)
+  () => isMouseOver.value || downloadMenuOpen.value || speedDialOpen.value || widgetStore.isFullScreen(widget.value)
 )
 const mapReady = ref(false)
 const mapWaypoints = ref<Waypoint[]>([])
@@ -351,17 +338,19 @@ const contextMenuRef = ref()
 const isDragging = ref(false)
 const isPinching = ref(false)
 const isMissionChecklistOpen = ref(false)
-const isSavingOfflineTiles = ref(false)
-const tilesSaved = ref(0)
-const tilesTotal = ref(0)
-const savingLayerName = ref<string>('')
 let esriSaveBtn: HTMLAnchorElement | undefined
 let osmSaveBtn: HTMLAnchorElement | undefined
 let seamarksSaveBtn: HTMLAnchorElement | undefined
 const downloadMenuOpen = ref(false)
-const speedDialOpen = ref(false)
 const missionItemsInVehicle = ref<Waypoint[]>([])
 const missionSeqToMarkerSeq = shallowRef<Record<number, number>>({})
+
+const home = computed({
+  get: () => missionStore.homeMarkerPosition,
+  set: (value: WaypointCoordinates | undefined) => {
+    missionStore.homeMarkerPosition = value
+  },
+})
 
 const glassMenuCssVars = computed(() => ({
   '--glass-background': interfaceStore.globalGlassMenuStyles.backgroundColor,
@@ -372,14 +361,17 @@ const glassMenuCssVars = computed(() => ({
 }))
 
 const saveEsri = (): void => {
+  logUserAction('Saved visible Esri map tiles for offline use')
   esriSaveBtn?.click()
   downloadMenuOpen.value = false
 }
 const saveOSM = (): void => {
+  logUserAction('Saved visible OSM map tiles for offline use')
   osmSaveBtn?.click()
   downloadMenuOpen.value = false
 }
 const saveSeamarks = (): void => {
+  logUserAction('Saved visible Seamarks map tiles for offline use')
   seamarksSaveBtn?.click()
   downloadMenuOpen.value = false
 }
@@ -400,6 +392,7 @@ const onTouchStart = (e: TouchEvent): void => {
   if (e.touches.length > 1) {
     isPinching.value = true
     if (contextMenuVisible.value) hideContextMenuAndMarker()
+    poiPopupRef.value?.close()
     clearTimeout(pinchTimeout)
   }
 }
@@ -424,11 +417,9 @@ const getReachedWaypointIndices = computed(() => {
   return waypointIndices
 })
 
-const getMarkerSizeFromZoom = (zoomLevel: number): MarkerSizes => {
-  if (zoomLevel <= 17) return 'xs'
-  if (zoomLevel > 17 && zoomLevel <= 19) return 'sm'
-  return 'md'
-}
+const { getEffectiveMarkerSize } = useWaypointMarkerSize(() => {
+  if (map.value) refreshReachedWaypointMarkerStyles()
+})
 
 const getIconDimensionsFromMarkerSize = (size: MarkerSizes): IconDimensions => {
   if (size === 'xs') {
@@ -447,7 +438,7 @@ const createWaypointMarkerHtml = (isReached: boolean, isCurrent = false): string
   } else if (isCurrent) {
     baseClass = 'marker-icon marker-icon-active'
   }
-  const size = getMarkerSizeFromZoom(zoom.value)
+  const size = getEffectiveMarkerSize(zoom.value)
   const markerSizeClass = `wp-marker-${size}`
 
   return `
@@ -458,7 +449,7 @@ const createWaypointMarkerHtml = (isReached: boolean, isCurrent = false): string
 }
 
 const createWaypointMarkerIcon = (isReached: boolean, isCurrent = false): L.DivIcon => {
-  const markerSize = getMarkerSizeFromZoom(zoom.value)
+  const markerSize = getEffectiveMarkerSize(zoom.value)
   const dimensions = getIconDimensionsFromMarkerSize(markerSize)
 
   return L.divIcon({
@@ -475,7 +466,7 @@ const applyWaypointMarkerStyle = (seq: number): void => {
   const isReached = getReachedWaypointIndices.value.has(seq)
   const idx = seq - 1
   const isCurrent = currentMapWpIndex.value >= 0 && idx === currentMapWpIndex.value
-  const markerSize = getMarkerSizeFromZoom(zoom.value)
+  const markerSize = getEffectiveMarkerSize(zoom.value)
   const dimensions = getIconDimensionsFromMarkerSize(markerSize)
 
   marker.setIcon(
@@ -490,11 +481,7 @@ const applyWaypointMarkerStyle = (seq: number): void => {
   // Updates the tooltip class for reached/current waypoints and visibility based on size
   const tooltip = marker.getTooltip()
   if (tooltip) {
-    if (markerSize === 'xs' || markerSize === 'sm') {
-      tooltip.setOpacity(0)
-    } else {
-      tooltip.setOpacity(1)
-    }
+    tooltip.setOpacity(markerSize === 'md' ? 1 : 0)
 
     const tooltipElement = tooltip.getElement()
     if (tooltipElement) {
@@ -513,7 +500,70 @@ const refreshReachedWaypointMarkerStyles = (): void => {
 }
 
 const poiManagerMapWidgetRef = ref<typeof PoiManager | null>(null)
-const mapWidgetPoiMarkers = shallowRef<{ [id: string]: L.Marker }>({})
+const poiPopupRef = ref<InstanceType<typeof PoiActionPopup> | null>(null)
+
+const poiMarkers = useMapPoiMarkers(map, {
+  iconClassName: 'poi-marker-icon-widget',
+  tooltipClassName: 'poi-tooltip-widget',
+  onContextMenu: (poi, event) => {
+    if (contextMenuVisible.value) hideContextMenuAndMarker()
+    poiPopupRef.value?.open(poi, event)
+  },
+})
+const poiGotoTargetId = poiMarkers.gotoTargetId
+
+// Sends a GoTo-family MAVLink command to the vehicle for the given coordinates, reporting failures via
+// the given message. Shared by the regular map-click GoTo flow, PoI GoTo, and PoI-follow target updates.
+const sendGoToCommand = async (
+  coordinates: WaypointCoordinates,
+  failureMessage: string,
+  skipConfirmation = false
+): Promise<void> => {
+  const hold = 0
+  const acceptanceRadius = 0
+  const passRadius = 0
+  const yaw = 0
+  const altitude = vehicleStore.coordinates.altitude ?? 0
+
+  try {
+    await vehicleStore.goTo(
+      hold,
+      acceptanceRadius,
+      passRadius,
+      yaw,
+      coordinates[0],
+      coordinates[1],
+      altitude,
+      skipConfirmation
+    )
+  } catch (error) {
+    openSnackbar({ message: `${failureMessage}: ${(error as Error).message}`, variant: 'error' })
+    throw error
+  }
+}
+
+const issueGoto = (coordinates: WaypointCoordinates): Promise<void> =>
+  sendGoToCommand(coordinates, 'GoTo request failed')
+
+const updateGotoTarget = (coordinates: WaypointCoordinates): Promise<void> =>
+  sendGoToCommand(coordinates, 'Failed to update GoTo target', true)
+
+const poiGoTo = useMapPoiGoTo(poiMarkers, { issueGoto, updateGotoTarget })
+
+const onPoiEdit = (poi: ResolvedPointOfInterest): void => {
+  if (!poiManagerMapWidgetRef.value) {
+    openSnackbar({ message: 'POI Manager (map widget) is not available.', variant: 'error' })
+    return
+  }
+  poiManagerMapWidgetRef.value.openDialog(undefined, poi)
+}
+
+const onPoiDelete = async (poi: ResolvedPointOfInterest): Promise<void> => {
+  if (poiMarkers.gotoTargetId.value === poi.id) {
+    await poiGoTo.onPoiCancelGoTo()
+  }
+  removePointOfInterest(poi.id)
+}
 
 // Register the usage of the coordinate variables for logging
 datalogger.registerUsage(DatalogVariable.latitude)
@@ -533,9 +583,6 @@ onBeforeMount(() => {
   if (widget.value.options.showCoordinateGrid === undefined) {
     widget.value.options.showCoordinateGrid = false
   }
-  if (widget.value.options.showMissionControlPanel === undefined) {
-    widget.value.options.showMissionControlPanel = true
-  }
   if (widget.value.options.showPoiArrows === undefined) {
     widget.value.options.showPoiArrows = true
   }
@@ -548,65 +595,18 @@ onBeforeMount(() => {
   targetFollower.enableAutoUpdate()
 })
 
-const tileBufferOptions = { edgeBufferTiles: 2, keepBuffer: 8, updateWhenIdle: false } as const
+// Build the shared base maps and overlays (tile-provider definitions live in useMapTileLayers)
+const tileLayers = useMapTileLayers({ seamarks: true, marineProfile: true })
+const { osm, esri, overlays } = tileLayers
+const seamarks = overlays['Seamarks']
 
-// Configure the available map tile providers
-const osm = tileLayerOffline('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 23,
-  maxNativeZoom: 19,
-  attribution: '© OpenStreetMap',
-  // Required by the OSM tile usage policy: tiles requested without a Referer are blocked (403R).
-  // See https://wiki.openstreetmap.org/wiki/Referer
-  referrerPolicy: 'strict-origin-when-cross-origin',
-  // CORS is required so the noise-fallback utility can read tile pixels via canvas
-  // to detect placeholder tiles that return HTTP 200.
-  crossOrigin: 'anonymous',
-  ...tileBufferOptions,
-})
+// Restore and persist the user's base-map and overlay selection
+const { getInitialLayers, createLayerControl, registerLayerSync } = useMapTileLayerSelection(tileLayers)
 
-const esri = tileLayerOffline(
-  // `blankTile=false` makes ArcGIS return HTTP 404 for missing tiles instead of a
-  // "Map data not yet available" placeholder image. This lets the standard `tileerror`
-  // path drive our procedural-noise fallback.
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false',
-  {
-    maxZoom: 23,
-    maxNativeZoom: 19,
-    attribution: '© Esri World Imagery',
-    // CORS is required so the noise-fallback utility can read tile pixels via canvas
-    // to detect any remaining provider-side placeholders that still return HTTP 200.
-    crossOrigin: 'anonymous',
-    ...tileBufferOptions,
-  }
-)
-
-// Overlays
-const seamarks = tileLayerOffline('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
-  maxZoom: 18,
-  attribution: '© OpenSeaMap contributors',
-  ...tileBufferOptions,
-})
-
-const marineProfile = L.tileLayer.wms('https://geoserver.openseamap.org/geoserver/gwc/service/wms', {
-  layers: 'gebco2021:gebco_2021',
-  format: 'image/png',
-  transparent: true,
-  version: '1.1.1',
-  attribution: '© GEBCO, OpenSeaMap',
-  tileSize: 256,
-  maxZoom: 19,
-  ...tileBufferOptions,
-})
-
-const baseMaps = {
-  'OpenStreetMap': osm,
-  'Esri World Imagery': esri,
-}
-
-const overlays = {
-  'Seamarks': seamarks,
-  'Marine Profile': marineProfile,
-}
+// Syncs user-loaded GeoTIFF overlays (sonar/bathymetry surveys) onto this map
+const mapOverlays = useMapOverlays()
+const overlayLoadingIds = mapOverlays.loadingIds
+const overlaysDialogOpen = ref(false)
 
 // Replace failed tiles with a procedural noise background sampled by lat/lon
 const getTileFallbackOptions = (): NoiseTileOptions => ({
@@ -618,6 +618,7 @@ const detachTileFallbacks: (() => void)[] = [
   attachTileNoiseFallback(osm, getTileFallbackOptions),
   attachTileNoiseFallback(esri, getTileFallbackOptions),
 ]
+let stopUnFollowOnUserDrag: (() => void) | undefined
 
 watch(
   () => [missionStore.mapFallbackBaseColor, missionStore.mapFallbackSeed, missionStore.mapFallbackNoiseIntensity],
@@ -633,7 +634,7 @@ const mapBase = ref<HTMLElement>()
 const isMouseOver = useElementHover(mapBase)
 
 const zoomControl = L.control.zoom({ position: 'bottomright' })
-const layerControl = L.control.layers(baseMaps, overlays)
+const layerControl = createLayerControl()
 const gridLayer = shallowRef<L.LayerGroup | undefined>(undefined)
 
 watch(showButtons, () => {
@@ -647,10 +648,6 @@ watch(showButtons, () => {
     map.value.removeControl(layerControl)
     removeScaleControl()
   }
-})
-
-watch(isMouseOver, () => {
-  showButtons.value = isMouseOver.value
 })
 
 // Watch for grid overlay option changes
@@ -747,54 +744,25 @@ onMounted(async () => {
 
   mapBase.value?.addEventListener('touchstart', onTouchStart, { passive: true })
   mapBase.value?.addEventListener('touchend', onTouchEnd, { passive: true })
-  const preferredProvider =
-    missionStore.defaultMapTileProvider === 'Use last selected'
-      ? missionStore.userLastMapTileProvider
-      : missionStore.defaultMapTileProvider
-  const initialBaseLayer = baseMaps[preferredProvider] || esri
-
   // Bind leaflet instance to map element
   map.value = L.map(mapId.value, {
-    layers: [initialBaseLayer, seamarks, marineProfile],
+    layers: getInitialLayers(),
     attributionControl: false,
+    ...singleStepZoomMapOptions,
   }).setView(mapCenter.value as LatLngTuple, zoom.value) as Map
 
   // Expose the Leaflet instance to descendant components via the map context
   mapContext.map.value = map.value
   mapContext.mapReady.value = true
 
-  // Listen for base layer changes to save user preference
-  map.value.on('baselayerchange', (event: LayersControlEvent) => {
-    const name = event.name
-    if (!name.includes(name as MapTileProvider)) {
-      return
-    }
-    missionStore.userLastMapTileProvider = event.name as MapTileProvider
-  })
-
-  // React to changes on the default tile provider preference
-  watch(
-    () => missionStore.defaultMapTileProvider,
-    (newPref) => {
-      if (!map.value || newPref === 'Use last selected') return
-      const targetLayer = baseMaps[newPref]
-      if (!targetLayer) return
-      Object.values(baseMaps).forEach((layer) => {
-        if (layer !== targetLayer && map.value?.hasLayer(layer)) {
-          map.value.removeLayer(layer)
-        }
-      })
-      if (!map.value.hasLayer(targetLayer)) {
-        map.value.addLayer(targetLayer)
-      }
-    }
-  )
+  registerLayerSync(map.value)
 
   // Remove default zoom control
   map.value.removeControl(map.value.zoomControl)
 
   map.value.on('click', (event: LeafletMouseEvent) => {
     clickedLocation.value = [event.latlng.lat, event.latlng.lng]
+    poiPopupRef.value?.close()
   })
 
   // Update center value after panning
@@ -884,6 +852,7 @@ onMounted(async () => {
   })
   // Enable auto update for target follower
   targetFollower.enableAutoUpdate()
+  stopUnFollowOnUserDrag = targetFollower.unFollowOnUserDrag(map.value)
 
   window.addEventListener('keydown', onKeydown)
 
@@ -905,6 +874,9 @@ onMounted(async () => {
   }
 
   mapReady.value = true
+
+  // Render any user-loaded GeoTIFF overlays and keep them in sync with the stored metadata
+  if (map.value) await mapOverlays.initOverlays(map.value, layerControl)
 
   // Apply the current showButtons state to the leaflet controls
   if (showButtons.value && map.value) {
@@ -930,98 +902,42 @@ onMounted(async () => {
     vehicleHistoryPolyline.value.setLatLngs(missionStore.vehiclePositionHistory as L.LatLngExpression[])
     lastDrawnHistoryLen = missionStore.vehiclePositionHistory.length
   }
-  // Register mission actions for map widget
-  missionStore.registerMapMissionActions({
-    downloadMissionFromVehicle,
-    clearMapDrawing,
-  })
 })
 
-const confirmDownloadDialog =
-  (layerLabel: string) =>
-  (status: SaveStatus, ok: () => void): void => {
-    showDialog({
-      variant: 'info',
-      message: `Save ${status._tilesforSave.length} ${layerLabel} tiles for offline use?`,
-      persistent: false,
-      maxWidth: '450px',
-      actions: [
-        { text: 'Cancel', color: 'white', action: closeDialog },
-        {
-          text: 'Save tiles',
-          color: 'white',
-          action: () => {
-            ok()
-            closeDialog()
-          },
-        },
-      ] as DialogActions[],
-    })
+// React to clear/download requests from any mission-control widget.
+watch(
+  () => missionStore.mapClearRequestRevision,
+  () => clearMapDrawing()
+)
+
+// React to "center on coordinates" requests (e.g. from the Map tools menu).
+watch(
+  () => missionStore.mapCenterOnRequest,
+  (request) => {
+    if (!request || !map.value) return
+    map.value.setView(request.coordinates as LatLngTuple, map.value.getZoom(), { animate: true })
   }
+)
 
-const deleteDownloadedTilesDialog =
-  (layerLabel: string) =>
-  (_status: SaveStatus, ok: () => void): void => {
-    showDialog({
-      variant: 'warning',
-      message: `Remove all saved ${layerLabel} tiles for this layer?`,
-      persistent: false,
-      maxWidth: '450px',
-      actions: [
-        { text: 'Cancel', color: 'white', action: closeDialog },
-        {
-          text: 'Remove tiles',
-          color: 'white',
-          action: () => {
-            ok()
-            closeDialog()
-            openSnackbar({ message: `${layerLabel} offline tiles removed`, variant: 'info', duration: 3000 })
-          },
-        },
-      ] as DialogActions[],
-    })
+watch(
+  () => missionStore.mapDownloadRequestRevision,
+  () => {
+    downloadMissionFromVehicle()
   }
+)
 
-const downloadOfflineMapTiles = (layer: any, layerLabel: string, maxZoom: number): L.Control => {
-  return savetiles(layer, {
-    saveWhatYouSee: true,
-    maxZoom,
-    alwaysDownload: false,
-    position: 'topright',
-    parallel: 20,
-    confirm: confirmDownloadDialog(layerLabel),
-    confirmRemoval: deleteDownloadedTilesDialog(layerLabel),
-    saveText: `<i class="mdi mdi-download" title="Save ${layerLabel} tiles"></i>`,
-    rmText: `<i class="mdi mdi-trash-can" title="Remove ${layerLabel} tiles"></i>`,
-  })
-}
-
-const attachOfflineProgress = (layer: any, layerName: string): void => {
-  layer.on('savestart', (e: any) => {
-    tilesSaved.value = 0
-    tilesTotal.value = e?._tilesforSave?.length ?? 0
-    savingLayerName.value = layerName
-    isSavingOfflineTiles.value = true
-    openSnackbar({ message: `Saving ${tilesTotal.value} ${layerName} tiles...`, variant: 'info', duration: 2000 })
-  })
-
-  layer.on('loadtileend', () => {
-    tilesSaved.value += 1
-    if (tilesTotal.value > 0 && tilesSaved.value >= tilesTotal.value) {
-      openSnackbar({ message: `${layerName} offline tiles saved!`, variant: 'success', duration: 3000 })
-      isSavingOfflineTiles.value = false
-      savingLayerName.value = ''
-      tilesSaved.value = 0
-      tilesTotal.value = 0
-    }
-  })
-}
-
+// Frame the map on a GeoTIFF overlay when requested from the configuration panel
+watch(
+  () => missionStore.mapOverlayFocusRequest.revision,
+  () => mapOverlays.zoomToOverlay(missionStore.mapOverlayFocusRequest.id)
+)
 const handleContextMenu = {
   open: async (event: MouseEvent): Promise<void> => {
     if (!map.value || isPinching.value || isDragging.value) return
     event.preventDefault()
     event.stopPropagation()
+
+    poiPopupRef.value?.close()
 
     const pt = map.value.mouseEventToContainerPoint(event)
     const ll = map.value.containerPointToLatLng(pt)
@@ -1033,11 +949,11 @@ const handleContextMenu = {
 }
 
 const clearMapDrawing = (): void => {
-  const poiMarkers = new Set(Object.values(mapWidgetPoiMarkers.value))
+  const poiMarkerSet = new Set(Object.values(poiMarkers.markers.value))
 
   map.value?.eachLayer((l) => {
     if (l instanceof L.Marker || (l instanceof L.Polyline && l.options.color === '#358AC3')) {
-      if (poiMarkers.has(l as L.Marker)) return
+      if (poiMarkerSet.has(l as L.Marker)) return
       map.value!.removeLayer(l)
     }
   })
@@ -1180,26 +1096,23 @@ watch(
 // - disable auto update for target follower
 // - remove event listeners
 onBeforeUnmount(() => {
+  // Debounced saves may still be pending; write the live view now so Mission Planning mounts with it.
+  persistLiveMapView(missionStore.saveLastMapPosition, map.value, zoom.value, mapCenter.value)
+
   targetFollower.disableAutoUpdate()
+  stopUnFollowOnUserDrag?.()
   window.removeEventListener('keydown', onKeydown)
 
   detachTileFallbacks.forEach((detach) => detach())
+  mapOverlays.destroyOverlays()
 
   if (map.value) {
     map.value.off('contextmenu')
-    // Clean up POI markers
-    Object.values(mapWidgetPoiMarkers.value).forEach((marker) => marker.remove())
-    mapWidgetPoiMarkers.value = {}
   }
 
   mapBase.value?.removeEventListener('touchstart', onTouchStart)
   mapBase.value?.removeEventListener('touchend', onTouchEnd)
 
-  // Unregister mission actions for map widget
-  missionStore.registerMapMissionActions({
-    downloadMissionFromVehicle: async () => Promise.resolve(),
-    clearMapDrawing: async () => Promise.resolve(),
-  })
   // Tear down the Leaflet instance and reset the map context
   mapContext.mapReady.value = false
   map.value?.remove()
@@ -1241,9 +1154,9 @@ watch(props.widget, () => {
 })
 
 // Allow following a given target
-const followerTarget = ref<WhoToFollow | undefined>(undefined)
+const followerTarget = ref<string | undefined>(undefined)
 const targetFollower = new TargetFollower(
-  (newTarget: WhoToFollow | undefined) => (followerTarget.value = newTarget),
+  (newTarget: string | undefined) => (followerTarget.value = newTarget),
   (newCenter: WaypointCoordinates) => (mapCenter.value = newCenter)
 )
 targetFollower.setTrackableTarget(WhoToFollow.VEHICLE, () => vehiclePosition.value)
@@ -1361,6 +1274,11 @@ watch([vehiclePosition, vehicleHeading, timeAgoSeenText, () => vehicleStore.isAr
   }
 })
 
+const homeWasCommandedByUser = computed(() => {
+  const commanded = missionStore.userCommandedHomePosition
+  return commanded !== undefined && home.value?.[0] === commanded[0] && home.value?.[1] === commanded[1]
+})
+
 // Create marker for the home position
 const homeMarker = shallowRef<L.Marker>()
 watch(home, () => {
@@ -1384,6 +1302,17 @@ watch(home, () => {
     homeMarker.value.bindTooltip(homeMarkerTooltip)
     homeMarker.value.on('dragend', (e: L.DragEndEvent) => {
       const marker = e.target as L.Marker
+      // A home drawn from a mission is just a rendering of that mission, so dragging it must not command the vehicle.
+      // Snapping back keeps the marker honest, as nothing anywhere would hold the dragged-to position.
+      if (!homeWasCommandedByUser.value) {
+        if (home.value) marker.setLatLng(home.value as LatLngTuple)
+        openSnackbar({
+          message: 'This home point comes from the mission. Use "Set home waypoint" on the map menu to move it.',
+          variant: 'info',
+          duration: 5000,
+        })
+        return
+      }
       const latlng = marker.getLatLng()
       setHomePosition([latlng.lat, latlng.lng])
     })
@@ -1417,7 +1346,7 @@ watch(mapWaypoints, (newWaypoints) => {
       marker = L.marker(waypoint.coordinates, { icon: markerIcon })
       reachedWaypoints.value[seq] = marker
 
-      const markerSizeForTooltip = getMarkerSizeFromZoom(zoom.value)
+      const markerSizeForTooltip = getEffectiveMarkerSize(zoom.value)
       const markerTooltip = L.tooltip({
         content: seq.toString(),
         permanent: true,
@@ -1440,15 +1369,12 @@ watch(mapWaypoints, (newWaypoints) => {
       map.value?.addLayer(marker)
     } else {
       marker.setLatLng(waypoint.coordinates as LatLngTuple)
-      const markerSizeForUpdate = getMarkerSizeFromZoom(zoom.value)
+      const markerSizeForUpdate = getEffectiveMarkerSize(zoom.value)
       const tooltip = marker.getTooltip()
       if (tooltip) {
-        if (markerSizeForUpdate === 'xs' || markerSizeForUpdate === 'sm') {
-          tooltip.setOpacity(0)
-        } else {
-          tooltip.setContent(seq.toString())
-          tooltip.setOpacity(1)
-        }
+        const showNumber = markerSizeForUpdate === 'md'
+        if (showNumber) tooltip.setContent(seq.toString())
+        tooltip.setOpacity(showNumber ? 1 : 0)
       }
       applyWaypointMarkerStyle(seq)
     }
@@ -1546,6 +1472,17 @@ const menuItems = reactive([
     action: () => onMenuOptionSelect('place-poi'),
     icon: 'mdi-map-marker-plus',
   },
+  {
+    item: 'Add overlay (GeoTIFF)',
+    action: () => onMenuOptionSelect('add-overlay'),
+    icon: 'mdi-image-plus',
+    _isOverlay: true,
+  },
+  {
+    item: 'Copy coordinates',
+    action: () => onMenuOptionSelect('copy-coordinates'),
+    icon: 'mdi-content-copy',
+  },
   { item: 'GoTo', action: () => onMenuOptionSelect('goto'), icon: 'mdi-crosshairs-gps' },
   {
     item: 'Set default map position',
@@ -1578,6 +1515,13 @@ const updateSkipToWpMenu = (): void => {
   }
 }
 
+const updateOverlayMenuLabel = (): void => {
+  const overlayItem = menuItems.find((item) => (item as any)._isOverlay === true)
+  if (overlayItem) {
+    overlayItem.item = missionStore.mapOverlays.length > 0 ? 'Manage overlays' : 'Add overlay (GeoTIFF)'
+  }
+}
+
 const openContextMenuAt = async (mouseEv: MouseEvent, wpIndex: number | null): Promise<void> => {
   if (contextMenuVisible.value) {
     contextMenuVisible.value = false
@@ -1586,6 +1530,7 @@ const openContextMenuAt = async (mouseEv: MouseEvent, wpIndex: number | null): P
 
   contextMenuSelectedWpIndex.value = wpIndex
   updateSkipToWpMenu()
+  updateOverlayMenuLabel()
   contextMenuVersion.value++
   contextMenuVisible.value = true
   await nextTick()
@@ -1648,15 +1593,20 @@ const setDefaultMapPosition = async (): Promise<void> => {
   }
 }
 
-const executeGoToOption = async (): Promise<void> => {
-  if (!clickedLocation.value || !map.value) return
+const clearGotoMarker = (): void => {
+  if (!map.value || !gotoMarker.value) return
+  map.value.removeLayer(gotoMarker.value)
+  gotoMarker.value = undefined
+}
 
-  if (gotoMarker.value) {
-    map.value.removeLayer(gotoMarker.value)
-    gotoMarker.value = undefined
-  }
+// Places the regular GoTo marker on the map. Not used for PoI GoTo targets, which show the active state
+// via a pulsating border on the PoI marker itself (see useMapPoiMarkers and .poi-marker-goto-target styles).
+const placeGotoMarker = (coordinates: WaypointCoordinates): void => {
+  if (!map.value) return
 
-  gotoMarker.value = L.marker(clickedLocation.value as LatLngTuple, {
+  clearGotoMarker()
+
+  gotoMarker.value = L.marker(coordinates as LatLngTuple, {
     icon: L.divIcon({
       className: 'marker-icon',
       iconSize: [24, 24],
@@ -1672,35 +1622,38 @@ const executeGoToOption = async (): Promise<void> => {
     opacity: 1,
   })
   gotoMarker.value.bindTooltip(gotoTooltip)
-
-  if (clickedLocation.value) {
-    // Define default values
-    const hold = 0
-    const acceptanceRadius = 0
-    const passRadius = 0
-    const yaw = 0
-    const altitude = vehicleStore.coordinates.altitude ?? 0
-
-    const latitude = clickedLocation.value[0]
-    const longitude = clickedLocation.value[1]
-
-    try {
-      await vehicleStore.goTo(hold, acceptanceRadius, passRadius, yaw, latitude, longitude, altitude)
-    } catch (error) {
-      openSnackbar({ message: `GoTo request failed: ${(error as Error).message}`, variant: 'error' })
-    }
-  }
 }
 
 const onMenuOptionSelect = async (option: string): Promise<void> => {
+  logUserAction(`Selected map context-menu action '${option}'`)
   switch (option) {
     case 'goto': {
-      executeGoToOption()
+      if (!clickedLocation.value) break
+      poiGoTo.clearTarget()
+      placeGotoMarker(clickedLocation.value)
+      await issueGoto(clickedLocation.value)
       break
     }
 
     case 'set-default-map-position':
       setDefaultMapPosition()
+      break
+
+    case 'copy-coordinates':
+      if (clickedLocation.value) {
+        const coordinates = `${clickedLocation.value[0].toFixed(7)}, ${clickedLocation.value[1].toFixed(7)}`
+        try {
+          await copyToClipboard(coordinates)
+          logUserAction('Copied map coordinates from the context menu')
+          openSnackbar({ message: `Coordinates copied: ${coordinates}`, variant: 'success' })
+        } catch (error) {
+          openSnackbar({ message: `Failed to copy coordinates: ${(error as Error).message}`, variant: 'error' })
+        }
+      }
+      break
+
+    case 'add-overlay':
+      overlaysDialogOpen.value = true
       break
 
     case 'place-poi':
@@ -1765,6 +1718,7 @@ const hideContextMenuAndMarker = (): void => {
 
 const onGlobalOriginSet = (latitude: number, longitude: number): void => {
   if (!map.value) return
+  logUserAction('Set vehicle global origin from map')
 
   // Remove existing marker if present
   if (globalOriginMarker.value) {
@@ -1790,6 +1744,7 @@ const onGlobalOriginSet = (latitude: number, longitude: number): void => {
 const onKeydown = (event: KeyboardEvent): void => {
   if (event.key === 'Escape') {
     hideContextMenuAndMarker()
+    poiPopupRef.value?.close()
     return
   }
 }
@@ -1798,8 +1753,9 @@ const drawMission = (missionItems: Waypoint[]): void => {
   const drawn: Waypoint[] = []
   missionItems.forEach((wp, idx) => {
     if (idx === 0) {
+      // Only moves the marker. Echoing this back as a set-home command would overwrite the vehicle's home with a
+      // possibly stale one, as missions are restored from persistent storage on startup.
       home.value = wp.coordinates
-      setHomePosition(wp.coordinates)
     } else {
       drawn.push(wp)
     }
@@ -1846,15 +1802,17 @@ const downloadMissionFromVehicle = async (): Promise<void> => {
 
     openSnackbar({ variant: 'success', message: 'Mission download succeeded!', duration: 3000 })
   } catch (error) {
-    showDialog({ variant: 'error', title: 'Mission download failed', message: error as string, timer: 5000 })
+    showDialog({ variant: 'error', title: 'Mission download failed', message: messageFromError(error), timer: 5000 })
   } finally {
     fetchingMission.value = false
   }
 }
 
 const setHomePosition = async (homePosition: [number, number]): Promise<void> => {
+  logUserAction('Set the home position from the map')
   const newHome: [number, number] = [homePosition[0], homePosition[1]]
   home.value = newHome
+  missionStore.userCommandedHomePosition = newHome
 
   await vehicleStore.setHomeWaypoint(newHome, 0)
   if (contextMenuVisible.value) {
@@ -1864,20 +1822,13 @@ const setHomePosition = async (homePosition: [number, number]): Promise<void> =>
 
 // Allow executing missions
 const executeMissionOnVehicle = async (): Promise<void> => {
+  logUserAction('Started mission from map')
   try {
     await vehicleStore.startMission()
   } catch (error) {
     openSnackbar({ message: 'Failed to start mission.', variant: 'error' })
   }
   return
-}
-
-const tryToStartMission = async (): Promise<void> => {
-  if (missionStore.showChecklistBeforeArm) {
-    isMissionChecklistOpen.value = true
-    return
-  }
-  executeMissionOnVehicle()
 }
 
 // Set dynamic styles for correct displacement of the bottom buttons when the widget is below the bottom bar
@@ -1889,29 +1840,6 @@ const topProgressBarDisplacement = computed(() => {
   return `${Math.max(-widgetStore.widgetClearanceForVisibleArea(widget.value).top, 0)}px`
 })
 
-const centerHomeButtonTooltipText = computed(() => {
-  if (home.value === undefined) {
-    return 'Cannot center map on home (home position undefined).'
-  }
-  if (followerTarget.value === WhoToFollow.HOME) {
-    return 'Tracking home position. Click to stop tracking.'
-  }
-  return 'Click once to center on home or twice to track it.'
-})
-
-const centerVehicleButtonTooltipText = computed(() => {
-  if (!vehicleStore.isVehicleOnline) {
-    return 'Cannot center map on vehicle (vehicle offline).'
-  }
-  if (vehiclePosition.value === undefined) {
-    return 'Cannot center map on vehicle (vehicle position undefined).'
-  }
-  if (followerTarget.value === WhoToFollow.VEHICLE) {
-    return 'Tracking vehicle position. Click to stop tracking.'
-  }
-  return 'Click once to center on vehicle or twice to track it.'
-})
-
 const missionFitCoordinates = computed<WaypointCoordinates[]>(() => {
   const drawn = mapWaypoints.value.map((wp) => wp.coordinates)
   if (drawn.length > 0) return drawn
@@ -1920,162 +1848,17 @@ const missionFitCoordinates = computed<WaypointCoordinates[]>(() => {
 
 const hasMissionWaypoints = computed(() => missionFitCoordinates.value.length > 0)
 
-const centerMissionButtonTooltipText = computed(() => {
-  if (!hasMissionWaypoints.value) {
-    return 'Cannot center map on mission (no waypoints loaded).'
-  }
-  return 'Click to center the map on the current mission.'
-})
-
-const centerActivatorTooltipText = computed(() => {
-  if (followerTarget.value === WhoToFollow.HOME) return 'Tracking home position. Open to change target.'
-  if (followerTarget.value === WhoToFollow.VEHICLE) return 'Tracking vehicle position. Open to change target.'
-  return 'Center map on home, vehicle or mission.'
-})
+const navigateToMissionPlanning = (): void => {
+  logUserAction('Navigated to Mission Planning from map widget')
+  router.push('/mission-planning')
+}
 
 const centerOnMission = (): void => {
   if (!map.value || !hasMissionWaypoints.value) return
+  logUserAction('Centered map on mission')
   targetFollower.unFollow()
   fitMapToWaypoints(map.value, missionFitCoordinates.value)
 }
-
-// POI Marker Management Functions for Map Widget
-const poiIconConfig = (poi: PointOfInterest): L.DivIconOptions => {
-  const poiIconHtml = `
-    <div class="poi-marker-container">
-      <div class="poi-marker-background" style="background-color: ${poi.color}80;"></div>
-      <i class="v-icon notranslate mdi ${poi.icon}" style="color: rgba(255, 255, 255, 0.7); position: relative; z-index: 2;"></i>
-    </div>
-  `
-
-  return {
-    html: poiIconHtml,
-    className: 'poi-marker-icon-widget',
-    iconSize: [32, 32], // Match the actual container size
-    iconAnchor: [16, 32], // Center horizontally, bottom vertically (like a pin)
-  }
-}
-
-const addPoiMarkerToMapWidget = (poi: PointOfInterest): void => {
-  if (!map.value || !map.value.getContainer()) return
-
-  const poiMarkerIcon = L.divIcon(poiIconConfig(poi))
-
-  const marker = L.marker(poi.coordinates as LatLngTuple, { icon: poiMarkerIcon, draggable: true }).addTo(map.value)
-
-  const tooltipContent = `
-    <strong>${poi.name}</strong><br>
-    ${poi.description ? poi.description + '<br>' : ''}
-    Lat: ${poi.coordinates[0].toFixed(8)}, Lng: ${poi.coordinates[1].toFixed(8)}
-  `
-  const tooltipConfig = { permanent: false, direction: 'top', offset: [0, -40], className: 'poi-tooltip-widget' }
-  marker.bindTooltip(tooltipContent, tooltipConfig)
-
-  marker.on('drag', (event) => {
-    const newCoords = event.target.getLatLng()
-    const updatedTooltipContent = `
-      <strong>${poi.name}</strong><br>
-      ${poi.description ? poi.description + '<br>' : ''}
-      Lat: ${newCoords.lat.toFixed(8)}, Lng: ${newCoords.lng.toFixed(8)}
-    `
-    marker.getTooltip()?.setContent(updatedTooltipContent)
-  })
-
-  marker.on('dragend', (event) => {
-    const newCoords = event.target.getLatLng()
-    missionStore.movePointOfInterest(poi.id, [newCoords.lat, newCoords.lng])
-  })
-
-  marker.on('click', (event) => {
-    L.DomEvent.stopPropagation(event)
-    if (poiManagerMapWidgetRef.value) {
-      // Get fresh POI data from store instead of using potentially stale poi object
-      const freshPoi = missionStore.pointsOfInterest.find((p) => p.id === poi.id)
-      if (freshPoi) {
-        poiManagerMapWidgetRef.value.openDialog(undefined, freshPoi)
-      } else {
-        console.warn('POI not found in store:', poi.id)
-      }
-    }
-  })
-
-  mapWidgetPoiMarkers.value[poi.id] = marker
-}
-
-const updatePoiMarkerOnMapWidget = (poi: PointOfInterest): void => {
-  if (!map.value || !map.value.getContainer() || !mapWidgetPoiMarkers.value[poi.id]) return
-
-  const marker = mapWidgetPoiMarkers.value[poi.id]
-  marker.setLatLng(poi.coordinates as LatLngTuple)
-
-  marker.setIcon(L.divIcon(poiIconConfig(poi)))
-
-  const updatedTooltipContent = `
-    <strong>${poi.name}</strong><br>
-    ${poi.description ? poi.description + '<br>' : ''}
-    Lat: ${poi.coordinates[0].toFixed(8)}, Lng: ${poi.coordinates[1].toFixed(8)}
-  `
-  marker.getTooltip()?.setContent(updatedTooltipContent)
-}
-
-const removePoiMarkerFromMapWidget = (poiId: string): void => {
-  if (!map.value || !mapWidgetPoiMarkers.value[poiId]) return
-
-  mapWidgetPoiMarkers.value[poiId].remove()
-  delete mapWidgetPoiMarkers.value[poiId]
-}
-
-const hideControlPanel = (): void => {
-  widget.value.options.showMissionControlPanel = false
-}
-
-// Watch for changes in POIs from the store and update markers on this map widget
-watch(
-  () => missionStore.pointsOfInterest,
-  async (newPois) => {
-    if (!map.value || !map.value.getContainer()) {
-      await nextTick() // Wait for map to potentially become available
-      if (!map.value || !map.value.getContainer()) {
-        console.warn('Map.vue: POI watcher - map not ready after nextTick.')
-        return
-      }
-    }
-
-    const newPoiIds = new Set(newPois.map((p) => p.id))
-
-    Object.keys(mapWidgetPoiMarkers.value).forEach((poiId) => {
-      if (!newPoiIds.has(poiId)) {
-        removePoiMarkerFromMapWidget(poiId)
-      }
-    })
-
-    newPois.forEach((poi) => {
-      if (mapWidgetPoiMarkers.value[poi.id]) {
-        updatePoiMarkerOnMapWidget(poi)
-      } else {
-        addPoiMarkerToMapWidget(poi)
-      }
-    })
-  },
-  { deep: true, immediate: true }
-)
-
-// Ensure POIs are drawn when the map instance becomes available
-watch(
-  map,
-  (currentMapInstance) => {
-    if (currentMapInstance && currentMapInstance.getContainer()) {
-      missionStore.pointsOfInterest.forEach((poi) => {
-        if (!mapWidgetPoiMarkers.value[poi.id]) {
-          addPoiMarkerToMapWidget(poi)
-        } else {
-          updatePoiMarkerOnMapWidget(poi) // Update if already exists, in case details changed
-        }
-      })
-    }
-  },
-  { immediate: true }
-)
 </script>
 
 <style scoped>
@@ -2233,6 +2016,14 @@ watch(
   bottom: v-bind('bottomButtonsDisplacement');
 }
 
+/* Static north reference, stacked just above the bottom-right zoom control. */
+.north-indicator {
+  position: absolute;
+  right: 10px;
+  bottom: calc(v-bind('bottomButtonsDisplacement') + 85px);
+  z-index: 1002;
+}
+
 .poi-marker-icon-widget {
   /* Style for POI markers in map widget, if needed */
   font-size: 20px;
@@ -2280,7 +2071,7 @@ watch(
   position: absolute;
   bottom: v-bind('bottomButtonsDisplacement');
   margin-bottom: 12px;
-  right: 293px; /* Position to the left of the buttons */
+  right: 338px; /* Position to the left of the buttons */
   background: rgba(255, 255, 255, 0.8);
   border-radius: 1px;
   padding: 6px 6px;
@@ -2346,30 +2137,23 @@ watch(
 </style>
 
 <style>
-.speed-dial-glow {
-  isolation: isolate;
+/* Unscoped because Leaflet creates the marker DOM imperatively (no scope attribute applied).
+   Uses box-shadow with a positive spread for the active border so the effect is drawn outside
+   the bg circle (revealing the map when transparent) and follows the circular border-radius.
+   The static 1px border is hidden during the active state so only the pulsating ring remains. */
+.poi-marker-background.poi-marker-goto-target {
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 1);
+  animation: poi-marker-goto-target-pulse 1s ease-in-out infinite;
 }
 
-.speed-dial-glow::before {
-  content: '';
-  position: absolute;
-  inset: -8px -10px -7px -10px;
-  border-radius: 4px;
-  background: rgba(30, 30, 30, 0.15);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  pointer-events: none;
-  z-index: -1;
-  animation: speed-dial-glow-in 180ms ease-out;
-}
-
-@keyframes speed-dial-glow-in {
-  from {
-    opacity: 0;
+@keyframes poi-marker-goto-target-pulse {
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 1);
   }
-  to {
-    opacity: 1;
+  50% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(255, 255, 255, 0);
   }
 }
 </style>

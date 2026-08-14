@@ -53,27 +53,44 @@
         </v-tooltip>
       </div>
       <div id="button-3" class="orbit-button orbit-button-3">
-        <v-tooltip text="Swap start and end point of the survey">
+        <v-tooltip :text="crosshatchEnabled ? 'Disable 90° crosshatch re-fly' : 'Enable 90° crosshatch re-fly'">
           <template #activator="{ props: tooltipProps2 }">
             <v-btn
               v-bind="tooltipProps2"
               variant="elevated"
-              icon="mdi-swap-horizontal"
+              icon="mdi-grid"
               :style="{ backgroundColor: '#333333EE' }"
               rounded="full"
               size="x-small"
-              color="#FFFFFF22"
+              :color="crosshatchEnabled ? '#A855F7' : '#FFFFFF22'"
               class="text-[13px] rotate-[200deg]"
-              @click="handleSwapSurveyEntryExit"
+              @click="handleToggleCrosshatch"
             ></v-btn>
           </template>
         </v-tooltip>
       </div>
-      <div v-if="enableUndo" id="button-4" class="orbit-button orbit-button-4">
-        <v-tooltip text="Edit survey's polygon">
+      <div id="button-4" class="orbit-button orbit-button-4">
+        <v-tooltip text="Rotate the survey entry point to the next corner">
           <template #activator="{ props: tooltipProps3 }">
             <v-btn
               v-bind="tooltipProps3"
+              variant="elevated"
+              icon="mdi-rotate-right"
+              :style="{ backgroundColor: '#333333EE' }"
+              rounded="full"
+              size="x-small"
+              color="#FFFFFF22"
+              class="text-[13px] rotate-[230deg]"
+              @click="handleRotateSurveyEntryPoint"
+            ></v-btn>
+          </template>
+        </v-tooltip>
+      </div>
+      <div v-if="enableUndo" id="button-5" class="orbit-button orbit-button-5">
+        <v-tooltip text="Edit survey's polygon">
+          <template #activator="{ props: tooltipProps4 }">
+            <v-btn
+              v-bind="tooltipProps4"
               variant="elevated"
               icon="mdi-pencil"
               :style="{ backgroundColor: '#333333EE' }"
@@ -81,7 +98,7 @@
               :disabled="undoIsInProgress"
               size="x-small"
               color="#FFFFFF22"
-              class="text-[13px] rotate-[230deg]"
+              class="text-[13px] rotate-[260deg]"
               @click="handleUndoGenerateWaypoints"
             ></v-btn>
           </template>
@@ -163,7 +180,21 @@
           <span class="text-white text-sm ml-4">Place point of interest</span>
         </v-list-item>
         <v-divider />
-        <v-list-item class="flex items-center gap-x-2 pb-2" @click="handleSetHomePosition">
+        <v-list-item class="flex items-center gap-x-2 pb-2" @click="handleOpenMapOverlays">
+          <v-icon
+            variant="text"
+            icon="mdi-image-plus"
+            rounded="full"
+            size="x-small"
+            color="white"
+            class="text-[16px]"
+          ></v-icon>
+          <span class="text-white text-sm ml-4">
+            {{ missionStore.mapOverlays.length > 0 ? 'Manage overlays' : 'Add overlay (GeoTIFF)' }}
+          </span>
+        </v-list-item>
+        <v-divider v-if="canSetHome" />
+        <v-list-item v-if="canSetHome" class="flex items-center gap-x-2 pb-2" @click="handleSetHomePosition">
           <v-icon
             variant="text"
             icon="mdi-home-map-marker"
@@ -198,6 +229,7 @@
         <p class="text-[14px]">Waypoint {{ missionStore.getWaypointNumber(selectedWaypoint?.id as string) }}</p>
         <div>
           <v-icon
+            v-if="canSetHome"
             v-tooltip="'Set home waypoint'"
             variant="text"
             icon="mdi-home-map-marker"
@@ -295,24 +327,31 @@ const emit = defineEmits<{
   (event: 'undoGeneratedWaypoints'): void
   (event: 'surveyLinesAngle', angle: number): void
   (event: 'regenerateSurveyWaypoints', angle: number): void
-  (event: 'swapSurveyEntryExit'): void
+  (event: 'toggleCrosshatch'): void
+  (event: 'rotateSurveyEntryPoint'): void
   (event: 'removeWaypoint'): void
   (event: 'placePointOfInterest'): void
   (event: 'setHomePosition'): void
   (event: 'clearVehiclePathHistory'): void
+  (event: 'openMapOverlays'): void
 }>()
 
 const menuType = computed(() => props.menuType)
 const selectedWaypoint = computed<Waypoint | undefined>(() => props.selectedWaypoint)
 const visible = computed(() => props.visible)
+const canSetHome = computed(() => !props.isCreatingSurvey && !props.isCreatingSimplePath)
 const angle = computed(() => props.surveys.find((survey) => survey.id === props.selectedSurveyId)?.surveyLinesAngle)
+const crosshatchEnabled = computed(
+  () => props.surveys.find((survey) => survey.id === props.selectedSurveyId)?.crosshatch ?? false
+)
 
 const clampedPosition = ref({ x: 0, y: 0 })
 
 watch(
-  () => [props.visible, props.position] as const,
+  () => [props.visible, props.position, props.menuType] as const,
   ([isVisible, pos]) => {
-    clampedPosition.value = { ...pos }
+    const offsetX = props.menuType === 'survey' ? 100 : 0
+    clampedPosition.value = { x: pos.x + offsetX, y: pos.y }
     if (!isVisible) return
     nextTick(() => {
       const el = menuEl.value
@@ -322,7 +361,8 @@ watch(
       const elH = el.offsetHeight
       const vw = window.innerWidth
       const vh = window.innerHeight
-      let { x, y } = pos
+      let x = pos.x + offsetX
+      let y = pos.y
       if (x + elW > vw - margin) x = vw - elW - margin
       if (y + elH > vh - margin) y = vh - elH - margin
       if (x < margin) x = margin
@@ -381,12 +421,21 @@ const handlePlacePointOfInterest = (): void => {
   emit('close')
 }
 
+const handleOpenMapOverlays = (): void => {
+  emit('openMapOverlays')
+  emit('close')
+}
+
 const handleUndoGenerateWaypoints = (): void => {
   emit('undoGeneratedWaypoints')
 }
 
-const handleSwapSurveyEntryExit = (): void => {
-  emit('swapSurveyEntryExit')
+const handleRotateSurveyEntryPoint = (): void => {
+  emit('rotateSurveyEntryPoint')
+}
+
+const handleToggleCrosshatch = (): void => {
+  emit('toggleCrosshatch')
 }
 
 const handleDeleteSelectedSurvey = (): void => {
@@ -480,6 +529,11 @@ const handleOpenPanel = (): void => {
   animation-delay: 0.05s;
 }
 
+.orbit-button-5 {
+  animation: orbit-5 0.05s ease-out forwards;
+  animation-delay: 0.05s;
+}
+
 @keyframes orbit-1 {
   0% {
     transform: translate(-50%, -50%) rotate(0deg) translateX(0);
@@ -520,6 +574,17 @@ const handleOpenPanel = (): void => {
   }
   100% {
     transform: translate(-50%, -50%) rotate(-590deg) translateX(90px);
+    opacity: 1;
+  }
+}
+
+@keyframes orbit-5 {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg) translateX(0);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(-620deg) translateX(90px);
     opacity: 1;
   }
 }

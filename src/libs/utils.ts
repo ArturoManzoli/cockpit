@@ -36,6 +36,18 @@ export const sequentialArray = (length: number): number[] => {
 }
 
 /**
+ * Base64-encodes a UTF-8 string, preserving the multi-byte characters that `btoa` alone would mangle.
+ * @param {string} input - The UTF-8 string to encode.
+ * @returns {string} The base64-encoded representation.
+ */
+export const utf8ToBase64 = (input: string): string => {
+  const bytes = new TextEncoder().encode(input)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+/**
  * Simple scale function
  * @param {number} input Input value
  * @param {number} inputMin Input lowest point
@@ -60,23 +72,51 @@ export const resetCanvas = (context: CanvasRenderingContext2D): void => {
   context.globalCompositeOperation = 'source-over'
 }
 
+// Regex from https://stackoverflow.com/a/106223/3850957
+const ipv4AddressRegex = new RegExp(
+  '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
+)
+
 export const isValidNetworkAddress = (maybeAddress: string): boolean => {
   if (maybeAddress && maybeAddress.length >= 255) {
     return false
   }
 
-  // Regexes from https://stackoverflow.com/a/106223/3850957
-  const ipRegex = new RegExp(
-    '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
-  )
+  // Regex from https://stackoverflow.com/a/106223/3850957
   const hostnameRegex = new RegExp(
     '^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\\-]*[A-Za-z0-9])$'
   )
 
-  if (ipRegex.test(maybeAddress) || hostnameRegex.test(maybeAddress)) {
+  if (ipv4AddressRegex.test(maybeAddress) || hostnameRegex.test(maybeAddress)) {
     return true
   }
   return false
+}
+
+/**
+ * Checks whether a value is a bare IPv4 address, with no scheme, port, or path.
+ * @param {string} value - The value to test.
+ * @returns {boolean} Whether the value is a bare IPv4 address.
+ */
+export const isValidIpv4Address = (value: string): boolean => {
+  return ipv4AddressRegex.test(value)
+}
+
+/**
+ * Extracts a bare IPv4 address from a value that may carry a scheme, port, or path/CIDR suffix
+ * (e.g. `http://192.168.2.2:554/stream`, `192.168.2.0/24`).
+ * @param {string} rawValue - The raw, possibly prefixed or suffixed address.
+ * @returns {string | undefined} The bare IPv4 address, or `undefined` if none could be extracted.
+ */
+export const sanitizeIpv4Address = (rawValue: string): string | undefined => {
+  let candidate = rawValue.trim()
+  if (!candidate) return undefined
+
+  candidate = candidate.replace(/^\w+:\/\//, '')
+  candidate = candidate.split(/[/\\]/)[0]
+  candidate = candidate.split(':')[0]
+
+  return isValidIpv4Address(candidate) ? candidate : undefined
 }
 
 export const isValidURL = (maybeURL: string): boolean => {
@@ -150,6 +190,18 @@ export const isElectron = (): boolean => {
   }
 
   return false
+}
+
+/**
+ * Detects the host operating system, named as users know it
+ * @returns {'Linux' | 'Windows' | 'macOS' | undefined} The host OS name, or undefined when it cannot be told
+ */
+export const hostOsName = (): 'Linux' | 'Windows' | 'macOS' | undefined => {
+  const platform = (navigator.userAgentData?.platform ?? navigator.platform ?? navigator.userAgent).toLowerCase()
+  if (platform.includes('linux')) return 'Linux'
+  if (platform.includes('win')) return 'Windows'
+  if (platform.includes('mac')) return 'macOS'
+  return undefined
 }
 
 /**
@@ -361,3 +413,23 @@ export const tryACoupleOfTimes = async <T>(
   // If we have reached the limit of tries, throw an error
   throw new Error(`Failed to execute function '${fn.name || 'function'}' after ${times} tries. Will stop trying.`)
 }
+
+/**
+ * Extract a displayable message from a caught value.
+ * @param {unknown} error The value caught in a try/catch block.
+ * @returns {string} The error message, or the value's string representation when it is not an Error.
+ */
+export const messageFromError = (error: unknown): string => {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Deep-clone a JSON-representable value into plain data, dropping any Vue reactivity proxy on it or
+ * nested inside it. Prefer this over `structuredClone`, which throws on reactive proxies. Functions
+ * and `undefined` values are dropped, as JSON cannot represent them. The walk reads through proxies,
+ * so unwrap with `toRaw` first when calling from a `computed` or a render function, or every nested
+ * read becomes a dependency of it.
+ * @param {T} value The value to flatten.
+ * @returns {T} A detached copy holding no proxies.
+ */
+export const toPlain = <T>(value: T): T => JSON.parse(JSON.stringify(value))

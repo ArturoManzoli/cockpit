@@ -5,11 +5,17 @@ import { blueBoatMissionEstimate } from '@/libs/mission/blueboat-estimates'
 import {
   calculateHaversineDistance,
   computeMissionDurationSecondsFromLegs,
-  polygonAreaSquareMeters,
+  convexHullSquareMeters,
+  formatMetersShort,
 } from '@/libs/mission/general-estimates'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import { useMissionStore } from '@/stores/mission'
-import { MissionEstimatesByVehicleConfig, MissionLeg, VehicleMissionEstimate } from '@/types/mission'
+import {
+  MissionEstimatesByVehicleConfig,
+  MissionLeg,
+  VehicleMissionEstimate,
+  WaypointCoordinates,
+} from '@/types/mission'
 
 type LatLng = [number, number]
 
@@ -33,12 +39,13 @@ export const clearAllSurveyAreas = (): void => {
 export const useMissionEstimates = (): {
   missionLengthMeters: ComputedRef<number>
   missionCoverageAreaSquareMeters: ComputedRef<string>
+  totalMaxDistance: ComputedRef<string>
+  maxDistanceReferenceLabel: ComputedRef<string>
   totalMissionLength: ComputedRef<string>
   totalSurveyCoverage: ComputedRef<string>
   totalMissionDuration: ComputedRef<string>
   totalMissionEnergy: ComputedRef<string>
   missionLegsWithSpeed: ComputedRef<MissionLeg[]>
-  formatMetersShort: (distance: number) => string
   formatArea: (area: number) => string
   formatSeconds: (s: number) => string
   formatWh: (energy: number) => string
@@ -47,7 +54,7 @@ export const useMissionEstimates = (): {
   const vehicleStore = useMainVehicleStore()
 
   const normalizedVehicleType = computed<MavType>(() => {
-    const raw = vehicleStore.vehicleType as unknown
+    const raw = missionStore.effectiveVehicleType as unknown
     if (typeof raw === 'number') return (raw as unknown as MavType) ?? MavType.MAV_TYPE_GENERIC
     if (typeof raw === 'string') return (MavType as any)[raw] ?? MavType.MAV_TYPE_GENERIC
     return MavType.MAV_TYPE_GENERIC
@@ -58,7 +65,10 @@ export const useMissionEstimates = (): {
     [MavType.MAV_TYPE_SURFACE_BOAT]: blueBoatMissionEstimate,
   }
 
+  // Vehicle-specific estimators need payload data (battery, drag sensor, extra payload) that is
+  // only available when a real vehicle is connected; fall back to the generic estimator otherwise.
   const currentEstimator = computed<VehicleMissionEstimate | null>(() => {
+    if (!vehicleStore.isVehicleOnline) return null
     return estimatorsByType[normalizedVehicleType.value] ?? null
   })
 
@@ -110,35 +120,37 @@ export const useMissionEstimates = (): {
     return total
   })
 
-  // Mission total coverage area (consider polygons if first and last points are < than 100 meters apart)
-  const missionCoverageAreaSquareMeters = computed(() => {
-    const wps = missionStore.currentPlanningWaypoints || []
-    if (wps.length >= 3) {
-      const first = wps[0].coordinates as [number, number]
-      const last = wps[wps.length - 1].coordinates as [number, number]
-      const closedToleranceInMeters = 100
-      const distanceToClose = calculateHaversineDistance(first, last)
+  // Reference point the max distance is measured from (home or, if available, the base station)
+  const maxDistanceReferencePoint = computed<WaypointCoordinates | undefined>(() => missionStore.homeMarkerPosition)
+  const maxDistanceReferenceLabel = computed<string>(() => 'home')
 
-      if (distanceToClose <= closedToleranceInMeters) {
-        const isDuplicate = distanceToClose === 0
-        const ring = (isDuplicate ? wps.slice(0, -1) : wps).map((w) => w.coordinates as [number, number])
-        const area = polygonAreaSquareMeters(ring)
-        return formatArea(area)
-      }
+  // Farthest mission waypoint from the reference point, indicating the maximum telemetry range needed
+  const maxDistanceMeters = computed(() => {
+    const reference = maxDistanceReferencePoint.value
+    const wps = missionStore.currentPlanningWaypoints || []
+    if (!reference || wps.length === 0) return 0
+    let max = 0
+    for (const wp of wps) {
+      const distance = calculateHaversineDistance(reference, wp.coordinates as LatLng)
+      if (distance > max) max = distance
     }
-    return '—'
+    return max
+  })
+
+  // Mission footprint as the convex hull of every waypoint plus every survey polygon vertex,
+  // so any contained survey polygon is always a subset of the reported area.
+  const missionCoverageAreaSquareMeters = computed(() => {
+    const waypointCoords = missionStore.currentPlanningWaypoints.map((w) => w.coordinates as LatLng)
+    const surveyVertexCoords = missionStore.currentPlanningSurveys.flatMap((s) => s.polygonCoordinates as LatLng[])
+    const points = [...waypointCoords, ...surveyVertexCoords]
+    const area = convexHullSquareMeters(points)
+    return area > 0 ? formatArea(area) : '—'
   })
 
   // Total survey coverage from survey areas set in the UI
   const totalSurveyCoverageSquareMeters = computed(() => {
     return Object.values(surveyAreaSquareMetersById.value).reduce((a, b) => a + b, 0)
   })
-
-  const formatMetersShort = (distance: number): string => {
-    if (!isFinite(distance) || distance <= 0) return '—'
-    if (distance < 1000) return `${distance.toFixed(0)} m`
-    return `${(distance / 1000).toFixed(2)} km`
-  }
 
   const formatSeconds = (s: number): string => {
     if (!isFinite(s) || s <= 0) return '—'
@@ -160,6 +172,7 @@ export const useMissionEstimates = (): {
 
   // Basic mission stats - no vehicle-specific estimates
   const totalMissionLength = computed(() => formatMetersShort(missionLengthMeters.value))
+  const totalMaxDistance = computed(() => formatMetersShort(maxDistanceMeters.value))
   const totalSurveyCoverage = computed(() => formatArea(totalSurveyCoverageSquareMeters.value))
 
   // Mission duration (s), with vehicle-specific estimates if available
@@ -178,12 +191,13 @@ export const useMissionEstimates = (): {
   return {
     missionLengthMeters,
     missionCoverageAreaSquareMeters,
+    totalMaxDistance,
+    maxDistanceReferenceLabel,
     totalMissionLength,
     totalSurveyCoverage,
     totalMissionDuration,
     totalMissionEnergy,
     missionLegsWithSpeed,
-    formatMetersShort,
     formatArea,
     formatSeconds,
     formatWh,

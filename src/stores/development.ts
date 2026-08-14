@@ -11,8 +11,9 @@ export const blueOsSettingsSyncEnablingKey = 'cockpit-enable-blueos-settings-syn
 export const showSplashScreenOnStartupKey = 'cockpit-show-splash-screen-on-startup'
 
 export const useDevelopmentStore = defineStore('development', () => {
-  const developmentMode = ref(false)
-  const widgetDevInfoBlurLevel = ref(3)
+  // Whether the floating console window is open. Kept here (not in a view) so the console stays alive while
+  // the user navigates away from the Dev settings menu.
+  const showConsole = ref(false)
   const enableSystemLogging = useBlueOsStorage(systemLoggingEnablingKey, true)
   const enableBlueOsSettingsSync = useStorage(blueOsSettingsSyncEnablingKey, true)
   const showSplashScreenOnStartup = useStorage(showSplashScreenOnStartupKey, true)
@@ -29,8 +30,7 @@ export const useDevelopmentStore = defineStore('development', () => {
   })
 
   return {
-    developmentMode,
-    widgetDevInfoBlurLevel,
+    showConsole,
     enableSystemLogging,
     enableBlueOsSettingsSync,
     shareHardwareDetails,

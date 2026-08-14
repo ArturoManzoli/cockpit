@@ -1,4 +1,4 @@
-import { app, BrowserWindow, powerSaveBlocker, protocol, screen } from 'electron'
+import { app, BrowserWindow, powerSaveBlocker, protocol, screen, shell } from 'electron'
 import { join } from 'path'
 
 import { setupAutoUpdater } from './services/auto-update'
@@ -13,12 +13,20 @@ import { setupOsmRefererService } from './services/osm-referer'
 import { setupResourceMonitoringService } from './services/resource-monitoring'
 import { setupFilesystemStorage } from './services/storage'
 import { setupSystemInfoService } from './services/system-info'
+import { setupTTSService } from './services/tts'
 import { setupUserAgentService } from './services/user-agent'
 import { setupVideoRecordingService } from './services/video-recording'
 import { setupWorkspaceService } from './services/workspace'
 
 // Setup the logger service as soon as possible to avoid different behaviors across runtime
 setupElectronLogService()
+
+// On Linux, Chromium gates its Web Speech API backend (used by the voice-alerts feature) behind
+// the `--enable-speech-dispatcher` switch, and it must be set before `app.whenReady()` to take effect.
+// Harmless when speech-dispatcher / libspeechd is not available on the host.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-speech-dispatcher')
+}
 
 export const ROOT_PATH = {
   dist: join(__dirname, '..'),
@@ -53,6 +61,25 @@ function createWindow(): void {
 
   linkService.setMainWindow(mainWindow)
 
+  // Route external links to the OS preferred browser instead of opening them inside Electron
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('mailto:')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
+  })
+
+  // Keep in-app navigation inside Cockpit, but hand external links off to the OS browser
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appUrl = process.env.VITE_DEV_SERVER_URL
+    const isInternal = appUrl ? url.startsWith(appUrl) : url.startsWith('file:')
+    if (!isInternal && (url.startsWith('http:') || url.startsWith('https:'))) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
   mainWindow.on('move', () => {
     const windowBounds = mainWindow!.getBounds()
     const { x, y, width, height } = windowBounds
@@ -62,6 +89,10 @@ function createWindow(): void {
   // Don't use the browser page title
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault()
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow?.setTitle(`Cockpit (${app.getVersion()})`)
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -105,6 +136,7 @@ setupWorkspaceService()
 setupJoystickMonitoring()
 setupVideoRecordingService()
 setupGo2RTCService()
+setupTTSService()
 
 app.whenReady().then(async () => {
   console.log('Electron app is ready.')

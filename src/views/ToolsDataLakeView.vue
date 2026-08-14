@@ -6,7 +6,10 @@
         <ExpansiblePanel no-top-divider no-bottom-divider :is-expanded="!interfaceStore.isOnPhoneScreen">
           <template #title>Variables monitor</template>
           <template #info>
-            <p>View, manage, and create data lake variables.</p>
+            <p>
+              View, manage, and create data lake variables. Use the Record checkbox to include a variable in CSV/JSON
+              data logs.
+            </p>
           </template>
           <template #content>
             <div class="flex justify-center flex-col ml-2 mb-8 mt-2 w-full h-full">
@@ -71,8 +74,8 @@
 
                         <v-tooltip location="top">
                           <template #activator="{ props: tooltipProps }">
-                            <div v-bind="tooltipProps" class="w-[440px]">
-                              <ScrollingText :text="item.name" max-width="440px" align="left" :pause-on-hover="false" />
+                            <div v-bind="tooltipProps" class="w-[390px]">
+                              <ScrollingText :text="item.name" max-width="390px" align="left" :pause-on-hover="false" />
                             </div>
                           </template>
                           <span>{{ item.name }}</span>
@@ -81,31 +84,31 @@
                     </td>
                     <td>
                       <div class="flex items-center justify-center rounded-xl mx-1">
-                        <p class="w-[100px] whitespace-nowrap overflow-hidden text-ellipsis text-center">
+                        <p class="w-[70px] whitespace-nowrap overflow-hidden text-ellipsis text-center">
                           {{ item.type }}
                         </p>
                       </div>
                     </td>
                     <td>
                       <div class="flex items-center justify-center rounded-xl mx-1">
-                        <p class="w-[120px] whitespace-nowrap overflow-hidden text-ellipsis text-center">
+                        <p class="w-[115px] whitespace-nowrap overflow-hidden text-ellipsis text-center">
                           {{ item.source }}
                         </p>
                       </div>
                     </td>
                     <td>
                       <div class="flex items-center justify-start rounded-xl mx-1">
-                        <p class="w-[220px] whitespace-nowrap overflow-hidden text-ellipsis text-left font-mono">
+                        <p class="w-[200px] whitespace-nowrap overflow-hidden text-ellipsis text-left font-mono">
                           {{ parsedCurrentValue(item.id) }}
                         </p>
                       </div>
                     </td>
                     <td>
-                      <div class="flex items-center justify-end h-[42px] -mr-2">
+                      <div class="flex items-center justify-end h-[42px] gap-1 -mr-2">
                         <v-btn
                           v-if="isCompoundVariable(item.id)"
                           variant="outlined"
-                          class="rounded-full mx-1"
+                          class="rounded-full"
                           icon="mdi-pencil"
                           size="x-small"
                           @click="editCompoundVariable(item.id)"
@@ -113,7 +116,7 @@
                         <v-btn
                           v-if="isUserDefinedVariable(item.id)"
                           variant="outlined"
-                          class="rounded-full mx-1"
+                          class="rounded-full"
                           icon="mdi-pencil"
                           size="x-small"
                           @click="editUserDefinedVariable(item.id)"
@@ -122,10 +125,23 @@
                           v-if="isCompoundVariable(item.id) || isUserDefinedVariable(item.id)"
                           variant="outlined"
                           color="error"
-                          class="rounded-full mx-1"
+                          class="rounded-full"
                           icon="mdi-delete"
                           size="x-small"
                           @click="deleteVariable(item.id)"
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div class="flex items-center justify-center rounded-xl mx-1">
+                        <v-checkbox
+                          :model-value="recordedVariableIds.includes(item.id)"
+                          density="compact"
+                          hide-details
+                          color="white"
+                          class="record-checkbox flex-none"
+                          @update:model-value="(recorded) => handleRecordToggle(item.id, recorded)"
+                          @click.stop
                         />
                       </div>
                     </td>
@@ -133,7 +149,7 @@
                 </template>
                 <template #no-data>
                   <tr>
-                    <td colspan="5" class="text-center flex items-center justify-center h-[50px] w-full">
+                    <td colspan="6" class="text-center flex items-center justify-center h-[50px] w-full">
                       <p class="text-[16px] ml-[170px] w-full">No data lake variables found</p>
                     </td>
                   </tr>
@@ -183,6 +199,7 @@ import {
   getAllTransformingFunctions,
   TransformingFunction,
 } from '@/libs/actions/data-lake-transformations'
+import { dataLakeLogger } from '@/libs/data-lake-logging'
 import { copyToClipboard } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 
@@ -203,15 +220,33 @@ interface DataLakeVariableWithSource extends DataLakeVariable {
 }
 
 const tableHeaders = [
-  { title: 'Name', align: 'start', key: 'name', width: '220px', fixed: true, headerProps: { class: 'pl-10' } },
-  { title: 'Type', align: 'center', key: 'type', width: '100px', fixed: true },
-  { title: 'Source', align: 'center', key: 'source', width: '120px', fixed: true },
-  { title: 'Current Value', align: 'start', key: 'value', width: '220px', fixed: true },
-  { title: 'Actions', align: 'end', key: 'actions', width: '100px', fixed: true },
+  { title: 'Name', align: 'start', key: 'name', width: '390px', fixed: true, headerProps: { class: 'pl-10' } },
+  { title: 'Type', align: 'center', key: 'type', width: '70px', fixed: true },
+  { title: 'Source', align: 'center', key: 'source', width: '115px', fixed: true },
+  { title: 'Current Value', align: 'start', key: 'value', width: '200px', fixed: true },
+  { title: 'Actions', align: 'end', key: 'actions', width: '70px', fixed: true },
+  {
+    title: 'Record',
+    align: 'center',
+    key: 'record',
+    width: '30px',
+    fixed: true,
+    sortable: true,
+    value: (item: DataLakeVariableWithSource) => (recordedVariableIds.value.includes(item.id) ? 1 : 0),
+  },
 ] as const
+
+const recordedVariableIds = ref<string[]>([...dataLakeLogger.recordedVariableIds])
+
+const handleRecordToggle = (variableId: string, recorded: boolean | null): void => {
+  logUserAction(`${recorded ? 'Enabled' : 'Disabled'} recording of data-lake variable '${variableId}'`)
+  dataLakeLogger.setVariableRecorded(variableId, recorded ?? false)
+  recordedVariableIds.value = [...dataLakeLogger.recordedVariableIds]
+}
 
 const copiedId = ref<string | null>(null)
 const handleCopy = async (id: string): Promise<void> => {
+  logUserAction(`Copied data-lake variable ID '${id}'`)
   await copyToClipboard(id)
   copiedId.value = id
   setTimeout(() => {
@@ -341,6 +376,7 @@ let idVariableBeingEdited: string | undefined
  * Opens the dialog to create a new variable
  */
 const openNewVariableDialog = (): void => {
+  logUserAction('Opened new data-lake variable dialog')
   idVariableBeingEdited = undefined
   showVariableDialog.value = true
 }
@@ -352,6 +388,7 @@ const openNewVariableDialog = (): void => {
 const editUserDefinedVariable = (variableId: string): void => {
   const variable = availableDataLakeVariables.value.find((v) => v.id === variableId)
   if (variable && isUserDefinedVariable(variableId)) {
+    logUserAction(`Opened edit dialog for data-lake variable '${variableId}'`)
     idVariableBeingEdited = variableId
     showVariableDialog.value = true
   } else if (variable && !isUserDefinedVariable(variableId)) {
@@ -365,6 +402,7 @@ const editUserDefinedVariable = (variableId: string): void => {
  * Handles variable save event
  */
 const handleVariableSaved = (): void => {
+  logUserAction('Saved data-lake variable')
   showVariableDialog.value = false
 }
 
@@ -376,9 +414,11 @@ const deleteVariable = (id: string): void => {
   if (isCompoundVariable(id)) {
     const func = getAllTransformingFunctions().find((f) => f.id === id)
     if (func) {
+      logUserAction(`Deleted compound variable '${id}'`)
       deleteTransformingFunction(func)
     }
   } else if (isUserDefinedVariable(id)) {
+    logUserAction(`Deleted data-lake variable '${id}'`)
     deleteDataLakeVariable(id)
   } else {
     openSnackbar({ message: `Variable with ID ${id} cannot be deleted`, variant: 'error' })
@@ -400,17 +440,20 @@ const isUserDefinedVariable = (id: string): boolean => {
 const editCompoundVariable = (id: string): void => {
   const func = getAllTransformingFunctions().find((f) => f.id === id)
   if (func) {
+    logUserAction(`Opened edit dialog for compound variable '${id}'`)
     functionBeingEdited.value = func
     showNewFunctionDialog.value = true
   }
 }
 
 const openNewFunctionDialog = (): void => {
+  logUserAction('Opened new compound variable dialog')
   functionBeingEdited.value = undefined
   showNewFunctionDialog.value = true
 }
 
 const handleFunctionSaved = (): void => {
+  logUserAction('Saved compound variable')
   showNewFunctionDialog.value = false
 }
 
@@ -434,5 +477,10 @@ watch(showNewFunctionDialog, (show) => {
 
 :deep(.v-data-table__wrapper) {
   flex-grow: 1;
+}
+
+.record-checkbox :deep(.v-selection-control) {
+  min-height: auto;
+  justify-content: center;
 }
 </style>

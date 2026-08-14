@@ -78,6 +78,22 @@ export type MavlinkNonNavCommand = {
 export type MissionCommand = MavlinkNavCommand | MavlinkNonNavCommand
 
 /**
+ * Whether a command is the primary navigation command that carries a waypoint's map position.
+ * @param {MissionCommand} command Command to check.
+ * @returns {command is MavlinkNavCommand} True when the command is a MAV_CMD_NAV_WAYPOINT navigation command.
+ */
+export const isNavWaypointCommand = (command: MissionCommand): command is MavlinkNavCommand =>
+  command.type === MissionCommandType.MAVLINK_NAV_COMMAND && command.command === MavCmd.MAV_CMD_NAV_WAYPOINT
+
+/**
+ * Counts how many MAV_CMD_NAV_WAYPOINT commands a waypoint holds.
+ * @param {MissionCommand[]} commands Commands of the waypoint.
+ * @returns {number} Number of MAV_CMD_NAV_WAYPOINT commands.
+ */
+export const countNavWaypointCommands = (commands: MissionCommand[]): number =>
+  commands.filter(isNavWaypointCommand).length
+
+/**
  * Possible types for waypoints. Usually used to decide what function should the waypoint perform.
  */
 export enum AltitudeReferenceType {
@@ -154,6 +170,67 @@ export type CockpitMission = {
 }
 
 /**
+ * Snapshot of the mission estimates panel values at the time the mission was saved.
+ * All values are pre-formatted strings (matching the Mission Estimates UI).
+ */
+export type MissionEstimatesSnapshot = {
+  /**
+   * Total path length.
+   */
+  pathLength: string
+  /**
+   * Estimated time to complete the mission.
+   */
+  duration: string
+  /**
+   * Estimated energy consumption.
+   */
+  energy: string
+  /**
+   * Total area covered by surveys.
+   */
+  totalSurveyCoverage: string
+  /**
+   * Approximate area enclosed by the mission path when closed.
+   */
+  missionCoverageArea: string
+}
+
+/**
+ * A mission saved into the local Mission Library.
+ */
+export type SavedMission = CockpitMission & {
+  /**
+   * Stable identifier for the saved mission entry.
+   */
+  id: string
+  /**
+   * User-facing mission name.
+   */
+  name: string
+  /**
+   * Optional user description for the mission.
+   */
+  description: string
+  /**
+   * Vehicle type the mission was planned for.
+   */
+  vehicleType?: MavType
+  /**
+   * Epoch milliseconds when the mission was first saved to the library.
+   */
+  createdAt: number
+  /**
+   * Epoch milliseconds when the mission was last updated in the library.
+   */
+  updatedAt: number
+  /**
+   * Mission estimates captured when the mission was saved.
+   */
+  estimates?: MissionEstimatesSnapshot
+}
+
+/**
  * Survey object that contains the information about the survey to be performed.
  */
 export interface Survey {
@@ -179,6 +256,21 @@ export interface Survey {
    */
   turnaroundDistance: number
   /**
+   * When true, the survey is flown a second time with the lines rotated 90 degrees, producing a
+   * crosshatch grid. Useful for photogrammetry coverage. Optional for backwards compatibility.
+   */
+  crosshatch?: boolean
+  /**
+   * Density of the crosshatch second pass. Falls back to `distanceBetweenLines` when unset, which also
+   * covers surveys saved before this field existed.
+   */
+  crosshatchDistanceBetweenLines?: number
+  /**
+   * Which of the four survey corners the first waypoint sits on, as a value from 0 to 3. Rotating it
+   * cycles the entry corner. Falls back to 0 when unset (surveys saved before this field existed).
+   */
+  entryCorner?: number
+  /**
    * Executable mission waypoints.
    */
   waypoints: Waypoint[]
@@ -198,6 +290,10 @@ export interface SurveyPath {
    * Each entry is a polyline connecting boundary ↔ turnaround points.
    */
   turnaroundSegments: L.LatLng[][]
+  /**
+   * Index in `path` where the crosshatch second pass (rotated 90°) begins. Undefined when crosshatch is disabled.
+   */
+  crosshatchStartIndex?: number
 }
 
 // TODO - Replace leaflet types with agnostic types
@@ -252,7 +348,16 @@ export type PointOfInterestIcon = string
 export type PointOfInterestColor = string
 
 /**
- * Interface representing a Point of Interest (POI) on the map.
+ * Source for one of a POI's coordinates.
+ * A `number` is a fixed/static value. A `string` is a data-lake expression (e.g.
+ * "{{ mavlink/buoy/latitude }}") that is resolved live into the data lake.
+ */
+export type PoiCoordinateSource = number | string
+
+/**
+ * Interface representing a Point of Interest (POI) definition.
+ * This is the persisted shape. The actual coordinates always live in the data lake (see
+ * `poiLatitudeVariableId`/`poiLongitudeVariableId`); UI components consume `ResolvedPointOfInterest`.
  */
 export interface PointOfInterest {
   /**
@@ -268,9 +373,18 @@ export interface PointOfInterest {
    */
   description: string
   /**
-   * Geographical coordinates of the POI.
+   * Source for the POI latitude: a static number or a data-lake expression.
    */
-  coordinates: PointOfInterestCoordinates
+  latitude: PoiCoordinateSource
+  /**
+   * Source for the POI longitude: a static number or a data-lake expression.
+   */
+  longitude: PoiCoordinateSource
+  /**
+   * Location shown before the live coordinates resolve, or when live data is unavailable.
+   * For static POIs this matches the fixed coordinates.
+   */
+  fallbackCoordinates: PointOfInterestCoordinates
   /**
    * Icon representing the POI.
    */
@@ -281,6 +395,33 @@ export interface PointOfInterest {
   color: PointOfInterestColor
   /** Timestamp of creation or last update */
   timestamp: number
+}
+
+/**
+ * A POI with its coordinates resolved from the data lake. This is what UI components render.
+ */
+export interface ResolvedPointOfInterest extends PointOfInterest {
+  /**
+   * Current coordinates, read from the data lake. Falls back to `fallbackCoordinates` when the
+   * live value is not available.
+   */
+  coordinates: PointOfInterestCoordinates
+  /**
+   * Whether any coordinate is driven by a live data-lake expression.
+   */
+  isLiveTracked: boolean
+  /**
+   * Whether live coordinates are currently available (always true for static POIs).
+   */
+  hasValidPosition: boolean
+  /**
+   * Id of the data-lake variable holding the POI's latitude.
+   */
+  latitudeVariableId: string
+  /**
+   * Id of the data-lake variable holding the POI's longitude.
+   */
+  longitudeVariableId: string
 }
 
 /**
@@ -485,6 +626,58 @@ export type MapTileProvider = 'Esri World Imagery' | 'OpenStreetMap'
  * Otherwise, the map is forced to open with the specified provider.
  */
 export type MapTileProviderPreference = MapTileProvider | 'Use last selected'
+
+/**
+ * How a GeoTIFF map overlay's raster values are mapped to colors.
+ * - `grayscale`: render RGB(A) rasters directly, or a single band as grey (sidescan mosaics, orthophotos).
+ * - `intensity`: stretch a single band between its min/max as greyscale (backscatter).
+ * - `bathymetry`: stretch a single band between its min/max onto a depth color ramp.
+ */
+export type MapOverlayRenderMode = 'grayscale' | 'intensity' | 'bathymetry'
+
+/**
+ * Geographic bounds of a map overlay in WGS84, as `[[south, west], [north, east]]`.
+ */
+export type MapOverlayBounds = [[number, number], [number, number]]
+
+/**
+ * Persisted metadata for a user-loaded GeoTIFF map overlay. The raster bytes are stored
+ * separately (in IndexedDB) keyed by {@link MapOverlayMeta.id}.
+ */
+export interface MapOverlayMeta {
+  /**
+   * Unique id, also used as the storage key for the overlay's raster bytes.
+   */
+  id: string
+  /**
+   * User-facing name, derived from the original file name.
+   */
+  name: string
+  /**
+   * WGS84 bounds used to frame the overlay (e.g. "zoom to survey").
+   */
+  bounds: MapOverlayBounds
+  /**
+   * Layer opacity in the range [0, 1].
+   */
+  opacity: number
+  /**
+   * Whether the overlay is shown on the map by default.
+   */
+  visible: boolean
+  /**
+   * Color mapping applied to the raster values.
+   */
+  renderMode: MapOverlayRenderMode
+  /**
+   * Size of the stored raster in bytes.
+   */
+  fileSize: number
+  /**
+   * Creation timestamp (epoch milliseconds).
+   */
+  createdAt: number
+}
 
 export type IconDimensions = {
   /**

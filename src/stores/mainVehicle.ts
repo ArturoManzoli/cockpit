@@ -387,6 +387,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
    * @param {number} latitude Latitude in degrees.
    * @param {number} longitude Longitude in degrees.
    * @param {number} alt Altitude in meters.
+   * @param {boolean} skipConfirmation Skip the slide-to-confirm prompt (the arm and GUIDED-mode setup
+   * still run), used when retargeting an already-active GoTo so the user isn't re-prompted on every
+   * update (e.g. following a moving target).
    * @returns {Promise<void>}
    */
   async function goTo(
@@ -396,7 +399,8 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     yaw: number,
     latitude: number,
     longitude: number,
-    alt: number
+    alt: number,
+    skipConfirmation = false
   ): Promise<void> {
     if (!mainVehicle.value) {
       throw new Error('No vehicle available to execute go to command.')
@@ -409,7 +413,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     const askArmConfirm = !mainVehicle.value.isArmed() && !canByPassCategory(EventCategory.ARM)
     const askGoToConfirm = !canByPassCategory(EventCategory.GOTO)
 
-    if (askArmConfirm || askGoToConfirm) {
+    if (!skipConfirmation && (askArmConfirm || askGoToConfirm)) {
       const command = askArmConfirm && askGoToConfirm ? 'Arm and GoTo' : askArmConfirm ? 'Arm' : 'GoTo'
       try {
         await slideToConfirm({ command })
@@ -470,13 +474,37 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     return await mainVehicle.value?.uploadMission(items, loadingCallback)
   }
 
+  // Prevent multiple mission fetches from happening at the same time
+  let inflightMissionFetch: Promise<Waypoint[]> | undefined
+  const inflightMissionFetchCallbacks = new Set<MissionLoadingCallback>()
+
   /**
    * Get current mission from vehicle
    * @param { MissionLoadingCallback } loadingCallback Callback that returns the state of the loading progress
    * @returns { Promise<Waypoint[]> } Mission items that were on the vehicle
    */
   async function fetchMission(loadingCallback: MissionLoadingCallback): Promise<Waypoint[]> {
-    return (await mainVehicle.value?.fetchMission(loadingCallback)) ?? []
+    inflightMissionFetchCallbacks.add(loadingCallback)
+    if (inflightMissionFetch) return inflightMissionFetch
+
+    const fanoutLoadingCallback: MissionLoadingCallback = async (perc) => {
+      await Promise.all(
+        Array.from(inflightMissionFetchCallbacks).map((cb) =>
+          cb(perc).catch((e) => console.warn('Mission loading callback error:', e))
+        )
+      )
+    }
+
+    inflightMissionFetch = (async () => {
+      try {
+        return (await mainVehicle.value?.fetchMission(fanoutLoadingCallback)) ?? []
+      } finally {
+        inflightMissionFetch = undefined
+        inflightMissionFetchCallbacks.clear()
+      }
+    })()
+
+    return inflightMissionFetch
   }
 
   /**
@@ -490,7 +518,9 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     if (mainVehicle.value.firmware() !== Vehicle.Firmware.ArduPilot) {
       throw new Error('Home waypoint retrieval is only supported for ArduPilot vehicles.')
     }
-    return await mainVehicle.value.fetchHomeWaypoint()
+    const homeWaypoint = await mainVehicle.value.fetchHomeWaypoint()
+    missionStore.homeMarkerPosition = homeWaypoint.coordinates
+    return homeWaypoint
   }
 
   /**
@@ -504,6 +534,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       throw new Error('No vehicle available to set home waypoint.')
     }
     await mainVehicle.value.setHomeWaypoint(coordinate, height)
+    missionStore.homeMarkerPosition = coordinate
   }
 
   /**
@@ -625,7 +656,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
       isArmed.value = armed
 
       // Clear vehicle history on disarm/arm transition only when not persistent (persistent history is cleared only via map context menu)
-      if (wasArmed !== undefined && wasArmed !== armed && !isVehiclePositionHistoryPersistent.value) {
+      if (wasArmed !== undefined && wasArmed !== armed && !missionStore.isVehiclePositionHistoryPersistent) {
         missionStore.clearVehicleHistory()
       }
 
@@ -997,6 +1028,15 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     await mainVehicle.value.setMissionCurrent(seq)
   }
 
+  /**
+   * Set the cruise (ground) speed live on the vehicle
+   * @param {number} speedMps - Target ground speed in meters per second
+   */
+  async function setCruiseSpeed(speedMps: number): Promise<void> {
+    if (!mainVehicle.value) throw new Error('No vehicle available to set cruise speed.')
+    await mainVehicle.value.setCruiseSpeed(speedMps)
+  }
+
   return {
     arm,
     takeoff,
@@ -1015,6 +1055,7 @@ export const useMainVehicleStore = defineStore('main-vehicle', () => {
     pauseMission,
     returnHome,
     setMissionCurrent,
+    setCruiseSpeed,
     getCurrentVehicleName,
     mainVehicle,
     globalAddress,

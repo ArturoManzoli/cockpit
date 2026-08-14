@@ -50,7 +50,7 @@
         'text-green-500 -ml-[33px]': !isTakingTimedSnapshot,
       }"
       size="22"
-      @click="isTakingTimedSnapshot = !isTakingTimedSnapshot"
+      @click="toggleTimedSnapshot"
     />
   </div>
   <v-dialog v-model="widgetStore.miniWidgetManagerVars(miniWidget.hash).configMenuOpen" width="500">
@@ -77,7 +77,7 @@
             />
           </template>
 
-          <span> Some features like “Capturing Cockpit work area” are only available in the Electron version. </span>
+          <span> Some features like “Capturing Cockpit work area” are only available in Cockpit Standalone. </span>
         </v-tooltip>
       </div>
       <div class="flex items-center justify-start w-[90%] -mb-2">
@@ -154,7 +154,7 @@
           @update:model-value="(val) => (miniWidget.options.captureWorkspace = val)"
         />
         <p class="ml-[4px] -mb-[2px] text-sm" :class="{ 'opacity-20 pointer-events-none': !isElectronEnv }">
-          Capture Cockpit work area (Desktop-only feature)
+          Capture Cockpit work area (Standalone-only feature)
         </p>
       </div>
       <v-text-field
@@ -163,13 +163,18 @@
         type="number"
         density="compact"
         variant="outlined"
-        hide-details
+        hide-details="auto"
         theme="dark"
         class="w-[90%] mt-2"
-        :min="1"
-        step="1"
-        @update:model-value="(val) => (timedSnapshotInterval = parseInt(val))"
+        :min="MIN_TIMED_SNAPSHOT_INTERVAL_SEC"
+        :step="MIN_TIMED_SNAPSHOT_INTERVAL_SEC"
+        :rules="timedSnapshotIntervalRules"
+        @blur="normalizeTimedSnapshotInterval"
       />
+      <div class="flex items-center justify-start w-[90%] mt-2">
+        <v-checkbox v-model="miniWidget.options.flashOnSnapshot" density="compact" hide-details theme="dark" />
+        <p class="ml-3 text-sm">Flash screen on capture (timed captures blink at most once per second)</p>
+      </div>
       <div class="flex w-[90%] justify-end items-center mt-4 border-t-[1px] border-t-[#FFFFFF11]">
         <v-btn
           class="w-auto text-uppercase mt-2 -mr-6"
@@ -186,7 +191,6 @@
 <script setup lang="ts">
 import { computed, onBeforeMount, onMounted, ref, toRefs, watch } from 'vue'
 
-import { useInteractionDialog } from '@/composables/interactionDialog'
 import { openSnackbar } from '@/composables/snackbar'
 import { isElectron } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
@@ -196,7 +200,6 @@ import { useWidgetManagerStore } from '@/stores/widgetManager'
 import type { SnapshotResult } from '@/types/snapshot'
 import type { MiniWidget } from '@/types/widgets'
 
-const { showDialog } = useInteractionDialog()
 const snapshotStore = useSnapshotStore()
 const interfaceStore = useAppInterfaceStore()
 const widgetStore = useWidgetManagerStore()
@@ -238,8 +241,9 @@ const timedSnapshotInterval = computed({
   },
 })
 const isTakingTimedSnapshot = ref<boolean>(false)
-const isFailureDialogOpen = ref(false)
 const timerProgress = ref<number>(50)
+const SNAPSHOT_ERROR_SNACKBAR_DURATION = 8000
+const isSnapshotErrorSnackbarOpen = ref(false)
 
 const flashEffect = async (): Promise<void> => {
   const flashOverlay = document.createElement('div')
@@ -252,6 +256,7 @@ const flashEffect = async (): Promise<void> => {
   flashOverlay.style.opacity = '0'
   flashOverlay.style.transition = 'opacity 0.1s ease'
   flashOverlay.style.zIndex = '9999'
+  flashOverlay.style.pointerEvents = 'none'
 
   document.body.appendChild(flashOverlay)
 
@@ -280,19 +285,37 @@ const toInternalName = (externalId: string): string => {
   return videoStore.internalStreamNameFromExternal(externalId) ?? externalId
 }
 
-const handleSnapshotResult = (result: SnapshotResult): void => {
+let timedFlashCounter = 0
+
+const maybeFlash = (isTimed: boolean): void => {
+  if (!miniWidget.value.options.flashOnSnapshot) return
+  // Cap timed blinks at ~1 Hz by decimating per capture count rather than wall-clock time.
+  // A time throttle whose window matches the interval (both ~1s) drops a blink whenever
+  // jitter pushes a capture just under the window; counting avoids that.
+  if (isTimed) {
+    const blinkEveryNCaptures = Math.max(1, Math.round(1 / timedSnapshotInterval.value))
+    const shouldFlash = timedFlashCounter % blinkEveryNCaptures === 0
+    timedFlashCounter++
+    if (!shouldFlash) return
+  }
+  flashEffect()
+}
+
+const handleSnapshotResult = (result: SnapshotResult, isTimed = false): void => {
   const { succeeded, failed } = result
 
   if (succeeded.length > 0 && failed.length === 0) {
-    flashEffect()
-    openSnackbar({ message: 'Snapshot recorded successfully.', variant: 'success', duration: 2000 })
+    maybeFlash(isTimed)
+    if (!isTimed) {
+      openSnackbar({ message: 'Snapshot recorded successfully.', variant: 'success', duration: 2000 })
+    }
     return
   }
 
   const failedNames = failed.map(toInternalName).join(', ')
 
   if (succeeded.length > 0 && failed.length > 0) {
-    flashEffect()
+    maybeFlash(isTimed)
     openSnackbar({
       message: `Snapshot captured, but failed for: ${failedNames}.`,
       variant: 'warning',
@@ -301,41 +324,76 @@ const handleSnapshotResult = (result: SnapshotResult): void => {
     return
   }
 
-  if (isFailureDialogOpen.value) return
+  if (isSnapshotErrorSnackbarOpen.value) return
 
-  isFailureDialogOpen.value = true
-  showDialog({
-    title: 'Error taking snapshot',
+  isSnapshotErrorSnackbarOpen.value = true
+  openSnackbar({
     message:
       failed.length > 0
-        ? `Failed to capture: ${failedNames}. Make sure the streams have finished loading.`
+        ? `Failed to take snapshot for: ${failedNames}. Make sure the streams have finished loading.`
         : 'No sources available for capture. Make sure streams are connected or select specific ones in the widget settings.',
     variant: 'error',
-    persistent: false,
-    maxWidth: '550px',
-  }).finally(() => {
-    isFailureDialogOpen.value = false
+    duration: SNAPSHOT_ERROR_SNACKBAR_DURATION,
+    closeButton: true,
   })
+  setTimeout(() => (isSnapshotErrorSnackbarOpen.value = false), SNAPSHOT_ERROR_SNACKBAR_DURATION)
 }
 
 const handleTakeSnapshot = async (): Promise<void> => {
   isSnapshotMenuOpen.value = false
   if (snapshotTriggerType.value === 'timed') return
+  logUserAction('Captured snapshot')
   const result = await captureSnapshot()
   handleSnapshotResult(result)
 }
 
 const handleOpenSnapshotLibrary = (): void => {
+  logUserAction('Opened snapshot library')
   isSnapshotMenuOpen.value = false
   interfaceStore.videoLibraryMode = 'snapshots'
   interfaceStore.videoLibraryVisibility = true
 }
 
 const handleSelectSnapshotTriggerType = (type: 'single' | 'timed'): void => {
+  logUserAction(`Set snapshot trigger type to '${type}'`)
   snapshotTriggerType.value = type
   snapshotTypeIcon.value = type === 'timed' ? 'mdi-timer-outline' : 'mdi-video-image'
   miniWidget.value.options.snapshotTriggerType = type
   isSnapshotMenuOpen.value = false
+}
+
+const MIN_TIMED_SNAPSHOT_INTERVAL_SEC = 0.1
+
+const isValidTimedSnapshotInterval = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isFinite(v) && v >= MIN_TIMED_SNAPSHOT_INTERVAL_SEC
+
+const timedSnapshotIntervalRules = [
+  (v: unknown): boolean | string =>
+    isValidTimedSnapshotInterval(v) || `Must be at least ${MIN_TIMED_SNAPSHOT_INTERVAL_SEC} seconds.`,
+]
+
+const normalizeTimedSnapshotInterval = (): void => {
+  if (!isValidTimedSnapshotInterval(timedSnapshotInterval.value)) {
+    timedSnapshotInterval.value = MIN_TIMED_SNAPSHOT_INTERVAL_SEC
+  }
+}
+
+const toggleTimedSnapshot = (): void => {
+  if (isTakingTimedSnapshot.value) {
+    logUserAction('Stopped timed snapshot capture')
+    isTakingTimedSnapshot.value = false
+    return
+  }
+  if (!isValidTimedSnapshotInterval(timedSnapshotInterval.value)) {
+    openSnackbar({
+      message: `Timed snapshot interval must be at least ${MIN_TIMED_SNAPSHOT_INTERVAL_SEC} seconds.`,
+      variant: 'error',
+      duration: 3000,
+    })
+    return
+  }
+  logUserAction('Started timed snapshot capture')
+  isTakingTimedSnapshot.value = true
 }
 
 let progressInterval: ReturnType<typeof setInterval> | null = null
@@ -343,12 +401,13 @@ let shotInterval: ReturnType<typeof setInterval> | null = null
 
 const fireTimedSnapshot = async (): Promise<void> => {
   const result = await captureSnapshot()
-  handleSnapshotResult(result)
+  handleSnapshotResult(result, true)
 }
 
 watch(isTakingTimedSnapshot, (newValue) => {
   if (newValue) {
-    fireTimedSnapshot()
+    timedFlashCounter = 0
+    fireTimedSnapshot().catch((err) => console.error('Timed snapshot capture failed:', err))
     openSnackbar({
       message: `Timed snapshot started. This will capture the selected interfaces every ${timedSnapshotInterval.value} seconds until you press the camera button again.`,
       variant: 'info',
@@ -357,7 +416,7 @@ watch(isTakingTimedSnapshot, (newValue) => {
 
     // Capture subsequent timed snapshots
     shotInterval = setInterval(() => {
-      fireTimedSnapshot()
+      fireTimedSnapshot().catch((err) => console.error('Timed snapshot capture failed:', err))
       timerProgress.value = 0
     }, timedSnapshotInterval.value * 1000)
 
@@ -397,6 +456,7 @@ onBeforeMount(() => {
     captureWorkspace: true,
     snapshotTriggerType: 'single' as 'single' | 'timed',
     timedSnapshotInterval: 5,
+    flashOnSnapshot: true,
   }
   miniWidget.value.options = { ...defaultOptions, ...miniWidget.value.options }
   migrateSelectedStreamsToInternalNames()

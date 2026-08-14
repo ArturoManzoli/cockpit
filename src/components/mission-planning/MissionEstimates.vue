@@ -1,8 +1,8 @@
 <template>
   <div
     v-if="modelValue"
-    class="absolute right-4 bottom-36 rounded-[10px] px-3 py-2"
-    :style="[interfaceStore.globalGlassMenuStyles, { width: '250px' }]"
+    class="absolute right-[10px] bottom-[192px] rounded-[10px] px-3 py-2"
+    :style="[interfaceStore.globalGlassMenuStyles, { width: '280px' }]"
   >
     <p class="text-sm font-semibold mb-[6px]">Mission estimates</p>
     <v-divider class="mb-2" />
@@ -23,6 +23,10 @@
     <div class="text-xs leading-6">
       <div class="flex justify-between">
         <span>Length</span><span>{{ totalMissionLength }}</span>
+      </div>
+      <div v-if="maxDistance !== '—'" class="flex justify-between">
+        <span>Max distance from {{ maxDistanceReferenceLabel }}</span
+        ><span>{{ maxDistance }}</span>
       </div>
       <div class="flex justify-between">
         <span>ETA</span><span>{{ missionDuration }}</span>
@@ -155,6 +159,7 @@ import { useMissionEstimates } from '@/composables/useMissionEstimates'
 import { MavType } from '@/libs/connection/m2r/messages/mavlink2rest-enum'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
+import { useMissionStore } from '@/stores/mission'
 
 defineProps<{
   /**
@@ -167,17 +172,23 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 
 const interfaceStore = useAppInterfaceStore()
 const vehicleStore = useMainVehicleStore()
+const missionStore = useMissionStore()
 
 const {
   totalMissionLength,
+  totalMaxDistance,
+  maxDistanceReferenceLabel,
   totalSurveyCoverage,
   totalMissionDuration,
   totalMissionEnergy,
   missionCoverageAreaSquareMeters,
 } = useMissionEstimates()
 
-const isOptionsIconVisible = computed(() => vehicleStore.vehicleType === MavType.MAV_TYPE_SURFACE_BOAT)
+const isOptionsIconVisible = computed(
+  () => vehicleStore.isVehicleOnline && missionStore.effectiveVehicleType === MavType.MAV_TYPE_SURFACE_BOAT
+)
 
+const maxDistance = computed(() => totalMaxDistance.value)
 const missionDuration = computed(() => totalMissionDuration.value)
 const missionEnergy = computed(() => totalMissionEnergy.value)
 const missionCoverage = computed(() => missionCoverageAreaSquareMeters.value)

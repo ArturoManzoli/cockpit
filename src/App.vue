@@ -37,7 +37,7 @@
           "
           position="menuitem"
           :class="interfaceStore.isVideoLibraryVisible ? 'opacity-0' : 'opacity-100'"
-          @close-modal="currentSubMenuComponent = null"
+          @close-modal="closeSubMenuModal"
         >
           <component :is="currentSubMenuComponent"></component>
         </GlassModal>
@@ -101,6 +101,12 @@
   <UpdateNotification v-if="isElectron()" />
   <ArchitectureWarning v-if="isElectron()" />
   <SnackbarContainer />
+  <FloatingWrapper v-model="devStore.showConsole" title="Console">
+    <ConsoleViewer
+      :disabled="!devStore.enableSystemLogging"
+      disabled-message="System logging is disabled — enable it above to capture console output."
+    />
+  </FloatingWrapper>
   <SkullAnimation
     :is-visible="interfaceStore.showSkullAnimation"
     @animation-complete="interfaceStore.hideSkullAnimation"
@@ -120,8 +126,10 @@ import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 
 
 import ArchitectureWarning from '@/components/ArchitectureWarning.vue'
 import CameraReplacementDialog from '@/components/CameraReplacementDialog.vue'
+import ConsoleViewer from '@/components/ConsoleViewer.vue'
 import DataPrivacyModal from '@/components/DataPrivacyModal.vue'
 import ExternalFeaturesDiscoveryModal from '@/components/ExternalFeaturesDiscoveryModal.vue'
+import FloatingWrapper from '@/components/FloatingWrapper.vue'
 import GlassModal from '@/components/GlassModal.vue'
 import SkullAnimation from '@/components/SkullAnimation.vue'
 import SnackbarContainer from '@/components/SnackbarContainer.vue'
@@ -179,6 +187,11 @@ const handleShowAboutDialog = (): void => {
   showAboutDialog.value = true
 }
 
+const closeSubMenuModal = (): void => {
+  logUserAction(`Closed '${interfaceStore.currentSubMenuComponentName ?? 'settings'}' panel`)
+  currentSubMenuComponent.value = null
+}
+
 // Main menu
 const isSlidingOut = ref(false)
 
@@ -222,12 +235,14 @@ const toggleMainMenu = (): void => {
   if (interfaceStore.isMainMenuVisible) {
     closeMainMenu()
   } else {
+    logUserAction('Opened main menu')
     openMainMenuIfSafeOrDesired()
   }
 }
 
 // Close Main Menu Logic
 const closeMainMenu = (): void => {
+  logUserAction('Closed main menu')
   isSlidingOut.value = true
   setTimeout(() => {
     interfaceStore.isMainMenuVisible = false
@@ -239,6 +254,7 @@ const closeMainMenu = (): void => {
 
 const handleEscKey = (event: KeyboardEvent): void => {
   if (event.key === 'Escape' && interfaceStore.isMainMenuVisible) {
+    logUserAction('Closed main menu (Escape key)')
     closeMainMenu()
   }
 }
@@ -305,14 +321,14 @@ const showTopBarNow = ref(true)
 watch([() => widgetStore.currentView, () => widgetStore.currentView.showBottomBarOnBoot], () => {
   showBottomBarNow.value = widgetStore.currentView.showBottomBarOnBoot
 })
-const bottomBarToggleCallbackId = registerActionCallback(
-  availableCockpitActions.toggle_bottom_bar,
-  () => (showBottomBarNow.value = !showBottomBarNow.value)
-)
-const topBarToggleCallbackId = registerActionCallback(
-  availableCockpitActions.toggle_top_bar,
-  () => (showTopBarNow.value = !showTopBarNow.value)
-)
+const bottomBarToggleCallbackId = registerActionCallback(availableCockpitActions.toggle_bottom_bar, () => {
+  showBottomBarNow.value = !showBottomBarNow.value
+  logUserAction(`Toggled bottom bar visibility to ${showBottomBarNow.value}`)
+})
+const topBarToggleCallbackId = registerActionCallback(availableCockpitActions.toggle_top_bar, () => {
+  showTopBarNow.value = !showTopBarNow.value
+  logUserAction(`Toggled top bar visibility to ${showTopBarNow.value}`)
+})
 onBeforeUnmount(() => {
   unregisterActionCallback(bottomBarToggleCallbackId)
   unregisterActionCallback(topBarToggleCallbackId)

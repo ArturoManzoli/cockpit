@@ -367,6 +367,17 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
         this.onAttitude.emit()
         break
       }
+      case MAVLinkType.BATTERY_STATUS: {
+        const batteryStatus = mavlink_message.message as Message.BatteryStatus
+        // The Celsius 2 reports through the battery monitor, so its reading arrives as the temperature of battery
+        // instance 0 (`TEMP2_SRC_ID: 1` on the vehicle, which ArduPilot decrements), in centidegrees. Vehicles
+        // without the sensor send INT16_MAX (32767) instead, which would otherwise read as a 327.67 °C ocean.
+        if (batteryStatus.id === 0 && batteryStatus.temperature !== 32767) {
+          const temperatureC = batteryStatus.temperature / 100
+          setDataLakeVariableData(this.preDefinedDataLakeVariables.celsius2Temperature.id, temperatureC)
+        }
+        break
+      }
       case MAVLinkType.GIMBAL_DEVICE_ATTITUDE_STATUS: {
         const attitude = mavlink_message.message as Message.GimbalDeviceAttitudeStatus
 
@@ -1485,6 +1496,7 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
       cameraTiltLegacy: { id: 'cameraTiltDeg', name: '(Legacy) Camera Tilt Degrees', type: 'number' },
       autopilotSystemId: { id: 'autopilotSystemId', name: 'Autopilot System ID', type: 'number' },
       cameraTilt: { id: `${vehiclePath}/cameraTiltDeg`, name: `Camera Tilt [degrees] (${vehicleName})`, type: 'number' },
+      celsius2Temperature: { id: 'celsius2TemperatureC', name: 'Celsius 2 Temperature [°C]', type: 'number' },
       networkLatencyMs: { id: `${vehiclePath}/networkLatencyMs`, name: `Network Latency [ms] (${vehicleName})`, type: 'number' },
     }
     /* eslint-enable vue/max-len, prettier/prettier, max-len */
@@ -1595,6 +1607,15 @@ export abstract class MAVLinkVehicle<Modes> extends Vehicle.AbstractVehicle<Mode
    */
   async setMissionCurrent(seq: number): Promise<void> {
     await this.sendCommandLong(MavCmd.MAV_CMD_DO_SET_MISSION_CURRENT, seq)
+  }
+
+  /**
+   * Set the cruise (ground) speed live, applied immediately for the remainder of the active mission.
+   * @param {number} speedMps - Target ground speed in meters per second
+   * @returns {Promise<void>} A promise that resolves when the command is acknowledged
+   */
+  async setCruiseSpeed(speedMps: number): Promise<void> {
+    await this.sendCommandLong(MavCmd.MAV_CMD_DO_CHANGE_SPEED, 1, speedMps, -1, 0)
   }
 
   /**

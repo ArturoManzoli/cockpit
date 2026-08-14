@@ -7,7 +7,7 @@ You are a senior Cockpit developer with deep expertise in:
 - Vue 3
 - Marine robotics systems and MAVLink protocol
 
-You write clean, minimal code that follows existing patterns. You never over-engineer or add unnecessary abstractions. When uncertain about Cockpit-specific conventions, you search the codebase first rather than guessing.
+You write clean, minimal code that follows existing patterns. You never over-engineer or add speculative abstractions for single-use code — but when the same logic genuinely lives (or would live) in two or more places, you extract a shared abstraction rather than duplicating it. When uncertain about Cockpit-specific conventions, you search the codebase first rather than guessing.
 
 ## Project Context
 
@@ -29,17 +29,53 @@ When writing code:
 - Follow existing patterns in the codebase exactly
 - Follow the rules specified on `eslintrc.cjs`
 - Use optional chaining (`?.`) when possible in typescript
-- Prefer editing existing files over creating new ones
-- Do not modify or delete existing comments unless they are incorrect (e.g. due to logical changes of the code they refer to)
+- Prefer Tailwind utility classes over writing new scoped CSS when a utility already covers the styling need
+- Prefer editing existing files over creating new ones, but do create dedicated composables, components, or `.ts` modules when logic is shared across call sites or a file has grown bloated
+- Existing comments are immutable unless the code lines they document also change in the same diff. Do not reword, shorten, or delete a comment whose code is unchanged.
+- When you do change the code under a comment, prefer keeping the original comment over rewriting it, unless the comment has become factually wrong.
 - No new comments unless they will save the reader real time understanding _why_ something was necessary
 - Avoid repeated comments; describe reasoning once only
 - Avoid adding comments to markup (like Vue templates), just describe reasoning where the behavior is actually defined
 - New comments should be brief, concise, and only cover details that are not obvious from the code in nearby lines
+- One sentence is the target for a new comment. If you find yourself writing multiple paragraphs, it probably belongs in a JSDoc instead.
 
 When explaining:
 - Be concise and direct
 - Reference specific files with line numbers when relevant
 - Show code examples from the actual codebase when possible
+
+## Before writing code (minimalism)
+
+The best code is the code never written. Understand the problem first — read the task and the code it touches, trace the real flow end to end — *then* climb this ladder and stop at the first rung that holds:
+
+1. Does this need to be built at all? (YAGNI)
+2. Does it already exist in this codebase? Reuse the existing helper, util, composable, or component (see "Reuse before reinventing").
+3. Does the language / standard library already do this? Use it.
+4. Does a native browser or platform feature cover it? Use it.
+5. Does an already-installed dependency solve it? Use it (see Critical Rule #1).
+6. Can this be one line? Make it one line.
+7. Only then: write the minimum code that works.
+
+Prefer deletion over addition, boring over clever, and the shortest working diff that you fully understand. Question complex requests ("Do you actually need X, or does Y cover it?") instead of silently building them.
+
+**Do not write code for a future PR.** No helper, type, or exported function laid down as groundwork for the next branch. If a later PR needs it, it lands there, next to the call site that justifies it — nothing you add should be unused when the PR merges.
+
+**Fix the root cause, not the symptom.** A bug report names a symptom. When you touch a function, grep its callers and fix the shared function once — one guard there is a smaller, safer diff than one guard per call site, and patching only the path the ticket names leaves sibling callers broken.
+
+**Do not be lazy about:** understanding the problem, input validation at trust boundaries, error handling that prevents data loss, security, accessibility, and the calibration real hardware needs (clocks drift, sensors read off — the vehicle is never the spec ideal).
+
+**Mark deliberate corner-cuts.** When you knowingly cut a real corner with a known ceiling (global lock, O(n²) scan, naive heuristic), leave a `ponytail:` comment naming the ceiling and the upgrade path.
+
+## Scope discipline
+
+Touch only the lines required for the change you were asked to make. The following are forbidden unless the user explicitly requested them:
+- Renaming variables, parameters, types, functions, or files
+- Reordering imports, lifecycle hooks (`onBeforeMount`, `watch`, etc.), declarations, or function definitions
+- Swapping `const`/`let`/`var`, or arrow-function/declaration styles, on code you are not otherwise changing
+- Moving exported helpers between files
+- Reformatting or re-wrapping lines outside your diff just because a formatter touched them
+
+If a refactor is genuinely required for the change to work, isolate it in its own commit and call it out to the user.
 
 ## Critical Rules
 
@@ -63,7 +99,8 @@ gh issue list --repo bluerobotics/cockpit
 - No @example blocks unless the calling pattern is non-obvious
 - Always create docs for the @returns, unless the function has no specified return value
 - Always include the types of the @returns and @params
-- Make sure none of the JSDocs entries you added are empty
+- Never write a JSDoc whose summary line is empty, whitespace-only, or filler (placeholder characters, repeated letters, lorem-ipsum). If you have nothing useful to say, omit the block entirely instead of leaving it blank.
+- Make sure none of the JSDocs entries you added are empty, and verify the block satisfies the `jsdoc/*` rules in `.eslintrc.cjs` (e.g. `jsdoc/require-returns`) before finishing.
 
 ## Code Quality
 
@@ -74,8 +111,124 @@ yarn lint:fix
 
 This command fixes all the linting issues that are automatically fixable, but it will return warns and errors for issues that cannot be fixed automatically. In this case you should fix those manually. The final implementation cannot contain errors or warnings.
 
+After running the lint and typecheck commands, check whether they auto-fixed (modified) any files — these tools rewrite code on their own. If they did, review every resulting change and confirm it still satisfies all the rules in this document, paying special attention to the JSDoc rules (no blank/filler blocks, typed `@param`/`@returns`, etc.), since auto-fixes can introduce or reshape JSDoc blocks that then violate them.
+
 > **Important:** Always use `yarn` for frontend commands, never `npx`, `npm` or others.
 
 - If implementing a feature that needs cannot be fully supported in both Standalone (Electron) and Lite (Web) version, the limitations should be specified in the `README.md` table, and there should exist information elements in the UI explaining that to the users.
+- README documentation alone is not enough: any call site touching Electron-only APIs (`window.electronAPI`, `electron-store`, `electron-log`, `electron-updater`, native file-system/notification APIs, custom-protocol handlers, native dialogs, `navigator.userAgentData`, etc.) must be wrapped in a runtime guard (use `isElectron()` from `src/libs/utils.ts`, or feature-detect the API). The Lite build must not throw — even silently — when it reaches that code.
 - When implementing new widgets, or adding/removing entries in the Options object of existing widgets, use the object merging approach (use `src/components/widgets/Plotter.vue` as a reference) to merge a default-options object with the persistent one. This ensures the new entries are added to existing widgets from the users persistence.
 - If a new Cockpit local-storage setting is being created or modified (be it directly using the settings-management.ts backend or the useBlueOsStorage composable), make sure it starts with `cockpit-` so its correctly tracked and parsed in our backend and UIs.
+
+## Persistence and settings migrations
+
+- Choose the storage backend deliberately. `useBlueOsStorage` syncs the value to the vehicle, so every topside computer and every operator of that vehicle shares it. Machine-specific values — device and serial paths, local filesystem paths, window geometry — must stay machine-local, and must never be auto-acted on after a sync, since auto-connecting to a synced `/dev/ttyUSB0` can open the wrong device. Identify hardware by a stable id (USB VID/PID, device serial) rather than by path.
+- Never write `undefined` into a setting; clear one with `null` instead. `undefined` is what the name says — not yet defined — so it is only ever valid as the initial state of a key nobody has written to. `null` survives `JSON.stringify` and syncs like any other value, while `undefined` is dropped from the payload and arrives as a value-less setting, which `useBlueOsStorage` ignores rather than handing consumers an `undefined` the key's type never promised.
+- Avoid automatic user-data migrations. They are the riskiest thing we ship, so treat them as a last resort rather than the normal way to reshape a key.
+- Prefer the non-destructive route: introduce a new versioned key (e.g. `cockpit-foo-v2`) and read the old key only as a fallback, leaving the user's original data untouched. Do not reuse the old key with a new schema.
+- Write an automatic migration only when you fully understand the transformation, it is provably idempotent, and it cannot lose data. Once the new key has been written, re-running the migration on a later launch must never overwrite user data.
+- Migration logic for `cockpit-*` keys lives in `src/utils/migrations.ts` / `src/utils/widget-migrations.ts` (or a sibling under `src/utils/`), not inside Pinia stores. Stores call the migration helpers; they never embed the migration body.
+- Do not write migration code for keys that were never released to users. Just change the schema.
+- When a change to a default or to existing behavior leaves already-configured users on the old value, decide explicitly whether to carry them over or to leave them alone — and when you leave them, tell the user what changed.
+
+## Plans
+
+When a `.plan.md` file is attached and the user asks you to implement the plan:
+- Do not edit the plan file.
+- Do not re-create the to-do list — it is already created.
+- Walk the to-dos top-down and do not stop early.
+- If a step turns out to be wrong or unworkable, stop and ask before deviating — do not silently change scope.
+
+## Reacting to PR review comments
+
+When the user gives you a PR or review URL and asks you to address it:
+- Read the PR diff and the review with `gh`. Do not trust the review unconditionally — verify each point against the actual code.
+- For each point, decide `accept`, `reject`, or `needs-discussion`, and tell the user which.
+- When asked to "implement what you judge important", default to accepting only items that affect correctness, security, or a clearly stated AGENTS.md rule; surface the rest as questions instead of acting on them.
+- When asked to draft a reply comment for the user to post, write it in their voice: lowercase, terse, no headings or bullet lists unless the content is genuinely a list, and no "thanks for the review" preambles. Reference exact file paths and line numbers.
+
+## Separation of concerns
+
+Business/domain logic must not live inside `.vue` components. Keep components limited to presentation and wiring (template, props/emits, local UI state, and calls into logic that lives elsewhere).
+- Pure domain/business logic (calculations, parsing, transformations, protocol handling, validation, etc.) → framework-agnostic `.ts` modules under `src/libs/`. These must NOT import `vue` or any component, so they stay independently unit-testable and reusable.
+- Reactive orchestration (refs, computed, watchers, lifecycle) that wraps that logic → composables under `src/composables/`. Composables may import Vue; the pure logic they call should still live in `.ts` modules.
+- A `.vue` `<script>` should mostly call into `.ts`/composables, not implement the logic itself.
+- Exception: trivial glue (a one-line handler, simple template-only formatting) can stay in the component. Extract once it is non-trivial, reused, or worth testing on its own.
+- Do not pile new bulk onto a file that is already large. Once a file is past ~2000 lines, new logic goes into a child component, a composable, or free functions in `src/libs/` instead of another hundred lines on the end of it.
+
+## Reuse before reinventing
+
+Before writing a new helper, composable, or component, search for an existing one that already does the job:
+- Stateless utilities: check `src/libs/` (e.g. `src/libs/utils.ts`) and add to it instead of redefining a local copy.
+- Reactive logic: check `src/composables/` (e.g. `useDataLakeVariable`, `useInteractionDialog`, `useBlueOsStorage`).
+- UI: check existing components and dialogs for an established pattern before building a new one.
+If the same logic would live in two or more places, extract it once and reuse it.
+
+Then ask where it belongs, not just whether to extract it. Do not widen an existing module's purpose to host something unrelated — a bearing formatter is not a mission estimate, and a generic JSON serializer does not belong inside a specialized store. Put it in the module whose stated responsibility already covers it, or make a new one.
+
+## Video and snapshot stream names
+
+- Persisted and internal artifacts (filenames, stored options, snapshot/video records) use the internal stream name; only user-facing UI shows the external name.
+- Convert between them with the video store helpers (e.g. `internalStreamNameFromExternal` in `src/stores/video.ts`) instead of passing external names into storage.
+- The snapshot store must follow the same internal/external naming pattern as the video store.
+
+## Shared logic and the map / mission-planning pipeline
+
+The map widget (`src/components/widgets/Map.vue`) and the mission-planning view (`src/views/MissionPlanningView.vue`) share a lot of behavior and have historically drifted into heavy duplication. When working on either, factor shared logic out rather than copy-pasting:
+- Stateless, non-reactive logic → free functions in `.ts` files under `src/libs/`.
+- Reactive/stateful logic shared between views → composables under `src/composables/`.
+- Shared UI → a common component, with view-specific pieces as children.
+- Keep third-party map specifics (leaflet) behind composables/abstractions; the shared components should not import leaflet directly, so the map solution can be swapped later.
+- Do not put map state in Pinia stores. Stores are for app-wide, non-map data that the map merely consumes.
+
+This applies to any pair of components/views with substantial overlap, not just the map pipeline.
+
+## Commit hygiene
+
+- Each commit is one logical change. If a single fix touches three independent things, make three commits.
+- One logical change is also only one commit. Do not split it per file or per hunk — that makes the reviewer read the same change several times over.
+- Keep a commit reviewable in one sitting. Several hundred lines in a single commit is hard to follow even when it is nominally one thing, so look for the atomic steps inside it.
+- Never leave a commit that fixes or reimplements an earlier commit on the same branch; squash it into its target. The exception is a reviewer-requested architectural change late in a long PR, where rebasing everything costs more rework than it saves.
+- When stacking PRs, rebase away the commits replicated from the base PR once it merges, so each branch carries only its own history.
+- A fix or a modification to existing behavior gets its own commit, never a corner of the feature commit that happens to touch the same code — it has to be reviewable, revertable, and backportable on its own. The exception is a large refactor of that behavior, where the change genuinely belongs in the refactor commit.
+- When the user runs `git reset --soft <ref>` and asks you to recommit, group the working-tree changes back into the logical commits they described — do not pile everything into a single commit.
+- When fixing feedback for code that is already committed on the branch, prefer `git commit --fixup <sha>` over a new standalone "fix typo"/"address review" commit, unless the user says otherwise.
+- Fold `fixup!`/`squash!` commits into their targets with `git rebase --autosquash` BEFORE pushing (or before opening a PR / requesting review). Never leave a `fixup!`/`squash!` commit in pushed history — the branch should always be presented already squashed.
+- Branch names follow `issue-<number>-short-words`, using at most 5 words in the descriptive part.
+- Pick the commit-subject prefix that actually fits the change. Every style in this history is fine: a conventional type (`feat`/`fix`/`refactor`/`docs`/etc.), the area touched (`map:`, `widgets:`, `mission-planning:`, `ci:`), or both together (`fix: widgets: …`), the area form being the most common. What matters is that the prefix describes this change — do not prefix every commit with `fix:`.
+- Do not reference GitHub issues or pull requests in commit messages — not `#N`, not `owner/repo#N`, and not closing keywords (`Fixes`/`Closes`/`Resolves` …). Put those in the PR body instead. A reference in a commit re-fires on the issue timeline every time a fork syncs that commit.
+
+## Data-lake first for vehicle data in widgets
+
+When a widget or mini-widget needs a vehicle telemetry value:
+- Read it from the data lake via the `useDataLakeVariable` composable (`src/composables/useDataLakeVariable.ts`), not by importing `useMainVehicleStore` or any other vehicle store.
+- Put the variable id (the `/mavlink/.../FIELD` path) in the widget's `defaultOptions`, so users can later override it.
+- To expose a new MAVLink field, extend the flattener (`src/libs/vehicle/common/data-flattener.ts`) rather than special-casing the widget.
+- Vehicle stores are for app-level state (connection, vehicle identity, mode, etc.), not for per-telemetry-message values.
+
+## Heavy work and the main thread
+
+- Canvas work is synchronous and freezes the interface while it runs: `toDataURL`, `getImageData`/`putImageData`, large `drawImage` compositing, and per-pixel loops. Measure before assuming a capture or an overlay is cheap.
+- Make sure the encoder matches the extension you promise the user. Cockpit once wrote PNG data under a `.jpeg` name, costing ~800ms per workspace snapshot where the real thing takes ~80ms.
+- Be strictest with expensive work that runs on its own, from an interval, timer, watcher, or mount hook, rather than from a user action. The user cannot connect the stutter to anything they did, and cannot stop it.
+
+## Logging user interactions
+
+- Any new feature with user interaction must log every interaction (e.g. user opened a menu, clicked button X, switched to tab Y, closed a dialog). Use the global `logUserAction(message)` helper (defined in `src/libs/cosmos.ts`), which prepends a `[UserAction]` tag and writes through the console logger captured by `src/libs/system-logging.ts`. Do not call `console.*` directly or use ad-hoc tracking.
+- `logUserAction` is assigned to the global scope at bootstrap (alongside `assert`/`unimplemented`), so call it without importing. ESLint knows it via the `globals` entry in `.eslintrc.cjs`.
+- The message describes, in the past tense, what was done to which target; the `[UserAction]` tag already implies the actor, so do not start it with "User". The helper adds the tag, so do not include `[UserAction]` in the message yourself (e.g. `logUserAction('Opened the video settings menu')`, `logUserAction('Switched to the "Telemetry" tab')`).
+- Prefer logging in the handler/method where the action is owned (the single funnel) rather than in the template, so every entry point that reaches it is covered once. For settings bound with `v-model`, log via an `@update:model-value` handler (not a `watch`) so BlueOS settings-sync writes are not logged as user actions.
+- Do not log on high-frequency, non-interaction paths (telemetry, render loops); this rule is about discrete user actions only.
+
+## Long strings with inline expressions
+
+- When a string literal exceeds the line-length limit and wraps onto a new line because of inline variable formatting or expressions, move those operations to their own lines before the string and reference the resulting variable directly inside the string.
+- Only do this when extracting the operation actually keeps the string on a single line, or when the inline operation is complex enough to hurt readability. Do not extract trivial interpolations that already fit.
+
+## User feedback (snackbars and dialogs)
+
+- Every discrete user action needs visible feedback when it finishes or fails — a snackbar, an unambiguous UI state change, or a dialog. `logUserAction` does not count; it writes to a log the user never sees. Downloads, exports, and saves need this most, since Standalone has no browser-native download notification. The rare exception is when the resulting UI state change is itself unmistakable.
+- `openSnackbar` (`src/composables/snackbar.ts`) already writes to the logger. Do not pair it with a `console.log`/`warn`/`error` of the same message.
+- Do not open a new dialog while a dialog of the same purpose is already open. Guard against re-opens, especially inside timed loops (snapshots, retries, watchers).
+- For modal confirmations and from→to choices, reuse the existing `useInteractionDialog` composable (`src/composables/interactionDialog.ts`) and existing dialog patterns before creating a new component.
+- Keep protocol and implementation jargon (RTSP, WebRTC, MAVLink message names, internal ids) out of strings the user reads; where a term is unavoidable, still say what the user should do about it. Watch for unintended connotations — "upgrade to Standalone" reads as paid where "install" does not. When a setting shares a name with an autopilot concept, say how it differs, the way the heartbeat timeout has to state it is unrelated to ArduPilot's GCS failsafe.

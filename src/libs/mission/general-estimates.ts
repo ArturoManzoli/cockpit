@@ -1,3 +1,5 @@
+import { convex, featureCollection, point } from '@turf/turf'
+
 import { MissionLeg, WaypointCoordinates } from '@/types/mission'
 
 import { norm360, radians } from '../utils'
@@ -103,6 +105,20 @@ export const polygonAreaSquareMeters = (position: WaypointCoordinates[]): number
   return Math.abs(sum) / 2
 }
 
+/**
+ * Area of the convex hull of a set of lat/lng points, in square meters.
+ * @param {WaypointCoordinates[]} points - [lat, lng] pairs to wrap; order does not matter.
+ * @returns {number} Hull area in m²; 0 if fewer than 3 points or the points are collinear.
+ */
+export const convexHullSquareMeters = (points: WaypointCoordinates[]): number => {
+  if (points.length < 3) return 0
+  const fc = featureCollection(points.map(([lat, lon]) => point([lon, lat])))
+  const hull = convex(fc)
+  if (!hull) return 0
+  const ring = hull.geometry.coordinates[0].map(([lon, lat]) => [lat, lon] as WaypointCoordinates)
+  return polygonAreaSquareMeters(ring)
+}
+
 // Energy density estimates (kg/Wh) by battery chemistry
 export const batteryDensityPreChemistry: Record<BatteryChemistry, number> = {
   'li-ion': 0.005, // ≈5 g/Wh
@@ -127,6 +143,18 @@ export const bearingBetween = (pointA: WaypointCoordinates, pointB: WaypointCoor
 export const deltaBearing = (bearing1: number, bearing2: number): number => {
   const angle = Math.abs(((bearing2 - bearing1 + 540) % 360) - 180)
   return angle
+}
+
+export const formatMetersShort = (distance: number): string => {
+  if (!isFinite(distance) || distance <= 0) return '—'
+  if (distance < 1000) return `${distance.toFixed(0)} m`
+  return `${(distance / 1000).toFixed(2)} km`
+}
+
+export const formatBearing = (bearing: number): string => {
+  if (!isFinite(bearing)) return '—'
+  const normalized = ((bearing % 360) + 360) % 360
+  return `${Math.round(normalized).toString().padStart(3, '0')}°`
 }
 
 // Compute path time from provided legs (speed & distance) -> Still needs turning penalty that depends on vehicle

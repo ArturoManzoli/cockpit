@@ -128,7 +128,8 @@ import { storeToRefs } from 'pinia'
 import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
 import { useInteractionDialog } from '@/composables/interactionDialog'
-import { isEqual, sleep } from '@/libs/utils'
+import { openSnackbar } from '@/composables/snackbar'
+import { isEqual } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useVideoStore } from '@/stores/video'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
@@ -174,7 +175,19 @@ const selectedExternalId = ref<string | undefined>()
 
 const externalStreamId = computed(() => selectedExternalId.value)
 
+// Register/unregister this widget as a consumer of the stream, so the video store can tear down streams that no
+// widget points to anymore instead of leaking their WebRTC session.
+watch(
+  externalStreamId,
+  (newId, oldId) => {
+    if (oldId) videoStore.unregisterStreamConsumer(oldId, miniWidget.value.hash)
+    if (newId) videoStore.registerStreamConsumer(newId, miniWidget.value.hash)
+  },
+  { immediate: true }
+)
+
 const openVideoLibraryModal = (): void => {
+  logUserAction('Opened Video Library')
   interfaceStore.videoLibraryMode = 'videos'
   interfaceStore.videoLibraryVisibility = true
 }
@@ -323,6 +336,7 @@ function assertStreamIsSelectedAndAvailable(
 const toggleRecording = async (): Promise<void> => {
   if (isRecording.value) {
     if (selectedExternalId.value) {
+      logUserAction(`Stopped video recording of stream '${nameSelectedStream.value}'`)
       videoStore.stopRecording(selectedExternalId.value)
     }
     return
@@ -348,6 +362,7 @@ const startRecording = (): void => {
   }
 
   assertStreamIsSelectedAndAvailable(nameSelectedStream.value)
+  logUserAction(`Started video recording of stream '${nameSelectedStream.value}'`)
   videoStore.startRecording(selectedExternalId.value)
   widgetStore.miniWidgetManagerVars(miniWidget.value.hash).configMenuOpen = false
 }
@@ -369,28 +384,30 @@ const timePassedString = computed(() => {
   return `${durationHours}:${durationMinutes}:${durationSeconds}`
 })
 
-const updateCurrentStream = async (internalStreamName: string | undefined): Promise<void> => {
+// Generous ceiling for how long we show the connecting state before warning; well above typical WebRTC
+// negotiation so merely-slow streams aren't cut off, unlike the old 3s hard timeout.
+const streamLoadingTimeoutMs = 20000
+let streamLoadingTimeout: ReturnType<typeof setTimeout> | undefined = undefined
+
+const updateCurrentStream = (internalStreamName: string | undefined): void => {
+  logUserAction(`Selected recording stream '${internalStreamName}'`)
   assertStreamIsSelectedAndAvailable(internalStreamName)
 
   mediaStream.value = undefined
   isLoadingStream.value = true
-
-  let millisPassed = 0
-  const timeStep = 100
-  const waitingTime = 3000
-  while (isLoadingStream.value && millisPassed < waitingTime) {
-    // @ts-ignore: The media stream can (and probably will) get defined as we selected a stream
-    isLoadingStream.value = mediaStream.value === undefined || !mediaStream.value.active
-    await sleep(timeStep)
-    millisPassed += timeStep
-  }
-
-  if (isLoadingStream.value) {
-    showDialog({ message: 'Could not load media stream.', variant: 'error' })
-    return
-  }
-
   miniWidget.value.options.internalStreamName = internalStreamName
+
+  // streamConnectionRoutine clears isLoadingStream once media is flowing; if it never connects, stop spinning
+  // and surface a non-blocking warning so the record button becomes usable again instead of staying disabled.
+  clearTimeout(streamLoadingTimeout)
+  streamLoadingTimeout = setTimeout(() => {
+    if (!isLoadingStream.value) return
+    isLoadingStream.value = false
+    openSnackbar({
+      message: `Could not load media stream '${internalStreamName}'. Check the stream source and try again.`,
+      variant: 'error',
+    })
+  }, streamLoadingTimeoutMs)
 }
 
 let streamConnectionRoutine: ReturnType<typeof setInterval> | undefined = undefined
@@ -414,6 +431,10 @@ if (widgetStore.isRealMiniWidget(miniWidget.value.hash)) {
       if (!isEqual(updatedMediaStream, mediaStream.value)) {
         mediaStream.value = updatedMediaStream
       }
+      if (isLoadingStream.value && mediaStream.value?.active) {
+        isLoadingStream.value = false
+        clearTimeout(streamLoadingTimeout)
+      }
     }
 
     if (!namesAvailableStreams.value.isEmpty() && !namesAvailableStreams.value.includes(nameSelectedStream.value!)) {
@@ -425,7 +446,11 @@ if (widgetStore.isRealMiniWidget(miniWidget.value.hash)) {
     }
   }, 1000)
 }
-onBeforeUnmount(() => clearInterval(streamConnectionRoutine))
+onBeforeUnmount(() => {
+  clearInterval(streamConnectionRoutine)
+  clearTimeout(streamLoadingTimeout)
+  if (externalStreamId.value) videoStore.unregisterStreamConsumer(externalStreamId.value, miniWidget.value.hash)
+})
 
 watch(
   () => isVideoLibraryDialogOpen.value,

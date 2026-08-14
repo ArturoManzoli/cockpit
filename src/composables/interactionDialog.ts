@@ -9,7 +9,7 @@ import { DialogActions } from '@/types/general'
 /**
  * Options to configure the interaction dialog.
  */
-interface DialogOptions {
+export interface DialogOptions {
   /**
    * Message to display in the dialog. If an array, elements will be displayed as an item list.
    * @type {string}
@@ -51,13 +51,23 @@ interface DialogOptions {
 }
 
 /**
- *
+ * Result returned when the interaction dialog is resolved or dismissed.
  */
-interface DialogResult {
+export interface DialogResult {
   /**
-   *
+   * Whether the user confirmed the dialog (`true`) or dismissed it (`false`).
    */
   isConfirmed: boolean
+}
+
+/**
+ * Reactive state backing the mounted dialog component.
+ */
+type DialogState = DialogOptions & {
+  /**
+   * Indicates whether the dialog should be shown.
+   */
+  showDialog: boolean
 }
 
 /**
@@ -77,15 +87,7 @@ export function useInteractionDialog(): {
    */
   closeDialog: () => void
 } {
-  const dialogProps = reactive<
-    DialogOptions & {
-      /**
-       * Indicates whether the dialog should be shown.
-       * @type {boolean}
-       */
-      showDialog: boolean
-    }
-  >({
+  const defaultDialogState = (): DialogState => ({
     message: '',
     variant: '',
     title: '',
@@ -96,12 +98,29 @@ export function useInteractionDialog(): {
     timer: 0,
   })
 
+  const dialogProps = reactive<DialogState>(defaultDialogState())
+
   let dialogApp: App<Element> | null = null
-  let resolveFn: (value: DialogResult | PromiseLike<DialogResult>) => void
-  let rejectFn: (reason?: DialogResult) => void
+  let mountPoint: HTMLElement | null = null
+  let resolveFn: ((value: DialogResult | PromiseLike<DialogResult>) => void) | undefined
+  let rejectFn: ((reason?: DialogResult) => void) | undefined
+
+  const unmountDialog = (): void => {
+    if (dialogApp) {
+      dialogApp.unmount()
+      dialogApp = null
+    }
+    if (mountPoint) {
+      mountPoint.remove()
+      mountPoint = null
+    }
+  }
 
   const mountDialog = (): void => {
-    const mountPoint = document.createElement('div')
+    // Unmount any previously mounted dialog first, otherwise repeated calls stack orphaned dialog
+    // instances that can never be dismissed and end up blocking the whole screen.
+    unmountDialog()
+    mountPoint = document.createElement('div')
     document.body.appendChild(mountPoint)
     dialogApp = createApp(InteractionDialogComponent, {
       ...dialogProps,
@@ -118,8 +137,13 @@ export function useInteractionDialog(): {
   }
 
   const showDialog = (options: DialogOptions): Promise<DialogResult> => {
+    // Settle any still-pending dialog before replacing it so a caller awaiting a superseded dialog doesn't hang
+    // forever. Resolve (rather than reject) to avoid unhandled rejections for the many callers that don't await.
+    resolveFn?.({ isConfirmed: false })
     return new Promise((resolve, reject) => {
-      Object.assign(dialogProps, options, { showDialog: true })
+      // Merge over a fresh set of defaults so options the caller omits (notably `actions`) never leak from the
+      // previous dialog, which would otherwise leave a stale destructive button on an unrelated dialog.
+      Object.assign(dialogProps, defaultDialogState(), options, { showDialog: true })
       resolveFn = resolve
       rejectFn = reject
       mountDialog()
@@ -128,16 +152,11 @@ export function useInteractionDialog(): {
 
   const closeDialog = (): void => {
     dialogProps.showDialog = false
-    if (dialogApp) {
-      dialogApp.unmount()
-      dialogApp = null
-    }
+    unmountDialog()
   }
 
   onUnmounted(() => {
-    if (dialogApp) {
-      dialogApp.unmount()
-    }
+    unmountDialog()
   })
 
   return { showDialog, closeDialog }

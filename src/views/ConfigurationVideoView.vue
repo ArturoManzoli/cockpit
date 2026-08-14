@@ -185,7 +185,7 @@
           <template #content>
             <div class="flex justify-center flex-col w-[90%] ml-2">
               <v-combobox
-                v-model="allowedIceIps"
+                :model-value="allowedIceIps"
                 multiple
                 :items="availableIceIps"
                 label="Allowed WebRTC remote IP Addresses"
@@ -196,6 +196,7 @@
                 density="compact"
                 clearable
                 hide-details
+                @update:model-value="handleAllowedIpsUpdate"
               />
               <v-checkbox
                 v-model="videoStore.enableAutoIceIpFetch"
@@ -270,7 +271,7 @@
           <template #info>
             <li>
               Configure live video processing to process videos in real-time during recording for instant availability
-              when recording stops. This is only available in the Electron (desktop) version.
+              when recording stops. This is only available in Cockpit Standalone.
             </li>
             <li>
               Choose whether to save backup raw chunks alongside the final video file. This provides safety for video
@@ -302,10 +303,10 @@
               <div class="flex items-start gap-3">
                 <v-icon color="amber" class="mt-1">mdi-information</v-icon>
                 <div>
-                  <h4 class="text-amber-200 font-medium mb-2">Browser Version</h4>
+                  <h4 class="text-amber-200 font-medium mb-2">Cockpit Lite</h4>
                   <p class="text-amber-100 text-sm">
-                    Video processing is not available in the browser version. Your recordings will be saved as raw
-                    chunks that can be downloaded and processed using the standalone version of Cockpit.
+                    Video processing is not available in Cockpit Lite. Your recordings will be saved as raw chunks that
+                    can be downloaded and processed using Cockpit Standalone.
                   </p>
                 </div>
               </div>
@@ -314,7 +315,7 @@
             <div class="flex items-center justify-start w-[96%] ml-2">
               <v-checkbox
                 v-model="videoStore.enableLiveProcessing"
-                label="Live video processing (Electron)"
+                label="Live video processing (Standalone)"
                 class="text-sm mx-2"
                 hide-details
                 :disabled="!isElectron()"
@@ -323,7 +324,7 @@
                 :text="
                   isElectron()
                     ? 'Process videos in real-time during recording for instant availability when recording stops'
-                    : 'Live video processing is only available in the standalone version'
+                    : 'Live video processing is only available in Cockpit Standalone'
                 "
               >
                 <template #activator="{ props }">
@@ -357,7 +358,7 @@
                   <p class="mt-2 text-gray-300">
                     You can always manually clean up backup chunks later using the "Temporary" tab in the Video Library.
                   </p>
-                  <p class="mt-2 text-gray-300">For the browser version the chunks are always saved by default.</p>
+                  <p class="mt-2 text-gray-300">In Cockpit Lite the chunks are always saved by default.</p>
                 </div>
               </v-tooltip>
             </div>
@@ -382,7 +383,7 @@
     variant="text-only"
     :persistent="true"
     :actions="[
-      { text: 'Cancel', size: 'small', action: cancelEditDialog },
+      { text: 'Cancel', size: 'small', action: onCancelStreamRename },
       { text: 'Save', size: 'small', disabled: !newStreamName.trim(), action: saveStreamNameFromDialog },
     ]"
   >
@@ -453,7 +454,8 @@ import { computed, onMounted, ref } from 'vue'
 import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import InteractionDialog from '@/components/InteractionDialog.vue'
 import ScrollingText from '@/components/ScrollingText.vue'
-import { isElectron } from '@/libs/utils'
+import { openSnackbar } from '@/composables/snackbar'
+import { isElectron, isValidIpv4Address, sanitizeIpv4Address } from '@/libs/utils'
 import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useSnapshotStore } from '@/stores/snapshot'
 import { useVideoStore } from '@/stores/video'
@@ -500,6 +502,7 @@ const streamsToShow = computed(() => {
 })
 
 const openEditDialog = (item: VideoStreamCorrespondency): void => {
+  logUserAction(`Opened rename dialog for video stream '${item.name}'`)
   editingStream.value = item
   newStreamName.value = item.name
   editDialogError.value = ''
@@ -510,6 +513,7 @@ const saveStreamNameFromDialog = (): void => {
   if (editingStream.value && newStreamName.value.trim()) {
     try {
       editDialogError.value = ''
+      logUserAction(`Renamed video stream '${editingStream.value.name}' to '${newStreamName.value.trim()}'`)
       videoStore.renameStreamInternalNameById(editingStream.value.externalId, newStreamName.value.trim())
       cancelEditDialog()
     } catch (error) {
@@ -525,6 +529,11 @@ const cancelEditDialog = (): void => {
   editDialogError.value = ''
 }
 
+const onCancelStreamRename = (): void => {
+  logUserAction('Cancelled video stream rename')
+  cancelEditDialog()
+}
+
 const addRtspStream = (): void => {
   try {
     rtspInputError.value = ''
@@ -532,6 +541,7 @@ const addRtspStream = (): void => {
       rtspInputError.value = 'Please provide an RTSP URL.'
       return
     }
+    logUserAction(`Added RTSP stream '${rtspUrlInput.value.trim()}'`)
     videoStore.addRtspStreamCorrespondency(rtspUrlInput.value.trim())
     rtspUrlInput.value = ''
   } catch (error) {
@@ -540,6 +550,7 @@ const addRtspStream = (): void => {
 }
 
 const deleteStream = (item: VideoStreamCorrespondency): void => {
+  logUserAction(`Removed video stream '${item.name}'`)
   videoStore.deleteStreamCorrespondency(item.externalId)
 }
 
@@ -549,6 +560,7 @@ const restoreIgnoredStream = (externalId: string): void => {
 
   // If the stream is available, restore normally, otherwise ask the user to confirm they want to delete it permanently
   if (isStreamAvailable) {
+    logUserAction(`Restored video stream '${externalId}'`)
     videoStore.restoreIgnoredStream(externalId)
   } else {
     // Stream is not available, show confirmation dialog
@@ -558,11 +570,13 @@ const restoreIgnoredStream = (externalId: string): void => {
 }
 
 const closeUnavailableStreamDialog = (): void => {
+  logUserAction('Kept unavailable video stream ignored')
   showUnavailableStreamDialog.value = false
   unavailableStreamId.value = ''
 }
 
 const deleteStreamPermanently = (): void => {
+  logUserAction(`Permanently deleted unavailable video stream '${unavailableStreamId.value}'`)
   videoStore.restoreIgnoredStream(unavailableStreamId.value)
   closeUnavailableStreamDialog()
 }
@@ -609,7 +623,57 @@ onMounted(async () => {
   }
 })
 
+/**
+ * Sanitizes the list of allowed WebRTC IPs, stripping schemes/ports/paths from prefixed entries and
+ * dropping ones with no extractable IPv4 address, notifying the user of any changes made.
+ * @param {string[] | null} newValue - The raw list of IPs coming from the combobox.
+ */
+function handleAllowedIpsUpdate(newValue: string[] | null): void {
+  if (!newValue) {
+    allowedIceIps.value = []
+    return
+  }
+
+  const cleanedIps: string[] = []
+  const cleanedNotes: string[] = []
+  const rejectedValues: string[] = []
+
+  newValue.forEach((value) => {
+    if (isValidIpv4Address(value)) {
+      cleanedIps.push(value)
+      return
+    }
+
+    const sanitized = sanitizeIpv4Address(value)
+    if (sanitized === undefined) {
+      rejectedValues.push(value)
+      return
+    }
+
+    cleanedIps.push(sanitized)
+    cleanedNotes.push(`'${value}' -> '${sanitized}'`)
+  })
+
+  allowedIceIps.value = [...new Set(cleanedIps)]
+
+  if (cleanedNotes.length > 0) {
+    openSnackbar({
+      message: `Cleaned up allowed WebRTC IP(s): ${cleanedNotes.join(', ')}.`,
+      variant: 'info',
+      persistent: true,
+    })
+  }
+  if (rejectedValues.length > 0) {
+    openSnackbar({
+      message: `Could not extract a valid IP address from: ${rejectedValues.join(', ')}. Entry not added.`,
+      variant: 'warning',
+    })
+  }
+  logUserAction(`Updated allowed WebRTC IPs to [${allowedIceIps.value.join(', ')}]`)
+}
+
 const openVideoLibrary = (): void => {
+  logUserAction('Opened Video Library')
   interfaceStore.videoLibraryVisibility = true
 }
 

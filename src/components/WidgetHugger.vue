@@ -1,14 +1,4 @@
 <template>
-  <div v-if="devStore.developmentMode" class="widgetOverlay dev-info">
-    <p>Position: {{ round(100 * widget.position.x, 2) }} x {{ round(100 * widget.position.y, 2) }} %</p>
-    <p>Size: {{ round(100 * widget.size.width, 2) }} x {{ round(100 * widget.size.height, 2) }} %</p>
-    <p>Position: {{ round(widget.position.x * windowWidth) }} x {{ round(widget.position.y * windowHeight) }} px</p>
-    <p>Size: {{ round(widget.size.width * windowWidth) }} x {{ round(widget.size.height * windowHeight) }} px</p>
-    <p>Client size: {{ innerWidgetRef?.clientWidth }} x {{ innerWidgetRef?.clientHeight }} px</p>
-    <p>Offset size: {{ innerWidgetRef?.offsetWidth }} x {{ innerWidgetRef?.offsetHeight }} px</p>
-    <p>Scroll size: {{ innerWidgetRef?.scrollWidth }} x {{ innerWidgetRef?.scrollHeight }} px</p>
-    <p v-for="[k, v] in Object.entries(widget?.options)" :key="k">{{ k }} (option): {{ v }}</p>
-  </div>
   <div
     ref="widgetOverlay"
     class="widgetOverlay"
@@ -71,8 +61,8 @@
 import { useElementHover, useWindowSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
-import { constrain, round } from '@/libs/utils'
-import { useDevelopmentStore } from '@/stores/development'
+import { useWidgetGeometry } from '@/composables/useWidgetGeometry'
+import { constrain } from '@/libs/utils'
 import { useWidgetManagerStore } from '@/stores/widgetManager'
 import type { Point2D, SizeRect2D } from '@/types/general'
 import { type Widget, isWidgetConfigurable, widgetHasOwnContextMenu, WidgetType } from '@/types/widgets'
@@ -122,9 +112,6 @@ watch(
   { immediate: true }
 )
 
-watch(position, (newPosition) => (widget.value.position = newPosition))
-watch(size, (newSize) => (widget.value.size = newSize))
-
 const allowMoving = toRefs(props).allowMoving
 const allowResizing = toRefs(props).allowResizing
 const outerWidgetRef = ref<HTMLElement | undefined>()
@@ -149,6 +136,7 @@ const handleContextMenu = {
   open: (event: MouseEvent | TouchEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    logUserAction(`Opened context menu for widget '${widget.value.name}'`)
     contextMenuRef.value.openAt(event)
     contextMenuVisible.value = true
   },
@@ -167,8 +155,6 @@ const contextMenuItems = computed(() =>
     : []
 )
 
-const devStore = useDevelopmentStore()
-
 const { width: windowWidth, height: windowHeight } = useWindowSize()
 
 const widgetOverlay = ref()
@@ -183,6 +169,9 @@ watch([hoveringWidgetOrOverlay, allowMoving], () => {
 
 const draggingWidget = ref(false)
 const isResizing = ref(false)
+
+const { syncPositionToWidget, syncSizeToWidget } = useWidgetGeometry(widget, position, size, draggingWidget, isResizing)
+
 const resizeHandle = ref<EventTarget | null>(null)
 const getViewSize = (): {
   /**
@@ -315,12 +304,21 @@ const handleResize = (event: MouseEvent): void => {
 const handleEnd = (): void => {
   if (!outerWidgetRef.value) return
   if (draggingWidget.value) {
+    const x = position.value.x.toFixed(3)
+    const y = position.value.y.toFixed(3)
+    logUserAction(`Moved widget '${widget.value.name}' to x:${x}, y:${y}`)
     draggingWidget.value = false
+    syncPositionToWidget()
     outerWidgetRef.value.style.cursor = 'grab'
     document.documentElement.classList.remove('widget-dragging')
   } else if (isResizing.value) {
+    const width = size.value.width.toFixed(3)
+    const height = size.value.height.toFixed(3)
+    logUserAction(`Resized widget '${widget.value.name}' to width:${width}, height:${height}`)
     isResizing.value = false
     resizeHandle.value = null
+    syncPositionToWidget()
+    syncSizeToWidget()
   }
 }
 
@@ -429,8 +427,6 @@ const cursorStyle = computed(() => {
   return 'grab'
 })
 
-const devInfoBlurLevel = computed(() => `${devStore.widgetDevInfoBlurLevel}px`)
-
 const isWidgetFullScreen = computed(() => widgetStore.isFullScreen(widget.value))
 
 const handleTopOffset = computed(() =>
@@ -454,20 +450,6 @@ const highlighted = computed(() => widgetStore.widgetManagerVars(widget.value.ha
   height: calc(v-bind('sizeStyle.height') + 2 * var(--overlayOverSize));
   user-select: none;
   display: v-bind('overlayDisplayStyle');
-}
-.dev-info {
-  background-color: rgba(255, 255, 255, 0.3);
-  backdrop-filter: blur(v-bind('devInfoBlurLevel'));
-  z-index: 1;
-  pointer-events: none;
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: auto;
-  text-shadow: 1ch;
-  flex-flow: column wrap;
 }
 .widgetOverlay.allowMoving {
   background-color: rgba(0, 0, 0, 0.1);
@@ -575,5 +557,9 @@ const highlighted = computed(() => widgetStore.widgetManagerVars(widget.value.ha
 
 html.widget-dragging iframe {
   pointer-events: none !important;
+}
+
+iframe.widget-dragging-self {
+  visibility: hidden;
 }
 </style>

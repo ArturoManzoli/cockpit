@@ -27,6 +27,7 @@ import { settingsManager } from '@/libs/settings-management'
 import { isEqual, sequentialArray } from '@/libs/utils'
 import { isViewsGroupBlank } from '@/migration/default-profile-importer'
 import { legacySavedProfilesKey, migrateLegacyViewsGroup } from '@/migration/profile-migrations'
+import { useAppInterfaceStore } from '@/stores/appInterface'
 import { useMainVehicleStore } from '@/stores/mainVehicle'
 import type { Point2D, SizeRect2D } from '@/types/general'
 import {
@@ -47,9 +48,12 @@ import {
 } from '@/types/widgets'
 const { showDialog } = useInteractionDialog()
 
+const { height: windowHeight } = useWindowSize()
+
 const viewsGroupKey = 'cockpit-views-group-v1'
 
 export const useWidgetManagerStore = defineStore('widget-manager', () => {
+  const interfaceStore = useAppInterfaceStore()
   const editingMode = ref(false)
   const snapToGrid = ref(true)
   const gridInterval = ref(0.01)
@@ -267,6 +271,15 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     return currentView.value.showBottomBarOnBoot ? desiredBottomBarHeightPixels.value : 0
   })
 
+  // Positioning to overlays that need to hug the visible edge of top or bottom bar.
+  const currentTopBarHeightPixelsScaled = computed(() => {
+    return currentTopBarHeightPixels.value * interfaceStore.renderedBarScale
+  })
+
+  const currentBottomBarHeightPixelsScaled = computed(() => {
+    return currentBottomBarHeightPixels.value * interfaceStore.renderedBarScale
+  })
+
   const currentView = computed<View>({
     get() {
       const idx = Math.min(currentViewIndex.value, currentProfile.value.views.length - 1)
@@ -329,14 +342,13 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
   // eslint-disable-next-line jsdoc/require-jsdoc
   const widgetClearanceForVisibleArea = (widget: Widget): { top: number; bottom: number } => {
     const clearances = { top: 0, bottom: 0 }
-    const { height: windowHeight } = useWindowSize()
 
     const widgetTopEdgePixels = windowHeight.value * widget.position.y
-    const topBarStartPixels = currentTopBarHeightPixels.value
+    const topBarStartPixels = currentTopBarHeightPixelsScaled.value
     clearances.top = widgetTopEdgePixels - topBarStartPixels
 
     const widgetBottomEdgePixels = windowHeight.value * (widget.position.y + widget.size.height)
-    const bottomBarStartPixels = windowHeight.value - currentBottomBarHeightPixels.value
+    const bottomBarStartPixels = windowHeight.value - currentBottomBarHeightPixelsScaled.value
     clearances.bottom = bottomBarStartPixels - widgetBottomEdgePixels
 
     return clearances
@@ -636,6 +648,44 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
 
   watch(editingMode, () => resetWidgetsEditingState())
 
+  // Centralized logging for opening/closing of widget and mini-widget configuration menus. Their open state is
+  // owned here (configMenuOpen on the manager vars), so the log lives here instead of in each individual widget.
+  // The computeds only read configMenuOpen, so they don't recompute on unrelated manager-var changes (e.g. dragging).
+  const widgetNameByHash = (hash: string): string =>
+    currentProfile.value.views.flatMap((view) => view.widgets).find((widget) => widget.hash === hash)?.name ?? hash
+
+  const widgetsWithOpenConfigMenu = computed(() =>
+    Object.entries(_widgetManagerVars.value)
+      .filter(([, vars]) => vars.configMenuOpen)
+      .map(([hash]) => hash)
+  )
+  watch(widgetsWithOpenConfigMenu, (newHashes, oldHashes) => {
+    newHashes
+      .filter((hash) => !oldHashes.includes(hash))
+      .forEach((hash) => logUserAction(`Opened configuration of widget '${widgetNameByHash(hash)}'`))
+    oldHashes
+      .filter((hash) => !newHashes.includes(hash))
+      .forEach((hash) => logUserAction(`Closed configuration of widget '${widgetNameByHash(hash)}'`))
+  })
+
+  const miniWidgetsWithOpenConfigMenu = computed(() =>
+    Object.entries(_miniWidgetManagerVars.value)
+      .filter(([, vars]) => vars.configMenuOpen)
+      .map(([hash]) => hash)
+  )
+  watch(miniWidgetsWithOpenConfigMenu, (newHashes, oldHashes) => {
+    newHashes
+      .filter((hash) => !oldHashes.includes(hash))
+      .forEach((hash) =>
+        logUserAction(`Opened configuration of mini-widget '${getElementByHash(hash)?.component ?? hash}'`)
+      )
+    oldHashes
+      .filter((hash) => !newHashes.includes(hash))
+      .forEach((hash) =>
+        logUserAction(`Closed configuration of mini-widget '${getElementByHash(hash)?.component ?? hash}'`)
+      )
+  })
+
   // Closes the side config panel on view change and edit mode exit
   watch([editingMode, currentViewIndex], ([isInEditMode, newViewIdx], [, oldViewIdx]) => {
     if (!isInEditMode || newViewIdx !== oldViewIdx) {
@@ -786,6 +836,8 @@ export const useWidgetManagerStore = defineStore('widget-manager', () => {
     visibleAreaMinClearancePixels,
     currentTopBarHeightPixels,
     currentBottomBarHeightPixels,
+    currentTopBarHeightPixelsScaled,
+    currentBottomBarHeightPixelsScaled,
     showElementPropsDrawer,
     isElementsPropsDrawerVisible,
     elementToShowOnDrawer,

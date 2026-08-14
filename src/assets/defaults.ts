@@ -267,7 +267,7 @@ export const widgetProfiles: Profile[] = [
                 name: 'VeryGenericIndicator',
                 options: {
                   displayName: 'Water Temp',
-                  variableName: 'SCALED_PRESSURE2.temperature',
+                  variableName: 'SCALED_PRESSURE2/temperature',
                   iconName: 'mdi-thermometer',
                   variableUnit: '°C',
                   variableMultiplier: '.01',
@@ -610,7 +610,7 @@ export const widgetProfiles: Profile[] = [
                 name: 'VeryGenericIndicator',
                 options: {
                   displayName: 'Water Temp',
-                  variableName: 'SCALED_PRESSURE2.temperature',
+                  variableName: 'SCALED_PRESSURE2/temperature',
                   iconName: 'mdi-thermometer',
                   variableUnit: '°C',
                   variableMultiplier: '.01',
@@ -732,7 +732,7 @@ export const widgetProfiles: Profile[] = [
                 options: {
                   displayName: 'Speed (GPS)',
                   variableName: 'VFR_HUD/groundspeed',
-                  iconName: 'mdi-car-speed-limiter',
+                  iconName: 'mdi-speedometer',
                   variableUnit: 'm/s',
                   variableMultiplier: 1,
                   decimalPlaces: 1,
