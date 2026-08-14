@@ -431,6 +431,7 @@ jobs:
           aws s3 cp dist/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}-${{ env.VERSION }}.${{ matrix.extension }} s3://br-www-docs/cockpit/releases/stable/Cockpit-${{ matrix.suffix }}-${{ matrix.arch }}.${{ matrix.extension }}
 
   deploy-blueos-extension:
+    if: false # Docker Hub deploy disabled
     needs: test
     runs-on: ubuntu-latest
     env:
