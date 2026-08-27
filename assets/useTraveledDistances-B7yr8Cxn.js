@@ -1,0 +1,1 @@
+import{aj as r,a as o,i as t,c7 as a}from"./index-CJx12e5c.js";const d=()=>{const e=r(),s=o(),n=t(()=>a(e.totalTraveledDistanceMeters,s.displayUnitPreferences.distance)),i=t(()=>a(e.missionTraveledDistanceMeters,s.displayUnitPreferences.distance));return{formattedTotalDistance:n,formattedMissionDistance:i}};export{d as u};
