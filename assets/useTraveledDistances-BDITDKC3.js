@@ -1,1 +1,0 @@
-import{ai as r,a as o,i as t,cl as a}from"./index-DAt08cWS.js";const d=()=>{const e=r(),s=o(),i=t(()=>a(e.totalTraveledDistanceMeters,s.displayUnitPreferences.distance)),n=t(()=>a(e.missionTraveledDistanceMeters,s.displayUnitPreferences.distance));return{formattedTotalDistance:i,formattedMissionDistance:n}};export{d as u};
