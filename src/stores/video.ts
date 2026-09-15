@@ -487,7 +487,9 @@ export const useVideoStore = defineStore('video', () => {
         }
 
         console.log(`Stream '${streamName}' has changed. Stopping its WebRTC session...`)
-        oldStreamData.webRtcManager.endAllSessions()
+        // Closed rather than merely ended, as the manager is replaced on the next lines and an open one would keep
+        // its signaller, its streams poll and its own reconnections running with nothing rendering them
+        oldStreamData.webRtcManager.close(`Stream '${streamName}' has changed`)
       }
 
       if (isEqual(updatedStream, activeStreams.value[streamName]!.stream)) return
