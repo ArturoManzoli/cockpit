@@ -66,6 +66,12 @@ export class WebRTCManager {
       webRTCSignallingURI,
       true,
       (): void => {
+        // The signalling server is the camera manager itself, so a link that had to be re-established means the
+        // session it was serving is gone with it, however alive the peer connection still looks.
+        if (this.session !== undefined && !this.session.hasEnded()) {
+          this.onSessionClosed('Signalling connection was re-established')
+          return
+        }
         this.startConsumer()
       },
       (status: string): void => this.updateSignallerStatus(status)
