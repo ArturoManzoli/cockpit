@@ -37,6 +37,9 @@
             align-items: center;
             justify-content: center;
             gap: 2.5rem;
+            -webkit-user-select: none;
+               -moz-user-select: none;
+                    user-select: none;
         }
 
         #loading-logo {
@@ -57,14 +60,14 @@
             to { transform: rotate(360deg); }
         }
     </style>
-  <script type="module" crossorigin src="./assets/index-BgmiX-Uh.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-BU2GPK7B.css">
+  <script type="module" crossorigin src="./assets/index-Dwy63VCM.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-TtL4G9Z1.css">
 <link rel="manifest" href="./manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="./registerSW.js"></script></head>
 
 <body>
     <div id="non-app-main">
         <div id="loading-screen">
-            <img src="./cockpit-name-logo.png" alt="Cockpit" id="loading-logo" style="margin-right: 2rem;"/>
+            <img src="./cockpit-name-logo.png" alt="Cockpit" id="loading-logo" draggable="false" style="margin-right: 2rem;"/>
             <div id="loading-spinner" style="margin-left: 2rem;"></div>
         </div>
     </div>
@@ -106,7 +109,7 @@
 
     <script>
         // Start console capture
-        const __indexUtils = import('./assets/index-utils-DfdQswX2.js');
+        const __indexUtils = import('./assets/index-utils-DkixyVRO.js');
 
         let __appLoaded = false;
         const __fallbackTimeout = setTimeout(function() {
